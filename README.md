@@ -30,7 +30,7 @@ proof during the demonstration:
 .\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\iris_demo.mforge --out .\build\generated --dump-cpp --guardian-demo-bug
 ```
 
-PowerShell needs `.`\ before a local executable. The root `CMakeLists.txt`
+PowerShell needs `.\` before a local executable. The root `CMakeLists.txt`
 forwards the build to the Review 2 implementation.
 
 The Guardian demo deliberately changes ReLU to Sigmoid in a temporary graph.

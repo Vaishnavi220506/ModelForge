@@ -37,6 +37,8 @@ The repository includes `modelforge_guardian_eval`, a reproducible fault-injecti
 
 This one-model evaluation is a starting point. The repository does **not** yet contain a full multi-model experimental data set or results that justify a publication claim.
 
+In the first CI run, Guardian and the equal-budget random baseline each detected all four faulty changes. A single zero input detected three of four; it missed a weight change that has no effect at zero input. All three methods ignored the unreachable-node change. This result shows the demo works and that one probe is insufficient; it does not show that Guardian is more effective than random testing at the same budget.
+
 ## Limits and prior work
 
 The verifier and code generator share some operator definitions; a common semantic bug could escape this comparison. The optional real ONNX path has not been validated in the default build. Testing a finite input set cannot establish universal equivalence. For stronger confidence, compare against ONNX Runtime and use symbolic or SMT checking for a restricted subset.
