@@ -264,6 +264,9 @@ static Tensor fused_gemm_relu(const Tensor& a,
                 source << "    Tensor " << variableFor(instruction.output) << " = relu("
                        << referenceFor(graph, instruction.inputs[0]) << ");\n";
                 break;
+            case IROp::TestReluDeadZone:
+                diagnostics.error("codegen", "Test-only fault injection operator cannot be generated");
+                return false;
             case IROp::Sigmoid:
                 source << "    Tensor " << variableFor(instruction.output) << " = sigmoid("
                        << referenceFor(graph, instruction.inputs[0]) << ");\n";

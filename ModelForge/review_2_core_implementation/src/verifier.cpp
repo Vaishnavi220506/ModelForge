@@ -182,6 +182,12 @@ std::optional<std::vector<float>> executeIR(const IRGraph& graph,
                     value = std::max(0.0f, value);
                 }
                 break;
+            case IROp::TestReluDeadZone:
+                result = *first;
+                for (float& value : result) {
+                    value = value > 0.0f && value < 0.1f ? 0.0f : std::max(0.0f, value);
+                }
+                break;
             case IROp::Sigmoid:
                 result = *first;
                 for (float& value : result) {
@@ -316,6 +322,104 @@ std::vector<ValidationProbe> generateValidationProbes(const IRGraph& graph,
             value = distribution(generator) * (sample % 2 == 0 ? 1.0f : 10.0f);
         }
         probes.push_back({"random_" + std::to_string(sample), std::move(values)});
+    }
+
+    // Solve the first dense layer's affine equation for each ReLU neuron:
+    // x[k] * W[k,j] + bias[j] = 0. Probe both sides of the actual activation
+    // boundary, rather than assuming zero at the model input reaches it.
+    for (std::size_t node = 0; node + 1 < graph.instructions.size(); ++node) {
+        const auto& dense = graph.instructions[node];
+        const auto& activation = graph.instructions[node + 1];
+        if (dense.operation != IROp::Gemm || activation.operation != IROp::Relu ||
+            activation.inputs.size() != 1 || activation.inputs[0] != dense.output ||
+            dense.inputs.size() < 2 || dense.inputs[0] != graph.inputName || dense.transA ||
+            input->second.shape.size() != 2 || input->second.shape[0] != 1) {
+            continue;
+        }
+        const auto weights = graph.constants.find(dense.inputs[1]);
+        if (weights == graph.constants.end() || weights->second.shape.size() != 2) continue;
+        const std::size_t columns = static_cast<std::size_t>(
+            dense.transB ? weights->second.shape[0] : weights->second.shape[1]);
+        const std::size_t inner = static_cast<std::size_t>(
+            dense.transB ? weights->second.shape[1] : weights->second.shape[0]);
+        if (inner != count || columns == 0) continue;
+        const std::vector<float>* bias = nullptr;
+        if (dense.inputs.size() == 3) {
+            const auto found = graph.constants.find(dense.inputs[2]);
+            if (found == graph.constants.end()) continue;
+            bias = &found->second.data;
+        }
+        for (std::size_t column = 0; column < std::min<std::size_t>(columns, 32); ++column) {
+            std::size_t coordinate = 0;
+            float strongest = 0.0f;
+            float coefficient = 0.0f;
+            for (std::size_t k = 0; k < inner; ++k) {
+                const std::size_t offset = dense.transB ? column * inner + k : k * columns + column;
+                const float value = weights->second.data[offset];
+                if (std::fabs(value) > strongest) {
+                    strongest = std::fabs(value);
+                    coefficient = value;
+                    coordinate = k;
+                }
+            }
+            if (strongest < 1.0e-8f) continue;
+            const float intercept = bias == nullptr ? 0.0f : (*bias)[column];
+            const float boundary = -intercept / coefficient;
+            if (!std::isfinite(boundary) || std::fabs(boundary) > 10.0f) continue;
+            // Aim for +/-0.05 in preactivation space, within a narrow fault's
+            // dead zone, regardless of the weight's scale.
+            const float delta = 0.05f / strongest;
+            if (std::fabs(boundary) + delta > 10.0f) continue;
+            for (int side = -1; side <= 1; ++side) {
+                std::vector<float> values(count, 0.0f);
+                values[coordinate] = boundary + side * delta;
+                probes.push_back({"affine_relu_" + std::to_string(column) + "_" +
+                                      std::to_string(side), std::move(values)});
+            }
+        }
+        break;
+    }
+
+    // If sampled inputs give different classes, bisect a segment between them.
+    // This targets prediction boundaries where small numerical errors matter most.
+    if (count <= 64) {
+        std::vector<float> left;
+        std::size_t leftClass = 0;
+        bool foundLeft = false;
+        const std::size_t existingProbeCount = probes.size();
+        for (std::size_t probeIndex = 0; probeIndex < existingProbeCount; ++probeIndex) {
+            const auto& probe = probes[probeIndex];
+            DiagnosticEngine localDiagnostics;
+            const auto output = executeIR(graph, probe.values, localDiagnostics);
+            if (!output || output->size() < 2 || localDiagnostics.hasErrors()) continue;
+            const std::size_t predicted = static_cast<std::size_t>(
+                std::max_element(output->begin(), output->end()) - output->begin());
+            if (!foundLeft) {
+                left = probe.values;
+                leftClass = predicted;
+                foundLeft = true;
+                continue;
+            }
+            if (predicted == leftClass) continue;
+            std::vector<float> right = probe.values;
+            for (int step = 0; step < 16; ++step) {
+                std::vector<float> midpoint(count);
+                for (std::size_t k = 0; k < count; ++k) {
+                    midpoint[k] = (left[k] + right[k]) * 0.5f;
+                }
+                DiagnosticEngine midpointDiagnostics;
+                const auto midpointOutput = executeIR(graph, midpoint, midpointDiagnostics);
+                if (!midpointOutput || midpointDiagnostics.hasErrors()) break;
+                const std::size_t midpointClass = static_cast<std::size_t>(
+                    std::max_element(midpointOutput->begin(), midpointOutput->end()) -
+                    midpointOutput->begin());
+                if (midpointClass == leftClass) left = std::move(midpoint);
+                else right = std::move(midpoint);
+            }
+            probes.push_back({"decision_boundary_left", std::move(left)});
+            probes.push_back({"decision_boundary_right", std::move(right)});
+            break;
+        }
     }
     return probes;
 }

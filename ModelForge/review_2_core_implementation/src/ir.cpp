@@ -16,6 +16,8 @@ std::string irOpName(IROp operation) {
             return "ADD";
         case IROp::Relu:
             return "RELU";
+        case IROp::TestReluDeadZone:
+            return "TEST_RELU_DEAD_ZONE";
         case IROp::Sigmoid:
             return "SIGMOID";
         case IROp::Softmax:

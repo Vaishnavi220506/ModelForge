@@ -54,6 +54,9 @@ void testValidPipeline(const std::filesystem::path& fixtureDirectory) {
     check(!report.events.empty(), "optimization should emit auditable rewrite events");
 
     const auto probes = modelforge::generateValidationProbes(*ir);
+    check(std::any_of(probes.begin(), probes.end(), [](const auto& probe) {
+              return probe.name.rfind("affine_relu_", 0) == 0;
+          }), "first dense layer should produce actual affine ReLU boundary probes");
     const auto validation =
         modelforge::validateOptimization(*ir, optimized, probes, diagnostics);
     check(validation.passed, "optimized IR should preserve original IR behavior");

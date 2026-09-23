@@ -29,6 +29,15 @@ bool detected(const IRGraph& original,
     return !result.passed;
 }
 
+std::size_t firstDetection(const IRGraph& original,
+                           const IRGraph& candidate,
+                           const std::vector<ValidationProbe>& probes) {
+    for (std::size_t index = 0; index < probes.size(); ++index) {
+        if (detected(original, candidate, {probes[index]})) return index + 1;
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -89,6 +98,16 @@ int main(int argc, char* argv[]) {
     {
         IRGraph candidate = *original;
         for (auto& instruction : candidate.instructions) {
+            if (instruction.operation == IROp::Relu && instruction.output == "hidden2") {
+                instruction.operation = IROp::TestReluDeadZone;
+                break;
+            }
+        }
+        cases.push_back({"relu_near_boundary_dead_zone", std::move(candidate), true});
+    }
+    {
+        IRGraph candidate = *original;
+        for (auto& instruction : candidate.instructions) {
             if (instruction.nodeName == "unused_activation") {
                 instruction.operation = IROp::Sigmoid;
                 break;
@@ -98,6 +117,13 @@ int main(int argc, char* argv[]) {
     }
 
     const auto directed = modelforge::generateValidationProbes(*original);
+    std::vector<ValidationProbe> generic;
+    for (const auto& probe : directed) {
+        if (probe.name.rfind("affine_relu_", 0) != 0 &&
+            probe.name.rfind("decision_boundary_", 0) != 0) {
+            generic.push_back(probe);
+        }
+    }
     const auto inputCount = modelforge::elementCount(original->values.at(original->inputName).shape);
     const std::vector<ValidationProbe> zero = {{"zero", std::vector<float>(inputCount, 0.0f)}};
     std::vector<ValidationProbe> random;
@@ -110,14 +136,20 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "fault,expected_change,zero_detected,random_detected,guardian_detected,"
-                 "random_probes,guardian_probes\n";
+                 "random_probes,guardian_probes,random_first_detection,guardian_first_detection,"
+                 "generic_detected,generic_first_detection,generic_probes\n";
     bool valid = true;
     for (const Case& test : cases) {
         const bool z = detected(*original, test.candidate, zero);
         const bool r = detected(*original, test.candidate, random);
         const bool g = detected(*original, test.candidate, directed);
+        const std::size_t randomFirst = firstDetection(*original, test.candidate, random);
+        const std::size_t guardianFirst = firstDetection(*original, test.candidate, directed);
+        const std::size_t genericFirst = firstDetection(*original, test.candidate, generic);
         std::cout << test.name << ',' << test.shouldChangeOutput << ',' << z << ',' << r << ','
-                  << g << ',' << random.size() << ',' << directed.size() << '\n';
+                  << g << ',' << random.size() << ',' << directed.size() << ','
+                  << randomFirst << ',' << guardianFirst << ',' << (genericFirst != 0) << ','
+                  << genericFirst << ',' << generic.size() << '\n';
         if (g != test.shouldChangeOutput) valid = false;
         if (test.name == "weight_index_zero" && z) valid = false;
     }

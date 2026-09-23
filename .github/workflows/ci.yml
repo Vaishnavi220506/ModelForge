@@ -27,7 +27,8 @@ jobs:
       - name: Guardian fault injection comparison
         shell: bash
         run: |
-          "build/Release/modelforge_guardian_eval${{ matrix.exe }}" ModelForge/review_2_core_implementation/models/iris_demo.mforge
+          "build/Release/modelforge_guardian_eval${{ matrix.exe }}" ModelForge/review_2_core_implementation/models/iris_demo.mforge > build/guardian_eval.csv
+          cat build/guardian_eval.csv
       - name: Compile Iris and catch a deliberate bad rewrite
         shell: bash
         run: |
@@ -52,3 +53,4 @@ jobs:
             build/generated/model.h
             build/generated/optimization_certificate.json
             build/generated/counterexample.json
+            build/guardian_eval.csv

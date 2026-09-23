@@ -17,6 +17,7 @@ enum class IROp {
     MatMul,
     Add,
     Relu,
+    TestReluDeadZone, // Fault injection only; never accepted from a model or emitted as C++.
     Sigmoid,
     Softmax,
     FusedGemmRelu,
