@@ -95,8 +95,10 @@ bool generateCpp(const IRGraph& graph,
     source << "#include \"model.h\"\n"
            << "#include <algorithm>\n"
            << "#include <cmath>\n"
+           << "#include <fstream>\n"
            << "#include <iomanip>\n"
            << "#include <iostream>\n"
+           << "#include <sstream>\n"
            << "#include <stdexcept>\n"
            << "#include <string>\n"
            << "#include <vector>\n\n"
@@ -281,44 +283,106 @@ static Tensor fused_gemm_relu(const Tensor& a,
     }
 
     const auto inputCount = elementCount(inputIterator->second.shape);
-    source << "}\n\nint main(int argc, char* argv[]) {\n"
+    const auto outputIterator = graph.values.find(graph.outputName);
+    if (outputIterator == graph.values.end()) {
+        diagnostics.error("codegen", "Output tensor information is missing");
+        return false;
+    }
+    const auto outputCount = elementCount(outputIterator->second.shape);
+    source << "}\n\nstatic float parse_number(const std::string& raw) {\n"
+           << R"cpp(    const auto first = raw.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) throw std::invalid_argument("empty number");
+    const auto last = raw.find_last_not_of(" \t\r\n");
+    const std::string text = raw.substr(first, last - first + 1);
+    std::size_t parsed = 0;
+    const float value = std::stof(text, &parsed);
+    if (parsed != text.size() || !std::isfinite(value))
+        throw std::invalid_argument("not a finite number");
+    return value;
+}
+
+int main(int argc, char* argv[]) {
+)cpp"
            << "    constexpr std::size_t inputCount = " << inputCount << ";\n"
-           << "    if (argc != 1 && argc != static_cast<int>(inputCount + 1)) {\n"
-           << "        std::cerr << \"Expected \" << inputCount << \" input values; "
-              "run with no values for the zero-input demo.\\n\";\n"
-           << "        return 2;\n"
-           << "    }\n"
-           << "    Tensor sampleInput(inputCount, 0.0f);\n"
-           << "    if (argc > 1) {\n"
-           << "        for (std::size_t i = 0; i < inputCount; ++i) {\n"
-           << "            try {\n"
-           << "                const std::string text = argv[i + 1];\n"
-           << "                std::size_t parsed = 0;\n"
-           << "                const float value = std::stof(text, &parsed);\n"
-           << "                if (parsed != text.size() || !std::isfinite(value)) "
-              "throw std::invalid_argument(\"not a finite number\");\n"
-           << "                sampleInput[i] = value;\n"
-           << "            } catch (const std::exception&) {\n"
-           << "                std::cerr << \"Invalid input value at position \" << (i + 1) "
-              "<< \".\\n\";\n"
-           << "                return 2;\n"
-           << "            }\n"
-           << "        }\n"
-           << "    }\n"
-           << "    try {\n"
-           << "        const Tensor output = infer(sampleInput);\n"
-           << "        if (output.empty()) throw std::runtime_error(\"Empty model output\");\n"
-           << "        const auto best = std::max_element(output.begin(), output.end());\n"
-           << "        std::cout << std::setprecision(9);\n"
-           << "        std::cout << \"Scores:\";\n"
-           << "        for (float value : output) std::cout << ' ' << value;\n"
-           << "        std::cout << \"\\nPrediction: \" << (best - output.begin()) << \"\\n\";\n"
-           << "        std::cout << \"Confidence: \" << *best << \"\\n\";\n"
-           << "    } catch (const std::exception& error) {\n"
-           << "        std::cerr << \"Inference failed: \" << error.what() << '\\n';\n"
-           << "        return 1;\n"
-           << "    }\n"
-           << "    return 0;\n}\n";
+           << "    constexpr std::size_t outputCount = " << outputCount << ";\n"
+           << R"cpp(    std::cout << std::setprecision(9);
+    if (argc == 3 && std::string(argv[1]) == "--csv") {
+        std::ifstream file(argv[2]);
+        if (!file) {
+            std::cerr << "Cannot open input CSV: " << argv[2] << '\n';
+            return 2;
+        }
+        std::cout << "row,prediction";
+        for (std::size_t i = 0; i < outputCount; ++i) std::cout << ",score_" << i;
+        std::cout << '\n';
+        std::string line;
+        std::size_t lineNumber = 0;
+        std::size_t rowNumber = 0;
+        while (std::getline(file, line)) {
+            ++lineNumber;
+            if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+            try {
+                if (line.back() == ',') throw std::invalid_argument("trailing comma");
+                std::istringstream cells(line);
+                std::string cell;
+                Tensor input;
+                while (std::getline(cells, cell, ',')) input.push_back(parse_number(cell));
+                if (input.size() != inputCount)
+                    throw std::invalid_argument("wrong number of input values");
+                const Tensor output = infer(input);
+                if (output.size() != outputCount || output.empty())
+                    throw std::runtime_error("unexpected output size");
+                ++rowNumber;
+                const auto best = std::max_element(output.begin(), output.end());
+                std::cout << rowNumber << ',' << (best - output.begin());
+                for (float value : output) std::cout << ',' << value;
+                std::cout << '\n';
+            } catch (const std::exception& error) {
+                std::cerr << "CSV line " << lineNumber << ": " << error.what() << '\n';
+                return 2;
+            }
+        }
+        if (file.bad()) {
+            std::cerr << "Failed while reading input CSV\n";
+            return 2;
+        }
+        if (rowNumber == 0) {
+            std::cerr << "Input CSV has no data rows\n";
+            return 2;
+        }
+        return 0;
+    }
+    if (argc != 1 && argc != static_cast<int>(inputCount + 1)) {
+        std::cerr << "Expected " << inputCount << " input values, or --csv <file>; "
+                  << "run with no values for the zero-input demo.\n";
+        return 2;
+    }
+    Tensor sampleInput(inputCount, 0.0f);
+    if (argc > 1) {
+        for (std::size_t i = 0; i < inputCount; ++i) {
+            try {
+                sampleInput[i] = parse_number(argv[i + 1]);
+            } catch (const std::exception&) {
+                std::cerr << "Invalid input value at position " << (i + 1) << ".\n";
+                return 2;
+            }
+        }
+    }
+    try {
+        const Tensor output = infer(sampleInput);
+        if (output.empty()) throw std::runtime_error("Empty model output");
+        const auto best = std::max_element(output.begin(), output.end());
+        std::cout << "Scores:";
+        for (float value : output) std::cout << ' ' << value;
+        std::cout << "\nPrediction: " << (best - output.begin()) << "\n";
+        std::cout << "Confidence: " << *best << "\n";
+    } catch (const std::exception& error) {
+        std::cerr << "Inference failed: " << error.what() << '\n';
+        return 1;
+    }
+    return 0;
+}
+)cpp";
 
     const std::string generatedCMake =
         "cmake_minimum_required(VERSION 3.16)\n"

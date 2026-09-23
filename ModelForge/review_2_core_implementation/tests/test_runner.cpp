@@ -124,6 +124,8 @@ void testValidPipeline(const std::filesystem::path& fixtureDirectory) {
               "generated executable should accept numeric inputs");
         check(source.find("Scores:") != std::string::npos,
               "generated executable should print all output scores");
+        check(source.find("row,prediction") != std::string::npos,
+              "generated executable should support batch CSV predictions");
     }
 }
 

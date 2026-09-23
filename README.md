@@ -46,12 +46,21 @@ cmake -S .\build\generated -B .\build\generated_build -G "Visual Studio 17 2022"
 cmake --build .\build\generated_build --config Release
 .\build\generated_build\Release\generated_model.exe
 .\build\generated_build\Release\generated_model.exe 1 2 3 4
+.\build\generated_build\Release\generated_model.exe --csv .\ModelForge\review_2_core_implementation\models\iris_inputs.csv
 ```
 
 The first run uses four zeros for the original demo. The second runs a real
 four-feature input, prints all output scores, and predicts class 1. The
 generated program rejects a wrong number of features or non-numeric input;
 its `infer()` function in `model.h` can also be called from another C++ app.
+The `--csv` form runs every numeric row in a file and prints a machine-readable
+CSV with row number, predicted class, and each output score. The sample file
+has two four-feature rows. Blank lines are ignored; a malformed row stops
+processing with its line number. You can save the output with PowerShell:
+
+```powershell
+.\build\generated_build\Release\generated_model.exe --csv .\ModelForge\review_2_core_implementation\models\iris_inputs.csv > .\build\predictions.csv
+```
 
 For another input, replace `iris_demo.mforge` with `binary_sigmoid_demo.mforge`.
 See [the research note](ModelForge/docs/research_contribution.md) for the
