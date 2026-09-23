@@ -44,6 +44,13 @@ jobs:
           output=$("${{ matrix.generated_exe }}")
           echo "$output"
           [[ "$output" == *"Prediction: 2"* ]]
+          real_input=$("${{ matrix.generated_exe }}" 1 2 3 4)
+          echo "$real_input"
+          [[ "$real_input" == *"Scores:"* ]]
+          [[ "$real_input" == *"Prediction: 1"* ]]
+          MODEL_OUTPUT="$real_input" python -c "import os; s=os.environ['MODEL_OUTPUT']; v=[float(x) for x in s.split('Scores:')[1].splitlines()[0].split()]; assert len(v)==3 and abs(v[1]-0.55681473)<1e-5 and abs(sum(v)-1)<1e-5"
+          if "${{ matrix.generated_exe }}" 1 2 3 >/dev/null 2>&1; then exit 1; fi
+          if "${{ matrix.generated_exe }}" 1 2 NaN 4 >/dev/null 2>&1; then exit 1; fi
       - name: Save generated code and Guardian evidence
         uses: actions/upload-artifact@v4
         with:

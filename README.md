@@ -45,7 +45,13 @@ Compile and run the generated C++ program:
 cmake -S .\build\generated -B .\build\generated_build -G "Visual Studio 17 2022"
 cmake --build .\build\generated_build --config Release
 .\build\generated_build\Release\generated_model.exe
+.\build\generated_build\Release\generated_model.exe 1 2 3 4
 ```
+
+The first run uses four zeros for the original demo. The second runs a real
+four-feature input, prints all output scores, and predicts class 1. The
+generated program rejects a wrong number of features or non-numeric input;
+its `infer()` function in `model.h` can also be called from another C++ app.
 
 For another input, replace `iris_demo.mforge` with `binary_sigmoid_demo.mforge`.
 See [the research note](ModelForge/docs/research_contribution.md) for the

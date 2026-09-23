@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
@@ -104,12 +105,26 @@ void testValidPipeline(const std::filesystem::path& fixtureDirectory) {
         }
         check(std::fabs(total - 1.0f) < 1.0e-5f, "Softmax output should sum to one");
     }
+    const auto userInputResult = modelforge::executeIR(optimized, {1.0f, 2.0f, 3.0f, 4.0f},
+                                                       diagnostics);
+    check(userInputResult.has_value() && userInputResult->size() == 3 &&
+              std::fabs((*userInputResult)[1] - 0.55681473f) < 1.0e-5f,
+          "non-zero user input should produce the expected class-1 score");
 
     const auto outputDirectory = std::filesystem::temp_directory_path() / "modelforge_test_generated";
     check(modelforge::generateCpp(optimized, outputDirectory.string(), diagnostics),
           "C++ code should be generated");
     check(std::filesystem::exists(outputDirectory / "model.h"), "generated header should exist");
     check(std::filesystem::exists(outputDirectory / "model.cpp"), "generated source should exist");
+    {
+        std::ifstream generated(outputDirectory / "model.cpp");
+        const std::string source((std::istreambuf_iterator<char>(generated)),
+                                 std::istreambuf_iterator<char>());
+        check(source.find("std::stof(text, &parsed)") != std::string::npos,
+              "generated executable should accept numeric inputs");
+        check(source.find("Scores:") != std::string::npos,
+              "generated executable should print all output scores");
+    }
 }
 
 void testConstantFolding(const std::filesystem::path& fixtureDirectory) {
