@@ -43,3 +43,12 @@ jobs:
           output=$("${{ matrix.generated_exe }}")
           echo "$output"
           [[ "$output" == *"Prediction: 2"* ]]
+      - name: Save generated code and Guardian evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelforge-${{ matrix.os }}-demo
+          path: |
+            build/generated/model.cpp
+            build/generated/model.h
+            build/generated/optimization_certificate.json
+            build/generated/counterexample.json

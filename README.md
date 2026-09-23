@@ -71,4 +71,6 @@ laptop. CMake alone cannot compile the project.
 
 If Windows Application Control blocks a built `.exe`, the build succeeded but
 that laptop needs administrator approval to run it. GitHub Actions builds and
-runs the project independently on Windows and Linux.
+runs the project independently on Windows and Linux. Each successful run also
+attaches the generated C++ source, certificate, and counterexample as a
+downloadable demo artifact.
