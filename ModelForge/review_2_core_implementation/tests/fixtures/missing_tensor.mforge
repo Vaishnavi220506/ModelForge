@@ -1,0 +1,4 @@
+model missing_tensor
+input x float32 1,2
+output y float32 1,2
+node activation Relu not_declared -> y

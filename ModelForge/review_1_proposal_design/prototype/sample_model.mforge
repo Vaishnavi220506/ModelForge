@@ -1,0 +1,9 @@
+# ModelForge Phase 1 manifest
+model iris_classifier
+input x float32 1,4
+output y float32 1,3
+
+node dense_1 Gemm x t1
+node activation_1 Relu t1 t2
+node dense_2 Gemm t2 t3
+node probabilities Softmax t3 y

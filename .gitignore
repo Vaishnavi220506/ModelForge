@@ -1,0 +1,10 @@
+/build/
+/**/build/
+/**/generated/
+/.vs/
+*.obj
+*.pdb
+*.exe
+*.lib
+*.ilk
+.DS_Store

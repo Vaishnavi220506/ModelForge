@@ -1,0 +1,4 @@
+model invalid_softmax_axis
+input x float32 1,3
+output y float32 1,3
+node probabilities Softmax x -> y axis=4

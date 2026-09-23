@@ -1,0 +1,7 @@
+model constant_fold
+input x float32 1,1
+output y float32 1,2
+
+tensor left float32 1,2 values=1.0,-2.0
+tensor right float32 1,2 values=3.0,5.0
+node add_constants Add left right -> y

@@ -1,0 +1,41 @@
+name: ModelForge build and Guardian demo
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            exe: ""
+            generated_exe: build/generated_build/generated_model
+          - os: windows-latest
+            exe: .exe
+            generated_exe: build/generated_build/Release/generated_model.exe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Compile Iris and catch a deliberate bad rewrite
+        shell: bash
+        run: |
+          "build/Release/modelforge${{ matrix.exe }}" ModelForge/review_2_core_implementation/models/iris_demo.mforge --out build/generated --guardian-demo-bug --no-ir
+          python -c "import json; from pathlib import Path; p=Path('build/generated'); c=json.loads((p/'optimization_certificate.json').read_text()); x=json.loads((p/'counterexample.json').read_text()); assert c['translation_validation']['status']=='PASS'; assert x['input']; assert x['original_output'] != x['candidate_output']; assert any(d['pass']=='dense_relu_fusion' and d['accepted'] for d in c['guardian_decisions'])"
+      - name: Configure generated C++
+        run: cmake -S build/generated -B build/generated_build -DCMAKE_BUILD_TYPE=Release
+      - name: Build generated C++
+        run: cmake --build build/generated_build --config Release
+      - name: Run generated program
+        shell: bash
+        run: |
+          output=$("${{ matrix.generated_exe }}")
+          echo "$output"
+          [[ "$output" == *"Prediction: 2"* ]]

@@ -1,0 +1,5 @@
+model shape_mismatch
+input x float32 1,4
+output y float32 1,2
+tensor weights float32 3,2 values=1.0,0.0,0.0,1.0,1.0,1.0
+node dense Gemm x weights -> y

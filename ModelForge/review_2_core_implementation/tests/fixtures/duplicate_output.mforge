@@ -1,0 +1,5 @@
+model duplicate_output
+input x float32 1,2
+output y float32 1,2
+node first Relu x -> y
+node second Relu y -> y

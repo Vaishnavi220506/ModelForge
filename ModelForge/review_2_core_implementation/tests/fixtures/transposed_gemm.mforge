@@ -1,0 +1,6 @@
+model transposed_gemm
+input x float32 1,2
+output y float32 1,2
+tensor weights float32 2,2 values=1.0,2.0,3.0,4.0
+tensor bias float32 1,2 values=0.0,0.0
+node dense Gemm x weights bias -> y transB=1

@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug ModelForge demo",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Release/modelforge.exe",
+            "args": ["models/iris_demo.mforge", "--out", "generated"],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "preLaunchTask": "ModelForge: build",
+            "console": "integratedTerminal"
+        }
+    ]
+}

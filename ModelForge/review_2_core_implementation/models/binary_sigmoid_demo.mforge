@@ -1,0 +1,10 @@
+# Second ModelForge demonstration model: a small two-class sigmoid classifier.
+model binary_sigmoid_classifier
+input features float32 1,2
+output probabilities float32 1,2
+
+tensor weights float32 2,2 values=1.0,-1.0,-0.5,0.8
+tensor bias float32 1,2 values=0.3,1.2
+
+node dense Gemm features weights bias -> scores
+node activation Sigmoid scores -> probabilities

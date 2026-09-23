@@ -1,0 +1,71 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "ModelForge: configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["-S", ".", "-B", "build"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "build", "--config", "Release"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: configure",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "ModelForge: test",
+            "type": "shell",
+            "command": "ctest",
+            "args": ["--test-dir", "build", "-C", "Release", "--output-on-failure"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: run demo",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge.exe",
+            "args": [
+                "ModelForge\\review_2_core_implementation\\models\\iris_demo.mforge",
+                "--out",
+                "build\\generated",
+                "--dump-cpp"
+            ],
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: configure generated",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["-S", "build/generated", "-B", "build/generated/build"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: run demo",
+            "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: build generated",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "build/generated/build", "--config", "Release"],
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: configure generated",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "ModelForge: run generated",
+            "type": "shell",
+            "command": ".\\build\\generated\\build\\Release\\generated_model.exe",
+            "options": {"cwd": "${workspaceFolder}"},
+            "dependsOn": "ModelForge: build generated",
+            "problemMatcher": []
+        }
+    ]
+}

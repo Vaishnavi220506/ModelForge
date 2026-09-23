@@ -1,0 +1,9 @@
+model operator_coverage
+input x float32 1,2
+output y float32 1,2
+tensor weights float32 2,2 values=1.0,0.0,0.0,1.0
+tensor bias float32 1,2 values=0.0,1.0
+node matrix MatMul x weights -> matrix_out
+node added Add matrix_out bias -> added_out
+node squash Sigmoid added_out -> squashed_out
+node probabilities Softmax squashed_out -> y axis=1
