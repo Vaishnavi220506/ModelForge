@@ -26,7 +26,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Guardian fault injection comparison
         shell: bash
-        run: "build/Release/modelforge_guardian_eval${{ matrix.exe }}" ModelForge/review_2_core_implementation/models/iris_demo.mforge
+        run: |
+          "build/Release/modelforge_guardian_eval${{ matrix.exe }}" ModelForge/review_2_core_implementation/models/iris_demo.mforge
       - name: Compile Iris and catch a deliberate bad rewrite
         shell: bash
         run: |
