@@ -29,7 +29,13 @@ Can operator-directed probes detect incorrect tensor-graph rewrites with fewer e
 - Measure compilation time, generated C++ runtime, instruction reduction, and code size on the same machine.
 - Report failures that none of the probe suites detect. Include all model inputs, seeds, compiler version, and machine details.
 
-The repository has the compiler, rejection demo, tests, and CI workflow. It does **not** yet contain a full multi-model experimental data set or results that justify a publication claim.
+The repository includes `modelforge_guardian_eval`, a reproducible fault-injection comparison on the Iris fixture. It prints a CSV table for five mutations, comparing zero-only, equal-budget random, and Guardian probes. The unreachable-node mutation is a negative control: it must not be flagged because it cannot affect the returned output. Run it from the workspace root after building:
+
+```powershell
+.\build\Release\modelforge_guardian_eval.exe .\ModelForge\review_2_core_implementation\models\iris_demo.mforge
+```
+
+This one-model evaluation is a starting point. The repository does **not** yet contain a full multi-model experimental data set or results that justify a publication claim.
 
 ## Limits and prior work
 

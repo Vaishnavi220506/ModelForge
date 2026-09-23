@@ -51,6 +51,12 @@ For another input, replace `iris_demo.mforge` with `binary_sigmoid_demo.mforge`.
 See [the research note](ModelForge/docs/research_contribution.md) for the
 Guardian experiment and its limits.
 
+The small Guardian fault-injection comparison prints a CSV table:
+
+```powershell
+.\build\Release\modelforge_guardian_eval.exe .\ModelForge\review_2_core_implementation\models\iris_demo.mforge
+```
+
 ## VS Code tasks
 
 Open **Terminal → Run Task** and choose:

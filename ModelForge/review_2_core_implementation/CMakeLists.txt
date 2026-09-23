@@ -60,10 +60,13 @@ target_link_libraries(modelforge PRIVATE modelforge_core)
 add_executable(modelforge_tests tests/test_runner.cpp)
 target_link_libraries(modelforge_tests PRIVATE modelforge_core)
 
+add_executable(modelforge_guardian_eval tests/guardian_eval.cpp)
+target_link_libraries(modelforge_guardian_eval PRIVATE modelforge_core)
+
 # Keep multi-configuration generators (such as Visual Studio) predictable
 # when this project is built from the workspace wrapper or directly.
 set(MODELFORGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
-set_target_properties(modelforge modelforge_tests PROPERTIES
+set_target_properties(modelforge modelforge_tests modelforge_guardian_eval PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${MODELFORGE_OUTPUT_DIR}"
 )
 set_target_properties(modelforge_core PROPERTIES
@@ -75,4 +78,8 @@ enable_testing()
 add_test(
     NAME modelforge_tests
     COMMAND modelforge_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures
+)
+add_test(
+    NAME modelforge_guardian_eval
+    COMMAND modelforge_guardian_eval ${CMAKE_CURRENT_SOURCE_DIR}/models/iris_demo.mforge
 )
