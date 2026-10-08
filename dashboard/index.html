@@ -192,9 +192,10 @@ nav.tabs button { transition: background 0.2s ease, color 0.2s ease, box-shadow 
     </div>
     <nav class="tabs" role="tablist" aria-label="Dashboard sections">
       <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
-      <button role="tab" data-tab="faults">Fault families</button>
-      <button role="tab" data-tab="stats">Statistics</button>
-      <button role="tab" data-tab="inspector">Model inspector</button>
+      <button role="tab" data-tab="shrink">Compression</button>
+      <button role="tab" data-tab="faults">Faults</button>
+      <button role="tab" data-tab="stats">Stats</button>
+      <button role="tab" data-tab="inspector">Inspector</button>
       <button role="tab" data-tab="corpus">Corpus</button>
     </nav>
     <button class="ghost" id="theme" type="button" aria-label="Toggle colour theme">◐ Theme</button>
@@ -549,6 +550,49 @@ function inspector(data) {
   return wrap;
 }
 
+const REAL_NAMES = { test_set: "Test set only", noise: "+ random noise", genetic: "+ genetic search", boundary_shift: "+ boundary shift (ours)" };
+const REAL_ORDER = ["boundary_shift", "genetic", "noise", "test_set"];
+function shrinkTab(real) {
+  const wrap = el("section", { "data-panel": "shrink", hidden: "" });
+  if (!real) { wrap.append(el("div", { class: "card empty", text: "No compression study yet. Run modelforge_bench." })); return wrap; }
+  const kpi = (label, value, note) => el("div", { class: "card kpi" }, el("div", { class: "label", text: label }), el("div", { class: "value", text: value }), el("div", { class: "note", text: note }));
+  const d = real.detected, h = real.detected_hidden, u = real.detected_unchanged;
+  wrap.append(el("div", { class: "hero" },
+    el("h2", { text: "Is the compressed model safe to ship? Accuracy alone does not tell you." }),
+    el("p", { text: `8 classifiers trained on real data (Iris, Wine, Breast Cancer, Digits) under ${real.cases_total / 8} compressions. A compression is risky when a realistic input (within 0.5 std of real data) exists where the original model is sure (top-two margin of at least 0.2) but the compressed model disagrees.` })));
+  wrap.append(el("div", { class: "grid kpis" },
+    kpi("Risky compressions caught", `${fmt(d.boundary_shift, 0)}/${real.risky}`, `test set alone: ${fmt(d.test_set, 0)} · genetic search: ${fmt(d.genetic, 1)}`),
+    kpi("Caught where the test set saw nothing", `${fmt(h.boundary_shift, 0)}/${real.hidden_from_test_set}`, `genetic search: ${fmt(h.genetic, 1)} · noise: ${fmt(h.noise, 1)}`),
+    kpi("Flagged although accuracy did not drop", `${fmt(u.boundary_shift, 0)}/${real.accuracy_unchanged}`, `test set alone: ${fmt(u.test_set, 0)}`)));
+
+  const levels = { negligible: "--good", low: "--good", moderate: "--warn", high: "--bad" };
+  const models = [...new Set(real.cases.map((c) => c.model))];
+  const kinds = [...new Set(real.cases.map((c) => c.compression))];
+  const grid = el("table", { class: "heat" },
+    el("thead", {}, el("tr", {}, el("th", { text: "Model" }), kinds.map((k) => el("th", { class: "num", text: k })))),
+    el("tbody", {}, models.map((m) => el("tr", {}, el("td", { class: "mono", text: m }), kinds.map((k) => {
+      const c = real.cases.find((x) => x.model === m && x.compression === k);
+      const td = el("td", { class: "cell", text: c.risk });
+      td.style.color = css(levels[c.risk] || "--text-muted");
+      td.style.fontWeight = 600;
+      td.style.background = css("--surface-2");
+      td.tabIndex = 0;
+      const rows = [{ label: "accuracy", value: `${pct(c.accuracy_before)} to ${pct(c.accuracy_after)}` }, { label: "test-set flips", value: `${c.test_flips}/${c.test_rows}` },
+        ...REAL_ORDER.map((sname) => ({ label: REAL_NAMES[sname], value: fmt(c.severity[sname], 2) })), { label: "boundary shift (std)", value: fmt(c.boundary_shift, 3) }];
+      td.addEventListener("pointermove", (e) => showTip(e, `${m} · ${k}`, rows));
+      td.addEventListener("pointerleave", hideTip);
+      return td;
+    })))));
+  wrap.append(card("Risk report for every model and compression", "Risk from Guardian's worst realistic flip: negligible below 0.05 margin, low below 0.2, moderate below 0.5, high above. Hover a cell for accuracy, test-set flips and what each method found.", el("div", { class: "scroll" }, grid)));
+
+  const caught = barList(REAL_ORDER.map((k) => ({ label: REAL_NAMES[k], value: d[k] || 0, highlight: k === "boundary_shift", tip: [{ label: "risky caught", value: `${fmt(d[k], 1)}/${real.risky}` }, { label: "missed by test set, caught", value: `${fmt(h[k], 1)}/${real.hidden_from_test_set}` }] })), { max: real.risky, tick: (v) => fmt(v, 0), valueText: (r) => `${fmt(r.value, 1)}/${real.risky}`, label: "Risky compressions caught" });
+  const severity = barList(REAL_ORDER.map((k) => ({ label: REAL_NAMES[k], value: real.mean_severity[k] || 0, highlight: k === "boundary_shift", tip: [{ label: "mean worst margin", value: fmt(real.mean_severity[k], 3) }] })), { max: 0.4, tick: (v) => fmt(v, 1), valueText: (r) => fmt(r.value, 3), label: "Mean worst realistic flip" });
+  wrap.append(el("div", { class: "grid half" },
+    card("Risky compressions caught", `Each method first runs the test set, then gets ${real.budget} extra compressed-model evaluations. Random methods averaged over ${real.seeds} seeds.`, caught),
+    card("How bad is the worst flip found", "Mean of the original's top-two margin at the worst realistic disagreement; higher means the method found more serious flips.", severity)));
+  return wrap;
+}
+
 function corpus(bench) {
   const wrap = el("section", { "data-panel": "corpus", hidden: "" });
   const c = bench.corpus;
@@ -574,7 +618,7 @@ function render(data) {
   app.append(el("div", { class: "meta" },
     el("span", {}, "Author ", el("b", { text: b.author || "Vaishnavi" })), el("span", {}, "Generated ", el("b", { text: b.generated_at })), el("span", {}, "Platform ", el("b", { text: `${b.platform} · ${b.compiler}` })),
     el("span", {}, "Corpus ", el("b", { text: `${b.corpus.models} models · ${b.corpus.faults_total} faults` })), el("span", {}, "Budget ", el("b", { text: String(b.config.budget) }))));
-  app.append(overview(b), faults(b), stats(b), inspector(data.inspect), corpus(b));
+  app.append(overview(b), shrinkTab(data.real), faults(b), stats(b), inspector(data.inspect), corpus(b));
   stagger(app);
   selectTab(currentTab);
 }

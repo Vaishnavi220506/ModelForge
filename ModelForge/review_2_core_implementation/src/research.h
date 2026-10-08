@@ -129,6 +129,20 @@ struct BenchmarkSummary {
 BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
                               const ProgressCallback& progress = {});
 
+// Real-model compression study: every model in `realDirectory`
+// (<dataset>_<arch>.mforge with <dataset>_test.csv) under every standard
+// compression. Returns JSON for the dashboard plus a terminal summary.
+struct RealStudySummary {
+    std::size_t cases = 0, risky = 0, hiddenFromTestSet = 0, accuracyUnchanged = 0;
+    std::map<std::string, double> detected;           // strategy -> risky cases caught (mean over seeds)
+    std::map<std::string, double> detectedHidden;     // ... among those the test set misses
+    std::map<std::string, double> detectedUnchanged;  // ... among those with no accuracy drop
+    std::map<std::string, double> meanSeverity;
+    std::string json;
+};
+RealStudySummary runRealStudy(const std::string& realDirectory, std::size_t budget,
+                              std::size_t seeds, const ProgressCallback& progress = {});
+
 // Single-model inspection used by the dashboard and the terminal studio.
 std::string inspectModelJson(const std::string& manifestPath, const IRGraph& graph,
                              std::size_t budget, std::uint32_t seed);

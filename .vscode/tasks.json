@@ -226,6 +226,55 @@
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: shrink and check (Wine model)",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge.exe",
+            "args": [
+                "ModelForge\\review_2_core_implementation\\models\\real\\wine_mlp16.mforge",
+                "--shrink",
+                "all",
+                "--data",
+                "ModelForge\\review_2_core_implementation\\models\\real\\wine_test.csv",
+                "--out",
+                "build\\shrink"
+            ],
+            "linux": {
+                "command": "./build/Release/modelforge",
+                "args": [
+                    "ModelForge/review_2_core_implementation/models/real/wine_mlp16.mforge",
+                    "--shrink",
+                    "all",
+                    "--data",
+                    "ModelForge/review_2_core_implementation/models/real/wine_test.csv",
+                    "--out",
+                    "build/shrink"
+                ]
+            },
+            "osx": {
+                "command": "./build/Release/modelforge",
+                "args": [
+                    "ModelForge/review_2_core_implementation/models/real/wine_mlp16.mforge",
+                    "--shrink",
+                    "all",
+                    "--data",
+                    "ModelForge/review_2_core_implementation/models/real/wine_test.csv",
+                    "--out",
+                    "build/shrink"
+                ]
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
         }
     ]
 }

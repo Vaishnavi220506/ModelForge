@@ -1,6 +1,7 @@
 #include "research.h"
 
 #include "adaptive.h"
+#include "shrink.h"
 #include "guardian.h"
 #include "loader.h"
 #include "optimizer.h"
@@ -10,6 +11,8 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <map>
 #include <numeric>
@@ -1108,6 +1111,133 @@ std::string inspectModelJson(const std::string& manifestPath, const IRGraph& gra
            ",\"sites\":" + sitesJson(sites) + ",\"coverage\":" + coverage +
            ",\"faults\":" + faultTable + ",\"schedule\":" + schedule +
            ",\"guardian_probe_count\":" + std::to_string(ordered.size()) + "}";
+}
+
+RealStudySummary runRealStudy(const std::string& realDirectory, std::size_t budget,
+                              std::size_t seeds, const ProgressCallback& progress) {
+    namespace fs = std::filesystem;
+    RealStudySummary summary;
+    std::vector<fs::path> models;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(realDirectory, error)) {
+        if (entry.path().extension() == ".mforge") models.push_back(entry.path());
+    }
+    std::sort(models.begin(), models.end());
+    constexpr float kRisky = 0.2f;  // "moderate" or worse
+    const std::vector<std::string> strategies = {"test_set", "noise", "genetic", "boundary_shift"};
+    std::string cases = "[";
+    std::size_t index = 0;
+    for (const auto& path : models) {
+        if (progress) progress(index++, models.size(), path.stem().string());
+        const std::string stem = path.stem().string();
+        const std::string dataset = stem.substr(0, stem.rfind('_'));
+        std::ifstream file(path);
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        IRGraph graph;
+        DiagnosticEngine diagnostics;
+        if (!compileManifestText(text, graph, diagnostics)) continue;
+        Dataset test;
+        std::string message;
+        const std::size_t inputs = elementCount(graph.values.at(graph.inputName).shape);
+        if (!loadDataset((fs::path(realDirectory) / (dataset + "_test.csv")).string(), inputs, test,
+                         message)) {
+            continue;
+        }
+        for (const auto& compression : standardCompressions()) {
+            const IRGraph small = compressModel(graph, compression);
+            const auto testSet = searchTestSet(graph, small, test);
+            const auto ours = searchBoundaryShift(graph, small, test, budget);
+            std::vector<DisagreementSearch> noise, genetic;
+            for (std::size_t s = 0; s < seeds; ++s) {
+                noise.push_back(searchNoise(graph, small, test, budget, 101 + static_cast<std::uint32_t>(s)));
+                genetic.push_back(searchGenetic(graph, small, test, budget, 201 + static_cast<std::uint32_t>(s)));
+            }
+            // Best known: everything above plus long reference runs.
+            float best = std::max(testSet.worstSeverity, ours.worstSeverity);
+            for (const auto& run : noise) best = std::max(best, run.worstSeverity);
+            for (const auto& run : genetic) best = std::max(best, run.worstSeverity);
+            best = std::max({best, searchBoundaryShift(graph, small, test, 5000).worstSeverity,
+                             searchGenetic(graph, small, test, 5000, 999).worstSeverity,
+                             searchNoise(graph, small, test, 5000, 999).worstSeverity});
+            const double accuracyBefore = accuracy(graph, test);
+            const double accuracyAfter = accuracy(small, test);
+            const bool risky = best >= kRisky;
+            const bool hidden = risky && testSet.worstSeverity < kRisky;
+            const bool unchanged = risky && accuracyAfter >= accuracyBefore;
+            ++summary.cases;
+            summary.risky += risky;
+            summary.hiddenFromTestSet += hidden;
+            summary.accuracyUnchanged += unchanged;
+            const auto rate = [&](const std::vector<DisagreementSearch>& runs) {
+                double hits = 0.0, severity = 0.0;
+                for (const auto& run : runs) {
+                    hits += run.worstSeverity >= kRisky;
+                    severity += run.worstSeverity;
+                }
+                return std::make_pair(hits / runs.size(), severity / runs.size());
+            };
+            const std::map<std::string, std::pair<double, double>> outcome = {
+                {"test_set", {testSet.worstSeverity >= kRisky, testSet.worstSeverity}},
+                {"noise", rate(noise)},
+                {"genetic", rate(genetic)},
+                {"boundary_shift", {ours.worstSeverity >= kRisky, ours.worstSeverity}}};
+            for (const auto& [name, value] : outcome) {
+                summary.meanSeverity[name] += value.second;
+                if (risky) summary.detected[name] += value.first;
+                if (hidden) summary.detectedHidden[name] += value.first;
+                if (unchanged) summary.detectedUnchanged[name] += value.first;
+            }
+            if (summary.cases > 1) cases += ",";
+            cases += "{\"model\":" + quoted(stem) + ",\"dataset\":" + quoted(dataset) +
+                     ",\"compression\":" + quoted(compression.name) +
+                     ",\"accuracy_before\":" + number(accuracyBefore) +
+                     ",\"accuracy_after\":" + number(accuracyAfter) +
+                     ",\"test_rows\":" + std::to_string(test.rows.size()) +
+                     ",\"test_flips\":" + std::to_string(testSet.disagreements) +
+                     ",\"best_known\":" + number(best) + ",\"risky\":" + (risky ? "true" : "false") +
+                     ",\"risk\":" + quoted(riskLevel(ours.worstSeverity, 0)) +
+                     ",\"boundary_shift\":" + number(ours.maxBoundaryShift) +
+                     ",\"witness_distance\":" + number(ours.worstDistance) +
+                     ",\"original_class\":" + std::to_string(ours.originalClass) +
+                     ",\"compressed_class\":" + std::to_string(ours.compressedClass) +
+                     ",\"severity\":{";
+            bool first = true;
+            for (const auto& [name, value] : outcome) {
+                cases += std::string(first ? "" : ",") + quoted(name) + ":" + number(value.second);
+                first = false;
+            }
+            cases += "},\"detect\":{";
+            first = true;
+            for (const auto& [name, value] : outcome) {
+                cases += std::string(first ? "" : ",") + quoted(name) + ":" + number(value.first);
+                first = false;
+            }
+            cases += "}}";
+        }
+    }
+    cases += "]";
+    if (progress) progress(models.size(), models.size(), "done");
+    for (auto& [name, value] : summary.meanSeverity) value /= std::max<std::size_t>(1, summary.cases);
+    const auto mapJson = [](const std::map<std::string, double>& values) {
+        std::string result = "{";
+        bool first = true;
+        for (const auto& [key, value] : values) {
+            result += std::string(first ? "" : ",") + quoted(key) + ":" + number(value);
+            first = false;
+        }
+        return result + "}";
+    };
+    summary.json = "{\"budget\":" + std::to_string(budget) + ",\"seeds\":" +
+                   std::to_string(seeds) + ",\"risk_threshold\":0.2,\"realistic_radius\":0.5" +
+                   ",\"cases_total\":" + std::to_string(summary.cases) + ",\"risky\":" +
+                   std::to_string(summary.risky) + ",\"hidden_from_test_set\":" +
+                   std::to_string(summary.hiddenFromTestSet) + ",\"accuracy_unchanged\":" +
+                   std::to_string(summary.accuracyUnchanged) + ",\"detected\":" +
+                   mapJson(summary.detected) + ",\"detected_hidden\":" +
+                   mapJson(summary.detectedHidden) + ",\"detected_unchanged\":" +
+                   mapJson(summary.detectedUnchanged) + ",\"mean_severity\":" +
+                   mapJson(summary.meanSeverity) + ",\"cases\":" + cases + "}";
+    return summary;
 }
 
 }  // namespace modelforge

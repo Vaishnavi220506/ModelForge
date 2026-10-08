@@ -4,6 +4,7 @@
 #include "ir.h"
 #include "loader.h"
 #include "optimizer.h"
+#include "shrink.h"
 #include "validator.h"
 #include "verifier.h"
 
@@ -14,6 +15,7 @@
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,6 +30,8 @@ struct CommandLineOptions {
     bool verifyOnnx = false;
     bool guardianDemoBug = false;
     std::string comparePath;
+    std::string shrink;
+    std::string dataPath;
 };
 
 void printUsage() {
@@ -40,6 +44,9 @@ void printUsage() {
               << "  --no-ir            Do not print IR before and after optimization\n"
               << "  --verify-onnx      Compare zero-input output with ONNX Runtime\n"
               << "  --guardian-demo-bug  Demonstrate detection of a deliberately wrong ReLU rewrite\n"
+              << "  --shrink <kind>    Compress (fp16, int8, int4, prune30, prune50 or all),\n"
+              << "                     hunt for realistic prediction flips, recommend a level\n"
+              << "  --data <csv>       Test data for --shrink (features..., label per row)\n"
               << "  --compare <other>  Check that <other> behaves like the input model\n"
               << "                     (e.g. a hand-optimised, converted or edited copy)\n"
               << "  --help             Show this help\n";
@@ -72,6 +79,14 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
         }
         if (argument == "--verify-onnx") {
             options.verifyOnnx = true;
+            continue;
+        }
+        if (argument == "--shrink" || argument == "--data") {
+            if (index + 1 >= argc) {
+                std::cerr << argument << " requires a value\n";
+                return std::nullopt;
+            }
+            (argument == "--shrink" ? options.shrink : options.dataPath) = argv[++index];
             continue;
         }
         if (argument == "--compare") {
@@ -367,6 +382,115 @@ int compareModels(const CommandLineOptions& options) {
     return 3;
 }
 
+// Shrink-and-check: compress, search for realistic disagreements, recommend.
+int shrinkModel(const CommandLineOptions& options) {
+    modelforge::DiagnosticEngine diagnostics;
+    const auto graph = compileForComparison(options.inputPath, diagnostics);
+    if (!graph) {
+        diagnostics.print(std::cerr);
+        return 1;
+    }
+    if (options.dataPath.empty()) {
+        std::cerr << "--shrink needs --data <test.csv> with rows of features (and labels)\n";
+        return 1;
+    }
+    modelforge::Dataset test;
+    std::string error;
+    const std::size_t inputs = modelforge::elementCount(graph->values.at(graph->inputName).shape);
+    if (!modelforge::loadDataset(options.dataPath, inputs, test, error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    std::vector<modelforge::Compression> kinds;
+    if (options.shrink == "all") {
+        kinds = modelforge::standardCompressions();
+    } else {
+        modelforge::Compression one;
+        if (!modelforge::parseCompression(options.shrink, one)) {
+            std::cerr << "Unknown compression '" << options.shrink
+                      << "' (use fp16, int8, int4, intN, prune30, pruneNN or all)\n";
+            return 1;
+        }
+        kinds.push_back(one);
+    }
+    std::filesystem::create_directories(options.outputDirectory);
+    const std::filesystem::path out = options.outputDirectory;
+    std::ofstream report(out / "shrink_report.json");
+    report << std::setprecision(6) << "{\n  \"author\": \"Vaishnavi\",\n  \"model\": \""
+           << jsonEscape(options.inputPath) << "\",\n  \"data\": \"" << jsonEscape(options.dataPath)
+           << "\",\n  \"rows\": " << test.rows.size() << ",\n  \"results\": [\n";
+
+    std::cout << "Shrink-and-check with boundary-shift probing (by Vaishnavi)\n"
+              << "  model: " << options.inputPath << "\n  data:  " << options.dataPath << " ("
+              << test.rows.size() << " rows)\n\n"
+              << "  compression   size   accuracy        test-set flips   worst realistic flip        risk\n";
+    const double baseAccuracy = modelforge::accuracy(*graph, test);
+    std::string recommended;
+    float recommendedSize = 1.0f;
+    for (std::size_t k = 0; k < kinds.size(); ++k) {
+        const auto& kind = kinds[k];
+        const auto small = modelforge::compressModel(*graph, kind);
+        const auto testSet = modelforge::searchTestSet(*graph, small, test);
+        const auto search = modelforge::searchBoundaryShift(*graph, small, test, 200);
+        const double smallAccuracy = modelforge::accuracy(small, test);
+        const std::string risk = modelforge::riskLevel(search.worstSeverity, 0);
+        // Fraction of the float32 weight storage that remains (ignoring sparse indexing).
+        const float size = kind.kind == modelforge::CompressionKind::Pruning
+                               ? 1.0f - kind.pruneFraction
+                               : static_cast<float>(kind.bits) / 32.0f;
+        std::ostringstream accuracyText;
+        accuracyText << std::fixed << std::setprecision(1) << baseAccuracy * 100 << "% -> "
+                     << smallAccuracy * 100 << "%";
+        std::ostringstream flipText;
+        if (search.worstInput.empty()) {
+            flipText << "none found";
+        } else {
+            flipText << std::fixed << std::setprecision(0) << "class " << search.originalClass << "->"
+                     << search.compressedClass << ", margin " << std::setprecision(2)
+                     << search.worstSeverity;
+        }
+        std::cout << "  " << std::left << std::setw(12) << kind.name << std::right << std::setw(5)
+                  << static_cast<int>(std::round(size * 100)) << "%   " << std::left
+                  << std::setw(16) << accuracyText.str() << std::right << std::setw(5)
+                  << testSet.disagreements << "/" << std::left << std::setw(10)
+                  << test.rows.size() << std::setw(26) << flipText.str() << "  " << risk << "\n";
+        if ((risk == "negligible" || risk == "low") && size < recommendedSize) {
+            recommended = kind.name;
+            recommendedSize = size;
+        }
+        const auto modelPath = out / (graph->name + "_" + kind.name + ".mforge");
+        std::ofstream(modelPath) << modelforge::writeManifestText(small);
+        report << "    {\"compression\": \"" << kind.name << "\", \"weight_size\": " << size
+               << ", \"accuracy_before\": " << baseAccuracy << ", \"accuracy_after\": "
+               << smallAccuracy << ", \"test_set_flips\": " << testSet.disagreements
+               << ", \"worst_margin\": " << search.worstSeverity << ", \"risk\": \"" << risk
+               << "\", \"boundary_shift\": " << search.maxBoundaryShift
+               << ", \"witness_distance\": " << search.worstDistance
+               << ", \"compressed_model\": \"" << jsonEscape(modelPath.string()) << "\", \"witness\": [";
+        for (std::size_t i = 0; i < search.worstInput.size(); ++i) {
+            report << (i ? ", " : "") << search.worstInput[i];
+        }
+        report << "]}" << (k + 1 == kinds.size() ? "\n" : ",\n");
+        if (kinds.size() == 1 && !modelforge::generateCpp(small, (out / "cpp").string(), diagnostics)) {
+            diagnostics.print(std::cerr);
+            return 1;
+        }
+    }
+    report << "  ],\n  \"recommended\": \"" << recommended << "\"\n}\n";
+    std::cout << "\n  'worst realistic flip': an input within 0.5 std of real data where the original\n"
+              << "  model and the compressed model disagree; margin = how sure the original was.\n";
+    if (!recommended.empty()) {
+        std::cout << "\n  RECOMMENDED: " << recommended << " (weights at "
+                  << static_cast<int>(std::round(recommendedSize * 100))
+                  << "% of float32 size, risk negligible/low)\n";
+    } else {
+        std::cout << "\n  No tested compression is low-risk for this model.\n";
+    }
+    std::cout << "  Compressed models and shrink_report.json written to " << out.string() << "\n";
+    if (kinds.size() == 1) std::cout << "  Standalone C++ for the compressed model: " << (out / "cpp").string() << "\n";
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     const auto options = parseArguments(argc, argv);
     if (!options.has_value()) {
@@ -376,6 +500,9 @@ int main(int argc, char* argv[]) {
     modelforge::DiagnosticEngine diagnostics;
     modelforge::ModelGraph model;
 
+    if (!options->shrink.empty()) {
+        return shrinkModel(*options);
+    }
     if (!options->comparePath.empty()) {
         return compareModels(*options);
     }

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -67,11 +69,14 @@ bool parseValues(const std::string& text, std::vector<float>& values) {
     std::stringstream stream(text);
     std::string item;
     while (std::getline(stream, item, ',')) {
-        try {
-            values.push_back(std::stof(item));
-        } catch (...) {
+        // strtof (unlike stof) accepts subnormal values such as 1e-40,
+        // which trained models occasionally contain.
+        char* end = nullptr;
+        const float value = std::strtof(item.c_str(), &end);
+        if (end == item.c_str() || *end != '\0' || !std::isfinite(value)) {
             return false;
         }
+        values.push_back(value);
     }
     return !values.empty();
 }

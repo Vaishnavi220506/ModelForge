@@ -6,6 +6,7 @@
 #include "loader.h"
 #include "optimizer.h"
 #include "research.h"
+#include "shrink.h"
 #include "validator.h"
 #include "verifier.h"
 
@@ -16,6 +17,7 @@
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -326,6 +328,54 @@ void testGuardianPlus(const std::filesystem::path& fixtureDirectory) {
     }
 }
 
+void testShrink(const std::filesystem::path& fixtureDirectory) {
+    const auto real = fixtureDirectory.parent_path().parent_path() / "models" / "real";
+    std::ifstream file(real / "wine_mlp16.mforge");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    modelforge::IRGraph graph;
+    modelforge::DiagnosticEngine diagnostics;
+    check(modelforge::compileManifestText(text, graph, diagnostics), "real Wine model should compile");
+    modelforge::Dataset test;
+    std::string error;
+    check(modelforge::loadDataset((real / "wine_test.csv").string(), 13, test, error) &&
+              test.rows.size() == 54,
+          "Wine test set should load 54 labelled rows");
+    check(modelforge::accuracy(graph, test) > 0.95, "real Wine model should be accurate");
+
+    modelforge::Compression int4, prune50, fp16;
+    check(modelforge::parseCompression("int4", int4) && modelforge::parseCompression("prune50", prune50) &&
+              modelforge::parseCompression("fp16", fp16),
+          "standard compressions should parse");
+    const auto quantised = modelforge::compressModel(graph, int4);
+    std::set<float> levels(quantised.constants.at("w0").data.begin(), quantised.constants.at("w0").data.end());
+    check(levels.size() <= 15, "int4 weights should use at most 15 levels");
+    const auto pruned = modelforge::compressModel(graph, prune50);
+    const auto& w = pruned.constants.at("w0").data;
+    check(std::count(w.begin(), w.end(), 0.0f) >= static_cast<long>(w.size() / 2),
+          "prune50 should zero half the weights");
+
+    // Manifest round trip keeps behaviour.
+    modelforge::IRGraph reloaded;
+    check(modelforge::compileManifestText(modelforge::writeManifestText(quantised), reloaded, diagnostics),
+          "compressed manifest should compile again");
+    const auto a = modelforge::executeIR(quantised, test.rows[0], diagnostics);
+    const auto b = modelforge::executeIR(reloaded, test.rows[0], diagnostics);
+    check(a && b && modelforge::compareOutputs(*a, *b, 1e-6f).passed,
+          "written manifest should reproduce the compressed model");
+
+    // The headline example: int4 keeps accuracy and shows no test-set flips,
+    // but boundary-shift probing finds a realistic moderate-risk flip.
+    const auto testSet = modelforge::searchTestSet(graph, quantised, test);
+    const auto search = modelforge::searchBoundaryShift(graph, quantised, test, 200);
+    check(testSet.disagreements == 0, "int4 Wine should show no test-set flips");
+    check(search.worstSeverity >= 0.2f && search.worstDistance <= 0.5f,
+          "boundary-shift probing should find a realistic moderate-risk flip");
+    check(search.candidateEvaluations <= test.rows.size() + 200, "search must respect its budget");
+    check(modelforge::searchBoundaryShift(graph, modelforge::compressModel(graph, fp16), test, 200)
+                  .worstSeverity < 0.05f,
+          "float16 should be negligible risk");
+}
+
 void testOutputComparison() {
     const auto report = modelforge::compareOutputs({1.0f, 2.0f}, {1.0f, 2.000001f});
     check(report.passed, "close outputs should pass tolerance comparison");
@@ -348,6 +398,7 @@ int main(int argc, char* argv[]) {
     testOutputComparison();
     testGuardianApc();
     testGuardianPlus(fixtureDirectory);
+    testShrink(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

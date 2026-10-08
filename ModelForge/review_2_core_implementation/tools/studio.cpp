@@ -13,6 +13,7 @@
 #include "loader.h"
 #include "render.h"
 #include "research.h"
+#include "shrink.h"
 #include "term.h"
 #include "validator.h"
 #include "verifier.h"
@@ -525,7 +526,13 @@ void screenBenchmark(Session& session, bool quick) {
     const std::string inspect =
         modelforge::inspectModelJson(session.path, session.original, config.budget, config.seed);
     const fs::path dashboard = gDashboard;
-    if (render::writeDashboardData(dashboard, summary.json, inspect)) {
+    const auto real = modelforge::runRealStudy(
+        (fs::path(MODELFORGE_MODELS_DIR) / "real").string(), 200, config.randomSeeds,
+        [](std::size_t done, std::size_t total, const std::string& label) {
+            progress(done, total, label);
+        });
+    render::realStudy(real);
+    if (render::writeDashboardData(dashboard, summary.json, inspect, real.json)) {
         std::cout << "\n  " << good() << glyphs().check << reset() << " Dashboard data refreshed: "
                   << (dashboard / "index.html").string() << "\n";
     }
@@ -614,6 +621,83 @@ void screenCompare(const Session& session) {
     box("Different behaviour", lines, kWidth, bad());
 }
 
+void screenShrink(const Session& session) {
+    rule("s  Shrink and check: is a smaller version of this model safe to ship?", kWidth);
+    // Real models live in models/real/<dataset>_<arch>.mforge next to <dataset>_test.csv.
+    fs::path modelPath = session.path;
+    modelforge::IRGraph graph = session.original;
+    const auto dataFor = [](const fs::path& model) {
+        const std::string stem = model.stem().string();
+        return model.parent_path() / (stem.substr(0, stem.rfind('_')) + "_test.csv");
+    };
+    if (!fs::exists(dataFor(modelPath))) {
+        modelPath = fs::path(MODELFORGE_MODELS_DIR) / "real" / "wine_mlp16.mforge";
+        modelforge::DiagnosticEngine diagnostics;
+        if (!modelforge::compileManifestText(readFile(modelPath.string()), graph, diagnostics)) {
+            std::cout << "  " << bad() << "Could not load " << modelPath.string() << reset() << "\n";
+            return;
+        }
+        std::cout << "  " << muted() << session.original.name
+                  << " has no test data, so this demo uses the real Wine classifier ("
+                  << modelPath.filename().string() << ")." << reset() << "\n\n";
+    }
+    modelforge::Dataset test;
+    std::string error;
+    if (!modelforge::loadDataset(dataFor(modelPath).string(),
+                                 modelforge::elementCount(graph.values.at(graph.inputName).shape),
+                                 test, error)) {
+        std::cout << "  " << bad() << error << reset() << "\n";
+        return;
+    }
+    const double base = modelforge::accuracy(graph, test);
+    Table table;
+    table.headers = {"compression", "weights", "accuracy", "test flips", "worst realistic flip", "risk"};
+    table.rightAlign = {false, true, false, true, false, false};
+    std::string recommended;
+    float recommendedSize = 1.0f;
+    for (const auto& kind : modelforge::standardCompressions()) {
+        const auto small = modelforge::compressModel(graph, kind);
+        const auto testSet = modelforge::searchTestSet(graph, small, test);
+        const auto search = modelforge::searchBoundaryShift(graph, small, test, 200);
+        const std::string risk = modelforge::riskLevel(search.worstSeverity, 0);
+        const float size = kind.kind == modelforge::CompressionKind::Pruning
+                               ? 1.0f - kind.pruneFraction
+                               : static_cast<float>(kind.bits) / 32.0f;
+        const std::string colour = risk == "negligible" || risk == "low" ? good()
+                                   : risk == "moderate"                  ? warn()
+                                                                         : bad();
+        table.rows.push_back(
+            {bold() + kind.name + reset(), percent(size, 0),
+             percent(base, 1) + " " + glyphs().arrow + " " + percent(modelforge::accuracy(small, test), 1),
+             (testSet.disagreements ? warn() : muted()) + std::to_string(testSet.disagreements) + "/" +
+                 std::to_string(test.rows.size()) + reset(),
+             search.worstInput.empty()
+                 ? muted() + "none" + reset()
+                 : "class " + std::to_string(search.originalClass) + glyphs().arrow +
+                       std::to_string(search.compressedClass) + muted() + "  sure by " +
+                       fixed(search.worstSeverity, 2) + reset(),
+             colour + bold() + risk + reset()});
+        if ((risk == "negligible" || risk == "low") && size < recommendedSize) {
+            recommended = kind.name;
+            recommendedSize = size;
+        }
+    }
+    table.print();
+    std::cout << "\n  " << muted()
+              << "worst realistic flip = an input within 0.5 std of real data where the two models\n"
+                 "  disagree; 'sure by' = the original's margin between its top two classes."
+              << reset() << "\n\n";
+    if (!recommended.empty()) {
+        box("Recommendation",
+            {good() + bold() + glyphs().check + " Ship " + recommended + reset() + muted() +
+             "  (weights at " + percent(recommendedSize, 0) + " of float32, risk negligible/low)" + reset()},
+            kWidth, good());
+    } else {
+        box("Recommendation", {warn() + "No tested compression is low-risk for this model." + reset()},
+            kWidth, warn());
+    }
+}
+
 void screenDashboard() {
     rule("8  Web dashboard", kWidth);
     const fs::path index = fs::path(MODELFORGE_DASHBOARD_DIR) / "index.html";
@@ -633,10 +717,15 @@ void chooseModel(Session& session) {
     for (const auto& entry : fs::directory_iterator(MODELFORGE_MODELS_DIR, error)) {
         if (entry.path().extension() == ".mforge") files.push_back(entry.path());
     }
+    for (const auto& entry : fs::directory_iterator(fs::path(MODELFORGE_MODELS_DIR) / "real", error)) {
+        if (entry.path().extension() == ".mforge") files.push_back(entry.path());
+    }
     std::sort(files.begin(), files.end());
     for (std::size_t i = 0; i < files.size(); ++i) {
+        const bool real = files[i].parent_path().filename() == "real";
         std::cout << "  " << accent() << "[" << i + 1 << "]" << reset() << " "
-                  << files[i].filename().string() << "\n";
+                  << files[i].filename().string()
+                  << (real ? muted() + "  (trained on real data)" + reset() : std::string()) << "\n";
     }
     std::cout << "  " << accent() << "[z]" << reset()
               << " synthetic zoo model (deeper networks, e.g. z7)\n  " << accent() << "[p]"
@@ -694,6 +783,7 @@ void menu(const Session& session) {
               << group("RESEARCH") << "\n"
               << item("6", "Benchmark", "quick run  (6f = full)") << "\n"
               << item("9", "Model diff checker", "compare with another model") << "\n"
+              << item("s", "Shrink and check", "safe compression level") << "\n"
               << item("8", "Web dashboard", "how to open it") << "\n"
               << group("OTHER") << "\n"
               << item("m", "Change model", "") << "\n"
@@ -743,6 +833,8 @@ int main(int argc, char* argv[]) {
         std::cout << "\n";
         screenCompare(session);
         std::cout << "\n";
+        screenShrink(session);
+        std::cout << "\n";
         screenBenchmark(session, true);
         screenDashboard();
         return 0;
@@ -771,6 +863,7 @@ int main(int argc, char* argv[]) {
         else if (choice == "7") screenCode(session);
         else if (choice == "8") screenDashboard();
         else if (choice == "9") screenCompare(session);
+        else if (choice == "s") screenShrink(session);
         else continue;
         pause(session);
     }

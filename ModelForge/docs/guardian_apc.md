@@ -76,6 +76,37 @@ It reports which nodes differ, whether the behaviour differs, the input that
 proves it, and where the difference starts. Exit code 0 means no difference
 found, 3 means the models differ. Studio option 9 shows the same thing.
 
+## 7. Shrink and check: is a compressed model safe to ship?
+
+People shrink models (float16, int8, int4, pruning) to run them on small
+devices, and usually only check test accuracy. `searchBoundaryShift()`
+(`src/shrink.cpp`) finds realistic inputs (within 0.5 std of real data) where
+the original model was sure but the compressed one disagrees:
+
+1. pick two real test rows the original classifies differently,
+2. bisect the original's decision boundary on the line between them,
+3. check with two evaluations whether the compressed model's boundary moved,
+4. where it moved, bisect the compressed boundary: the edge of the gap is the
+   worst disagreement on that line,
+5. refine the worst ones with a small evolutionary search.
+
+```text
+modelforge models/real/wine_mlp16.mforge --shrink all --data models/real/wine_test.csv --out build/shrink
+```
+
+Result on 8 models trained on real data (Iris, Wine, Breast Cancer, Digits) and
+5 compressions: of 24 risky compressions, the test set alone flags 14, a
+genetic search 18.2, boundary-shift probing 22. Of the 7 risky compressions
+whose accuracy did not drop at all, it flags 6 (test set: 1). Example: Wine
+with int4 weights keeps 98.1% accuracy and 0 test-set flips, but has a
+realistic input where the original is clearly sure and the compressed model
+disagrees. The command recommends int8 instead (for 7 of 8 models; for one
+Breast Cancer model its 200-try search underestimated int4 and recommended it,
+a known miss). Studio option `s` shows it.
+
+The models are trained by `../research/train_real_models.py` (scikit-learn) and
+committed, so running the tools needs no Python.
+
 ## Measured results (96 models, 2,160 faults, budget 128)
 
 | Strategy | Detection | 95% CI | Caught within 8 inputs |
@@ -107,8 +138,10 @@ Snapshot: [`../research/results/results.json`](../research/results/results.json)
 
 1. `modelforge_studio` in the VS Code terminal: screen 1 (pipeline), 2 (IR
    graph), 3 (neuron stability map), 5 (fault arena and counterexample).
-2. Option 9 compares the Iris model with a hand-optimised copy that has one
+2. Option `s` checks compressed versions of the real Wine model and
+   recommends int8 (int4 looks fine on accuracy but is risky).
+3. Option 9 compares the Iris model with a hand-optimised copy that has one
    mistyped weight: the difference is found at the second input and traced to `dense_2`.
-3. Option 6 runs the quick benchmark live and refreshes the dashboard.
-4. Open `dashboard/index.html`: Overview (headline and budget curve), Fault
+4. Option 6 runs the quick benchmark live and refreshes the dashboard.
+5. Open `dashboard/index.html`: Overview (headline and budget curve), Fault
    families (where the methods differ), Statistics (McNemar), Model inspector.

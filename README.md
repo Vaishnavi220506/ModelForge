@@ -14,6 +14,17 @@ of observable faults with 128 inputs. Uniform random testing detects 75.0% and
 the previous Guardian 85.6% (paired McNemar p < 1e-4). With only 8 inputs it
 already catches 88.2%.
 
+**Shrink and check:** is a compressed (float16, int8, int4, pruned) model
+safe to ship? It finds realistic inputs where the original model was sure but
+the compressed one disagrees, and recommends the smallest safe option:
+
+```powershell
+.\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\real\wine_mlp16.mforge --shrink all --data .\ModelForge\review_2_core_implementation\models\real\wine_test.csv --out .\build\shrink
+```
+
+On 8 models trained on real data, it caught 22 of 24 risky compressions; the
+usual test-set check caught 14.
+
 **Model diff checker:** check that an edited or hand-optimised model still
 behaves like the original:
 

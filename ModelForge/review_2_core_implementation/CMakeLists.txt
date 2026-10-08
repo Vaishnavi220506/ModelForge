@@ -29,6 +29,7 @@ add_library(modelforge_core
     src/model.cpp
     src/optimizer.cpp
     src/research.cpp
+    src/shrink.cpp
     src/validator.cpp
     src/verifier.cpp
 )

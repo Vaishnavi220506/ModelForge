@@ -14,6 +14,9 @@
 #ifndef MODELFORGE_DASHBOARD_DIR
 #define MODELFORGE_DASHBOARD_DIR "dashboard"
 #endif
+#ifndef MODELFORGE_MODELS_DIR
+#define MODELFORGE_MODELS_DIR "models"
+#endif
 #ifndef MODELFORGE_DEFAULT_MODEL
 #define MODELFORGE_DEFAULT_MODEL "models/iris_demo.mforge"
 #endif
@@ -91,6 +94,14 @@ int main(int argc, char* argv[]) {
         });
     render::benchmark(summary, config.budget);
 
+    // Real trained models under compression (fp16, int8, int4, pruning).
+    const auto real = modelforge::runRealStudy(
+        (std::filesystem::path(MODELFORGE_MODELS_DIR) / "real").string(), 200,
+        config.randomSeeds, [](std::size_t done, std::size_t total, const std::string& label) {
+            term::progress(done, total, label);
+        });
+    render::realStudy(real);
+
     std::string inspectJson;
     {
         modelforge::DiagnosticEngine diagnostics;
@@ -110,7 +121,8 @@ int main(int argc, char* argv[]) {
     const bool ok = render::writeText(out / "results.json", summary.json) &&
                     render::writeText(out / "cases.csv", summary.casesCsv) &&
                     (inspectJson.empty() || render::writeText(out / "inspect.json", inspectJson)) &&
-                    render::writeDashboardData(dashboard, summary.json, inspectJson);
+                    render::writeText(out / "real_results.json", real.json) &&
+                    render::writeDashboardData(dashboard, summary.json, inspectJson, real.json);
     term::rule("Outputs");
     std::cout << "  " << term::muted() << "results   " << term::reset()
               << (out / "results.json").string() << "\n  " << term::muted() << "per-case  "
