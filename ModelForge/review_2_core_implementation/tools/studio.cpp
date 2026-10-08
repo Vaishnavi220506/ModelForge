@@ -43,7 +43,7 @@ using namespace term;
 
 namespace {
 
-constexpr std::size_t kWidth = 92;
+constexpr std::size_t kWidth = 84;
 constexpr std::size_t kBudget = 128;
 fs::path gDashboard = MODELFORGE_DASHBOARD_DIR;
 
@@ -221,10 +221,8 @@ void pause(const Session& session) {
 void header(const Session& session) {
     if (session.interactive) std::cout << code("\x1b[2J\x1b[H");
     banner();
-    std::cout << "  " << muted() << "Guardian-APC  " << reset() << dim()
-              << "verified ML model compiler " << glyphs().dot << " terminal studio" << reset()
-              << "\n  " << muted() << "model " << reset() << bold() << session.original.name
-              << reset() << muted() << "  (" << session.path << ")" << reset() << "\n";
+    std::cout << "\n  " << muted() << "Guardian-APC studio   model " << reset() << bold()
+              << session.original.name << reset() << "\n";
 }
 
 // ------------------------------------------------------------------ screens
@@ -407,7 +405,7 @@ void screenFaults(const Session& session) {
     rule("5  Fault-injection arena: which probe suite catches each faulty rewrite?", kWidth);
     const auto faults = modelforge::makeFaults(session.original, session.sites, 20260917);
     const auto suites = modelforge::buildStrategies(session.original, kBudget, 20260917, 1);
-    std::vector<std::string> shown = {"random#0", "generic", "guardian_v1", "guardian_apc"};
+    std::vector<std::string> shown = {"random#0", "guardian_v1", "guardian_apc"};
     Table table;
     table.headers = {"fault", "kind"};
     table.rightAlign = {false, false};
@@ -426,7 +424,7 @@ void screenFaults(const Session& session) {
     }
     for (const auto& fault : faults) {
         std::vector<std::string> row = {
-            fault.name, muted() + fault.locality + (fault.heldOut ? " (held-out)" : "") + reset()};
+            fault.name, muted() + fault.locality.substr(0, fault.locality.find('_')) + (fault.heldOut ? " *" : "") + reset()};
         for (const auto& name : shown) {
             for (std::size_t s = 0; s < suites.size(); ++s) {
                 if (suites[s].name != name) continue;
@@ -453,8 +451,7 @@ void screenFaults(const Session& session) {
         table.rows.push_back(std::move(row));
     }
     table.print();
-    std::cout << "  " << muted() << "#k = index of the first probe that exposed the fault (lower is better); "
-              << "budget " << kBudget << " each." << reset() << "\n";
+    std::cout << "  " << muted() << "#k = first probe that caught the fault (lower is better).  * = held-out fault type." << reset() << "\n";
 
     // Replayable counterexample for the classic wrong ReLU rewrite.
     modelforge::IRGraph buggy = session.original;
@@ -598,26 +595,42 @@ void chooseModel(Session& session) {
     }
 }
 
+// One-line summary for the home screen; the full pipeline lives under option 1.
+void statusLine(const Session& session) {
+    double total = 0.0;
+    for (const Stage& stage : session.stages) total += stage.milliseconds;
+    const auto& opt = session.guardian.acceptedOptimizations;
+    std::cout << "\n  " << good() << glyphs().check << reset() << " compiled in "
+              << bold() << fixed(total, 1) << " ms" << reset() << muted() << "   "
+              << opt.instructionsBefore << " " << glyphs().arrow << " " << opt.instructionsAfter
+              << " instructions   " << session.probes.size() << " probes   APC "
+              << percent(session.coverage.ratio(), 0) << reset() << "\n";
+}
+
 void menu(const Session& session) {
     const auto item = [](const std::string& key, const std::string& label, const std::string& hint) {
-        return accent() + bold() + "[" + key + "]" + reset() + " " + padRight(label, 26) + muted() +
+        return "  " + accent() + bold() + key + reset() + "   " + padRight(label, 24) + muted() +
                hint + reset();
     };
-    std::cout << "\n";
-    box("Menu",
-        {item("1", "Compilation pipeline", "stages, timings, summary"),
-         item("2", "IR graph view", "before / after guarded optimisation"),
-         item("3", "Neuron stability map", "IBP intervals, unstable ReLUs"),
-         item("4", "Guardian + coverage", "pass decisions, APC per strategy"),
-         item("5", "Fault-injection arena", "who catches which bug, counterexample"),
-         item("6", "Research benchmark", "quick: 12 models  (6f = full 96 models)"),
-         item("7", "Generated C++", "syntax-highlighted model.cpp"),
-         item("8", "Web dashboard", "how to open the HTML dashboard"),
-         item("m", "Change model", "Iris, binary, or synthetic deep zoo models"),
-         item("q", "Quit", "")},
-        kWidth);
+    const auto group = [](const std::string& title) {
+        return "\n  " + dim() + title + reset();
+    };
+    std::cout << group("COMPILER") << "\n"
+              << item("1", "Pipeline", "stages and timings") << "\n"
+              << item("2", "IR graph", "before / after") << "\n"
+              << item("7", "Generated C++", "model.cpp") << "\n"
+              << group("GUARDIAN-APC") << "\n"
+              << item("3", "Neuron stability", "IBP intervals") << "\n"
+              << item("4", "Coverage", "pass decisions, APC") << "\n"
+              << item("5", "Fault arena", "who catches which bug") << "\n"
+              << group("RESEARCH") << "\n"
+              << item("6", "Benchmark", "quick run  (6f = full)") << "\n"
+              << item("8", "Web dashboard", "how to open it") << "\n"
+              << group("OTHER") << "\n"
+              << item("m", "Change model", "") << "\n"
+              << item("q", "Quit", "") << "\n\n";
     if (!session.loaded) std::cout << bad() << session.errors << reset();
-    std::cout << "  > " << std::flush;
+    std::cout << "  " << accent() << glyphs().arrow << reset() << " " << std::flush;
 }
 
 }  // namespace
@@ -648,11 +661,17 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         screenPipeline(session);
+        std::cout << "\n";
         screenGraph(session);
+        std::cout << "\n";
         screenStability(session);
+        std::cout << "\n";
         screenGuardian(session);
+        std::cout << "\n";
         screenFaults(session);
+        std::cout << "\n";
         screenCode(session);
+        std::cout << "\n";
         screenBenchmark(session, true);
         screenDashboard();
         return 0;
@@ -660,7 +679,7 @@ int main(int argc, char* argv[]) {
 
     while (true) {
         header(session);
-        if (session.loaded) screenPipeline(session);
+        if (session.loaded) statusLine(session);
         menu(session);
         std::string choice;
         if (!std::getline(std::cin, choice)) break;
@@ -683,6 +702,6 @@ int main(int argc, char* argv[]) {
         else continue;
         pause(session);
     }
-    std::cout << "\n  " << muted() << "Goodbye from ModelForge Studio." << reset() << "\n\n";
+    std::cout << "\n  " << muted() << "Goodbye from ModelForge Studio by Vaishnavi." << reset() << "\n\n";
     return 0;
 }

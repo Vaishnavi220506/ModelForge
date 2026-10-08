@@ -1,5 +1,7 @@
 # Paper draft: Guardian-APC
 
+Author: **Vaishnavi**
+
 `guardian_apc.tex` is an IEEE two-column conference draft describing the
 Guardian-APC validator and its evaluation. `references.bib` holds the citations.
 
@@ -23,5 +25,5 @@ modelforge_bench --seed 3
 modelforge_bench --budget 32
 ```
 
-Fill in the author block before submitting, and re-run the benchmark on the
+The author is set to Vaishnavi; add the department, institution and email before submitting, and re-run the benchmark on the
 machine you report in the paper.

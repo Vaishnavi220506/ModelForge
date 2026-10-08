@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
     }
     term::init(ascii, noColor);
     term::banner();
-    std::cout << "  " << term::muted() << "Guardian-APC research benchmark" << term::reset()
+    std::cout << "  " << term::muted() << "Guardian-APC research benchmark by Vaishnavi" << term::reset()
               << "  " << term::dim() << config.models << " models, budget " << config.budget
               << ", " << config.randomSeeds << " random seeds" << term::reset() << "\n\n";
 

@@ -1,5 +1,7 @@
 # ModelForge — VS Code workspace
 
+**Author: Vaishnavi**
+
 ModelForge is a C++17 compiler for small neural-network models with a built-in
 per-pass validator, **Guardian-APC**. Before any graph rewrite is kept, Guardian
 tests it with probes placed on the model's own ReLU boundaries at every depth,

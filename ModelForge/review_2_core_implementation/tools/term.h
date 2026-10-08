@@ -196,7 +196,7 @@ inline void rule(const std::string& title, std::size_t width = 78) {
     const std::string label = " " + bold() + accent() + title + reset() + " ";
     const std::size_t used = visibleWidth(label) + 2;
     std::cout << "\n" << muted() << g.h << g.h << reset() << label << muted()
-              << repeat(g.h, width > used ? width - used : 0) << reset() << "\n";
+              << repeat(g.h, width > used ? width - used : 0) << reset() << "\n\n";
 }
 
 struct Table {
@@ -258,6 +258,8 @@ inline void banner() {
         std::cout << "  " << rgb(colours[i][0], colours[i][1], colours[i][2]) << bold() << art[i]
                   << reset() << "\n";
     }
+    std::cout << "  " << muted() << "by " << reset() << bold() << pink() << "Vaishnavi" << reset()
+              << "\n";
 }
 
 }  // namespace term

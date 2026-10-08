@@ -14,6 +14,9 @@
 
 namespace modelforge {
 
+// Project author, shown in the tools, reports, dashboard and paper.
+constexpr const char* kAuthor = "Vaishnavi";
+
 // ------------------------------------------------------------ model zoo
 
 struct ZooModelSpec {

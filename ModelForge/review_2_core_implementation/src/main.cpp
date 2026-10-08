@@ -30,7 +30,7 @@ struct CommandLineOptions {
 };
 
 void printUsage() {
-    std::cout << "ModelForge - ONNX/manifest to standalone C++ compiler\n\n"
+    std::cout << "ModelForge - ONNX/manifest to standalone C++ compiler (by Vaishnavi)\n\n"
               << "Usage: modelforge <input.mforge|input.onnx> [options]\n\n"
               << "Options:\n"
               << "  --out <directory>  Generated C++ output directory\n"
@@ -149,6 +149,7 @@ bool writeOptimizationCertificate(
     certificate << std::setprecision(9)
                 << "{\n"
                 << "  \"model\": \"" << jsonEscape(model.name) << "\",\n"
+                << "  \"author\": \"Vaishnavi\",\n"
                 << "  \"method\": \"bounded empirical translation validation (Guardian-APC)\",\n"
                 << "  \"activation_coverage\": {\"apc\": " << coverage.ratio()
                 << ", \"boundary_apc\": " << coverage.boundaryRatio()

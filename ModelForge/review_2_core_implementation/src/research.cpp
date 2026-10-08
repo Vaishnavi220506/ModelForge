@@ -903,7 +903,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
     std::ostringstream json;
-    json << "{\"tool\":\"modelforge_bench\",\"generated_at\":" << quoted(utcTimestamp())
+    json << "{\"tool\":\"modelforge_bench\",\"author\":" << quoted(kAuthor) << ",\"generated_at\":" << quoted(utcTimestamp())
          << ",\"platform\":" << quoted(platformName()) << ",\"compiler\":"
          << quoted(compilerName()) << ",\"runtime_seconds\":" << number(seconds)
          << ",\"config\":{\"models\":" << config.models << ",\"budget\":" << config.budget
@@ -1009,7 +1009,7 @@ std::string inspectModelJson(const std::string& manifestPath, const IRGraph& gra
 
     const auto& inputShape = graph.values.at(graph.inputName).shape;
     const auto& outputShape = graph.values.at(graph.outputName).shape;
-    return "{\"model\":" + quoted(graph.name) + ",\"path\":" + quoted(manifestPath) +
+    return "{\"model\":" + quoted(graph.name) + ",\"author\":" + quoted(kAuthor) + ",\"path\":" + quoted(manifestPath) +
            ",\"input_shape\":" +
            array(inputShape, [](std::int64_t d) { return std::to_string(d); }) +
            ",\"output_shape\":" +

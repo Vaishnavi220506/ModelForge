@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ModelForge Guardian Dashboard</title>
+<meta name="author" content="Vaishnavi">
 <style>
 :root {
   color-scheme: dark;
@@ -76,14 +77,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 code, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
-.wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px 64px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 80px; }
 header.top {
   position: sticky; top: 0; z-index: 10;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
-.top-inner { max-width: 1240px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.top-inner { max-width: 1180px; margin: 0 auto; padding: 14px 28px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .logo { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #6366f1, #14b8a6); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px; }
 .brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.1px; }
@@ -97,36 +98,37 @@ nav.tabs button:hover, .ghost:hover { background: var(--surface-2); color: var(-
 nav.tabs button[aria-selected="true"] { background: var(--surface-1); border-color: var(--border); color: var(--text-primary); box-shadow: var(--shadow); }
 .ghost { border-color: var(--border); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.meta { font-size: 12px; color: var(--text-muted); margin: 22px 0 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+.meta { font-size: 12px; color: var(--text-muted); margin: 32px 0 10px; display: flex; gap: 14px; flex-wrap: wrap; }
 .meta span b { color: var(--text-secondary); font-weight: 500; }
-.hero { margin: 8px 0 22px; }
-.hero h2 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.3px; max-width: 900px; }
+.hero { margin: 8px 0 36px; }
+.hero h2 { font-size: 24px; line-height: 1.3; margin: 0 0 12px; letter-spacing: -0.3px; max-width: 900px; }
 .hero p { margin: 0; color: var(--text-secondary); max-width: 860px; }
-.grid { display: grid; gap: 16px; }
-.kpis { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 16px; }
-.two { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.grid { display: grid; gap: 24px; }
+section > * + * { margin-top: 28px !important; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.two { grid-template-columns: minmax(0, 1fr); }
 .half { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 @media (max-width: 900px) { .two, .half { grid-template-columns: minmax(0, 1fr); } }
-.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 18px 18px 14px; box-shadow: var(--shadow); min-width: 0; }
-.card h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
-.card .sub { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 16px; padding: 24px 26px 22px; box-shadow: var(--shadow); min-width: 0; }
+.card h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.card .sub { margin: 0 0 18px; max-width: 760px; color: var(--text-muted); font-size: 12.5px; }
 .kpi .label { color: var(--text-muted); font-size: 12px; }
-.kpi .value { font-size: 30px; font-weight: 650; letter-spacing: -0.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .value { font-size: 34px; font-weight: 650; letter-spacing: -0.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .kpi .note { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
 .kpi .delta { font-size: 12px; font-weight: 600; }
 .pos { color: var(--good); } .neg { color: var(--bad); }
 .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); background: var(--surface-2); white-space: nowrap; }
 .pill.ok::before { content: "✓"; color: var(--good); font-weight: 700; }
 .pill.no::before { content: "✕"; color: var(--bad); font-weight: 700; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 10px; font-size: 12.5px; color: var(--text-secondary); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 16px; font-size: 12.5px; color: var(--text-secondary); }
 .legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .legend input { accent-color: var(--accent); margin: 0; }
 .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
-svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg { display: block; width: 100%; max-width: 660px; height: auto; overflow: visible; }
 svg text { fill: var(--text-muted); font-size: 11px; }
 .axis line, .gridline { stroke: var(--grid); stroke-width: 1; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:hover td { background: var(--surface-2); }
@@ -162,7 +164,7 @@ section[hidden] { display: none; }
   <div class="top-inner">
     <div class="brand">
       <div class="logo" aria-hidden="true">MF</div>
-      <div><h1>ModelForge · Guardian-APC</h1><p>Coverage-guided translation validation for ML compilers</p></div>
+      <div><h1>ModelForge · Guardian-APC</h1><p>Coverage-guided translation validation for ML compilers · by Vaishnavi</p></div>
     </div>
     <nav class="tabs" role="tablist" aria-label="Dashboard sections">
       <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
@@ -176,6 +178,7 @@ section[hidden] { display: none; }
 </header>
 
 <main class="wrap" id="app"></main>
+<footer class="wrap small" style="padding-top:0">ModelForge and Guardian-APC · designed and built by <b>Vaishnavi</b></footer>
 <div class="tooltip" id="tip" role="status" aria-live="polite"></div>
 
 <script src="data.js"></script>
@@ -233,6 +236,7 @@ function lineChart(points, series, opts) {
   // points: x values; series: [{key, values:[y], lo:[], hi:[]}]
   const W = 720, H = 320, m = { l: 44, r: 170, t: 12, b: 34 };
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label });
+  svg.style.maxWidth = "900px";
   const xs = (i) => m.l + (i / (points.length - 1)) * (W - m.l - m.r);
   const ys = (v) => m.t + (1 - (v - opts.yMin) / (opts.yMax - opts.yMin)) * (H - m.t - m.b);
   for (let t = 0; t <= 4; t++) {
@@ -350,19 +354,15 @@ function overview(bench) {
   const wrap = el("section", { "data-panel": "overview" });
   wrap.append(el("div", { class: "hero" },
     el("h2", { text: `Guardian-APC catches ${pct(ours.overall.rate)} of observable faulty rewrites at a ${bench.config.budget}-probe budget, versus ${pct(rnd.overall.rate)} for uniform random testing.` }),
-    el("p", { text: `Equal-budget fault injection over ${bench.corpus.models} synthetic feed-forward models (${bench.corpus.faults_total} injected faults, ${bench.corpus.observable} observable). Interval bound propagation marks unstable ReLUs; Newton steps on the exact input gradient place probes on each unstable kink at every depth; probes are scheduled by activation-pattern coverage.` })));
+    el("p", { text: `${bench.corpus.models} models, ${bench.corpus.faults_total} injected faults, the same number of test inputs for every method.` })));
 
   const fp = bench.strategies.reduce((a, x) => a + x.false_positives, 0);
   const kpi = (label, value, note, delta) => el("div", { class: "card kpi" }, el("div", { class: "label", text: label }), el("div", { class: "value", text: value }), delta || null, el("div", { class: "note", text: note }));
   wrap.append(el("div", { class: "grid kpis" },
-    kpi("Detection rate (ours)", pct(ours.overall.rate), `95% CI ${pct(ours.overall.ci[0])} – ${pct(ours.overall.ci[1])}`,
-      el("div", { class: "delta pos", text: `+${((ours.overall.rate - rnd.overall.rate) * 100).toFixed(1)} pts vs random · +${((ours.overall.rate - v1.overall.rate) * 100).toFixed(1)} vs v1` })),
-    kpi("Probes to first detection", fmt(ours.mean_first), `mean over detected faults; random needs ${fmt(rnd.mean_first)}`),
-    kpi("Activation-pattern coverage", pct(ours.apc, 0), `random reaches ${pct(rnd.apc, 0)} · boundary APC ${pct(ours.boundary_apc, 0)}`),
-    kpi("Paired McNemar vs random", cmp.random ? (cmp.random.p_value < 1e-4 ? "p < 1e-4" : "p = " + cmp.random.p_value.toPrecision(2)) : "–",
-      cmp.random ? `${cmp.random.only_a} cases only ours, ${cmp.random.only_b} only random` : ""),
-    kpi("False alarms", String(fp), `on ${bench.corpus.controls} unreachable-node negative controls`),
-    kpi("Synthesis cost", fmt(ours.generation_ms, 2) + " ms", "per model, probe generation + IBP + ordering")));
+    kpi("Detection rate (ours)", pct(ours.overall.rate), `random testing: ${pct(rnd.overall.rate)} · Guardian v1: ${pct(v1.overall.rate)}`,
+      el("div", { class: "delta pos", text: `+${((ours.overall.rate - rnd.overall.rate) * 100).toFixed(1)} points vs random` })),
+    kpi("Inputs to first catch", fmt(ours.mean_first), `random testing needs ${fmt(rnd.mean_first)}`),
+    kpi("False alarms", String(fp), `on ${bench.corpus.controls} harmless control rewrites`)));
 
   // Budget curve
   const active = new Set(DEFAULT_ON);
@@ -546,7 +546,7 @@ function render(data) {
   if (!data || !data.bench) { empty(); return; }
   const b = data.bench;
   app.append(el("div", { class: "meta" },
-    el("span", {}, "Generated ", el("b", { text: b.generated_at })), el("span", {}, "Platform ", el("b", { text: `${b.platform} · ${b.compiler}` })),
+    el("span", {}, "Author ", el("b", { text: b.author || "Vaishnavi" })), el("span", {}, "Generated ", el("b", { text: b.generated_at })), el("span", {}, "Platform ", el("b", { text: `${b.platform} · ${b.compiler}` })),
     el("span", {}, "Corpus ", el("b", { text: `${b.corpus.models} models · ${b.corpus.faults_total} faults` })), el("span", {}, "Budget ", el("b", { text: String(b.config.budget) }))));
   app.append(overview(b), faults(b), stats(b), inspector(data.inspect), corpus(b));
   selectTab(currentTab);

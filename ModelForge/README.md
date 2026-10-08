@@ -1,5 +1,7 @@
 # ModelForge
 
+**Author: Vaishnavi**
+
 ModelForge is an individual Compiler Design Laboratory project that translates a supported subset of ONNX feed-forward neural-network models into readable standalone C++ inference code.
 
 ## Review folders
