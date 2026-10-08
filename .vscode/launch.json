@@ -15,6 +15,17 @@
             "stopAtEntry": false,
             "preLaunchTask": "ModelForge: build",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "ModelForge Studio (terminal dashboard)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Release/modelforge_studio.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "preLaunchTask": "ModelForge: build",
+            "console": "integratedTerminal"
         }
     ]
 }

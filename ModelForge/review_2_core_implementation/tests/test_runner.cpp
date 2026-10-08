@@ -1,8 +1,10 @@
+#include "analysis.h"
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
 #include "loader.h"
 #include "optimizer.h"
+#include "research.h"
 #include "validator.h"
 #include "verifier.h"
 
@@ -12,6 +14,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -201,6 +204,82 @@ void testInvalidInputs(const std::filesystem::path& fixtureDirectory) {
     }
 }
 
+bool coverageBinCheck() {
+    return modelforge::coverageBin(-1.0f) == 0 && modelforge::coverageBin(-0.05f) == 1 &&
+           modelforge::coverageBin(0.0f) == 1 && modelforge::coverageBin(5.0e-4f) == 2 &&
+           modelforge::coverageBin(5.0e-3f) == 3 && modelforge::coverageBin(0.05f) == 4 &&
+           modelforge::coverageBin(2.0f) == 5;
+}
+
+void testGuardianApc() {
+    // A depth-3 synthetic model exercises boundary solving beyond the first layer.
+    const auto specs = modelforge::makeZooSpecs(4, 20260917);
+    modelforge::IRGraph graph;
+    modelforge::DiagnosticEngine diagnostics;
+    check(modelforge::compileManifestText(modelforge::synthesizeManifest(specs[2]), graph, diagnostics),
+          "synthetic zoo model should compile");
+    const auto sites = modelforge::analyzeActivationSites(graph);
+    check(sites.size() == specs[2].hidden.size(),
+          "IBP should analyse every live ReLU layer and skip the unreachable one");
+
+    // IBP soundness: every sampled pre-activation lies inside its interval.
+    std::mt19937 generator(7);
+    std::uniform_real_distribution<float> uniform(-10.0f, 10.0f);
+    bool sound = true;
+    for (int sample = 0; sample < 200; ++sample) {
+        std::vector<float> input(specs[2].inputs);
+        for (float& value : input) value = uniform(generator);
+        std::unordered_map<std::string, std::vector<float>> trace;
+        modelforge::DiagnosticEngine local;
+        modelforge::executeIRTrace(graph, input, local, &trace);
+        for (const auto& site : sites) {
+            const auto& values = trace.at(site.preactivation);
+            for (std::size_t unit = 0; unit < site.width; ++unit) {
+                const float slack = 1.0e-3f * (1.0f + std::fabs(values[unit]));
+                sound = sound && values[unit] >= site.lower[unit] - slack &&
+                        values[unit] <= site.upper[unit] + slack;
+            }
+        }
+    }
+    check(sound, "interval bound propagation should contain every sampled pre-activation");
+
+    const auto deep = modelforge::generateDeepBoundaryProbes(graph, sites);
+    check(std::any_of(deep.begin(), deep.end(), [](const auto& probe) {
+              return probe.name.rfind("deep_boundary_L2_", 0) == 0;
+          }), "Newton boundary solving should reach the third ReLU layer");
+    for (const auto& probe : deep) {
+        check(std::all_of(probe.values.begin(), probe.values.end(),
+                          [](float v) { return v >= -10.0f && v <= 10.0f; }),
+              "boundary probes must stay inside the input domain");
+    }
+
+    const auto suite = modelforge::generateGuardianProbes(graph);
+    const auto coverage = modelforge::measureActivationCoverage(graph, sites, suite);
+    check(coverage.covered <= coverage.feasible && coverage.ratio() > 0.9,
+          "Guardian-APC suite should cover most feasible activation states");
+    const auto randomSuite = modelforge::uniformRandomProbes(specs[2].inputs, suite.size(), 1);
+    check(modelforge::measureActivationCoverage(graph, sites, randomSuite).ratio() <
+              coverage.ratio(),
+          "coverage-guided probes should beat uniform random coverage at equal budget");
+
+    // A 1e-3 dead zone in the deepest layer is caught by Guardian-APC.
+    modelforge::IRGraph faulty = graph;
+    for (auto& instruction : faulty.instructions) {
+        if (instruction.nodeName == sites.back().nodeName) {
+            instruction.operation = modelforge::IROp::TestReluDeadZone;
+            instruction.testFaultParameter = 1.0e-3f;
+        }
+    }
+    check(!modelforge::validateOptimization(graph, faulty, suite, diagnostics).passed,
+          "Guardian-APC should expose a narrow dead zone in a deep layer");
+
+    check(coverageBinCheck(), "coverage bins should partition the real line");
+    check(std::fabs(modelforge::mcnemarExactP(10, 0) - 0.001953125) < 1e-9,
+          "exact McNemar p-value for 10 vs 0 discordant pairs");
+    modelforge::Proportion half{50, 100};
+    check(half.wilsonLow() < 0.5 && half.wilsonHigh() > 0.5, "Wilson interval should contain p");
+}
+
 void testOutputComparison() {
     const auto report = modelforge::compareOutputs({1.0f, 2.0f}, {1.0f, 2.000001f});
     check(report.passed, "close outputs should pass tolerance comparison");
@@ -221,6 +300,7 @@ int main(int argc, char* argv[]) {
     testOperatorCoverage(fixtureDirectory);
     testInvalidInputs(fixtureDirectory);
     testOutputComparison();
+    testGuardianApc();
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

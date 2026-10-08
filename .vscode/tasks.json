@@ -5,16 +5,30 @@
             "label": "ModelForge: configure",
             "type": "shell",
             "command": "cmake",
-            "args": ["-S", ".", "-B", "build"],
-            "options": {"cwd": "${workspaceFolder}"},
+            "args": [
+                "-S",
+                ".",
+                "-B",
+                "build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "problemMatcher": []
         },
         {
             "label": "ModelForge: build",
             "type": "shell",
             "command": "cmake",
-            "args": ["--build", "build", "--config", "Release"],
-            "options": {"cwd": "${workspaceFolder}"},
+            "args": [
+                "--build",
+                "build",
+                "--config",
+                "Release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: configure",
             "problemMatcher": "$gcc"
         },
@@ -22,8 +36,16 @@
             "label": "ModelForge: test",
             "type": "shell",
             "command": "ctest",
-            "args": ["--test-dir", "build", "-C", "Release", "--output-on-failure"],
-            "options": {"cwd": "${workspaceFolder}"},
+            "args": [
+                "--test-dir",
+                "build",
+                "-C",
+                "Release",
+                "--output-on-failure"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: build",
             "problemMatcher": []
         },
@@ -37,7 +59,9 @@
                 "build\\generated",
                 "--dump-cpp"
             ],
-            "options": {"cwd": "${workspaceFolder}"},
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: build",
             "problemMatcher": []
         },
@@ -45,8 +69,15 @@
             "label": "ModelForge: configure generated",
             "type": "shell",
             "command": "cmake",
-            "args": ["-S", "build/generated", "-B", "build/generated/build"],
-            "options": {"cwd": "${workspaceFolder}"},
+            "args": [
+                "-S",
+                "build/generated",
+                "-B",
+                "build/generated/build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: run demo",
             "problemMatcher": []
         },
@@ -54,8 +85,15 @@
             "label": "ModelForge: build generated",
             "type": "shell",
             "command": "cmake",
-            "args": ["--build", "build/generated/build", "--config", "Release"],
-            "options": {"cwd": "${workspaceFolder}"},
+            "args": [
+                "--build",
+                "build/generated/build",
+                "--config",
+                "Release"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: configure generated",
             "problemMatcher": "$gcc"
         },
@@ -63,8 +101,130 @@
             "label": "ModelForge: run generated",
             "type": "shell",
             "command": ".\\build\\generated\\build\\Release\\generated_model.exe",
-            "options": {"cwd": "${workspaceFolder}"},
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "dependsOn": "ModelForge: build generated",
+            "problemMatcher": []
+        },
+        {
+            "label": "ModelForge: studio (terminal dashboard)",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge_studio.exe",
+            "args": [],
+            "linux": {
+                "command": "./build/Release/modelforge_studio"
+            },
+            "osx": {
+                "command": "./build/Release/modelforge_studio"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "ModelForge: studio demo (all screens)",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge_studio.exe",
+            "args": [
+                "--demo"
+            ],
+            "linux": {
+                "command": "./build/Release/modelforge_studio"
+            },
+            "osx": {
+                "command": "./build/Release/modelforge_studio"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "ModelForge: research benchmark (96 models)",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge_bench.exe",
+            "args": [],
+            "linux": {
+                "command": "./build/Release/modelforge_bench"
+            },
+            "osx": {
+                "command": "./build/Release/modelforge_bench"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "ModelForge: research benchmark (quick)",
+            "type": "shell",
+            "command": ".\\build\\Release\\modelforge_bench.exe",
+            "args": [
+                "--quick"
+            ],
+            "linux": {
+                "command": "./build/Release/modelforge_bench"
+            },
+            "osx": {
+                "command": "./build/Release/modelforge_bench"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": "ModelForge: build",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "ModelForge: open web dashboard",
+            "type": "shell",
+            "command": "Start-Process",
+            "args": [
+                "dashboard\\index.html"
+            ],
+            "linux": {
+                "command": "xdg-open",
+                "args": [
+                    "dashboard/index.html"
+                ]
+            },
+            "osx": {
+                "command": "open",
+                "args": [
+                    "dashboard/index.html"
+                ]
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
             "problemMatcher": []
         }
     ]

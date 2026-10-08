@@ -1,5 +1,7 @@
 # ModelForge Guardian: a research direction
 
+> **Update:** Guardian-APC extends this design with IBP-guided deep boundary probes and coverage-ordered scheduling, evaluated on 96 models. See [guardian_apc.md](guardian_apc.md).
+
 ## Problem and idea
 
 Model compilers change computation graphs to make inference cheaper. A faulty graph rewrite can silently change a prediction. Guardian checks each rewrite immediately after it is applied, tries inputs selected for the graph's operators, and rolls back a rewrite when it finds a mismatch. It saves the input and both outputs so the failure can be replayed.

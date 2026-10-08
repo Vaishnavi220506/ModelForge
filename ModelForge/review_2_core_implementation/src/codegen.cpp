@@ -269,6 +269,8 @@ static Tensor fused_gemm_relu(const Tensor& a,
                        << referenceFor(graph, instruction.inputs[0]) << ");\n";
                 break;
             case IROp::TestReluDeadZone:
+            case IROp::TestReluClamp:
+            case IROp::TestLeakyRelu:
                 diagnostics.error("codegen", "Test-only fault injection operator cannot be generated");
                 return false;
             case IROp::Sigmoid:

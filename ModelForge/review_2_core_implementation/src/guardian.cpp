@@ -1,5 +1,7 @@
 #include "guardian.h"
 
+#include "analysis.h"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -42,7 +44,7 @@ GuardianDecision checkCandidate(const IRGraph& before,
                                 float tolerance) {
     GuardianDecision decision;
     decision.passName = passName;
-    const auto probes = generateValidationProbes(before);
+    const auto probes = generateGuardianProbes(before);
     decision.validation = validateOptimization(before, candidate, probes, diagnostics, tolerance);
     decision.accepted = !probes.empty() && decision.validation.passed && !diagnostics.hasErrors();
     if (!decision.accepted) {

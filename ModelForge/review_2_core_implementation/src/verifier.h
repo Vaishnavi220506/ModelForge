@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace modelforge {
@@ -36,6 +37,13 @@ struct TranslationValidationReport {
 std::optional<std::vector<float>> executeIR(const IRGraph& graph,
                                             const std::vector<float>& input,
                                             DiagnosticEngine& diagnostics);
+
+// Same as executeIR, but also stores every intermediate value when trace is set.
+std::optional<std::vector<float>> executeIRTrace(
+    const IRGraph& graph,
+    const std::vector<float>& input,
+    DiagnosticEngine& diagnostics,
+    std::unordered_map<std::string, std::vector<float>>* trace);
 
 VerificationReport compareOutputs(const std::vector<float>& expected,
                                    const std::vector<float>& actual,

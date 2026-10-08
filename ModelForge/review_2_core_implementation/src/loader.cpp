@@ -116,7 +116,19 @@ bool loadManifest(const std::string& path,
         diagnostics.error("loader", "Cannot open model file '" + path + "'");
         return false;
     }
+    return parseManifest(file, model, diagnostics);
+}
 
+bool loadManifestText(const std::string& text,
+                      ModelGraph& model,
+                      DiagnosticEngine& diagnostics) {
+    std::istringstream stream(text);
+    return parseManifest(stream, model, diagnostics);
+}
+
+bool parseManifest(std::istream& file,
+                   ModelGraph& model,
+                   DiagnosticEngine& diagnostics) {
     model = {};
     std::string rawLine;
     int lineNumber = 0;

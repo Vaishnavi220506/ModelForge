@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModelForge Guardian Dashboard</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0c0e14;
+  --surface-1: #141821;
+  --surface-2: #1b2030;
+  --border: #262c3d;
+  --grid: #232838;
+  --text-primary: #f3f4f8;
+  --text-secondary: #b6bccb;
+  --text-muted: #7c8499;
+  --accent: #3987e5;
+  --muted-mark: #4a5266;
+  --good: #3fb37f;
+  --bad: #e66767;
+  --warn: #c98500;
+  --s-guardian_apc: #3987e5;
+  --s-random: #d95926;
+  --s-guardian_v1: #199e70;
+  --s-generic: #c98500;
+  --s-deep_boundary: #d55181;
+  --s-union_unordered: #008300;
+  --s-apc_without_deep: #9085e9;
+  --seq-0: #1b2030; --seq-1: #184f95; --seq-2: #256abf; --seq-3: #3987e5; --seq-4: #6da7ec; --seq-5: #b7d3f6;
+  --shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 24px rgba(0,0,0,0.25);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface-1: #ffffff;
+  --surface-2: #f7f8fa;
+  --border: #e3e5ea;
+  --grid: #eceef2;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7b7a75;
+  --accent: #2a78d6;
+  --muted-mark: #c4c7cf;
+  --good: #1a8a5a;
+  --bad: #c93a3a;
+  --warn: #a86f00;
+  --s-guardian_apc: #2a78d6;
+  --s-random: #eb6834;
+  --s-guardian_v1: #1baf7a;
+  --s-generic: #eda100;
+  --s-deep_boundary: #e87ba4;
+  --s-union_unordered: #008300;
+  --s-apc_without_deep: #4a3aa7;
+  --seq-0: #f3f6fb; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5; --seq-5: #1c5cab;
+  --shadow: 0 1px 2px rgba(16,24,40,0.05), 0 4px 16px rgba(16,24,40,0.06);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f4f5f7; --surface-1: #ffffff; --surface-2: #f7f8fa; --border: #e3e5ea; --grid: #eceef2;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7b7a75; --accent: #2a78d6;
+    --muted-mark: #c4c7cf; --good: #1a8a5a; --bad: #c93a3a; --warn: #a86f00;
+    --s-guardian_apc: #2a78d6; --s-random: #eb6834; --s-guardian_v1: #1baf7a; --s-generic: #eda100;
+    --s-deep_boundary: #e87ba4; --s-union_unordered: #008300; --s-apc_without_deep: #4a3aa7;
+    --seq-0: #f3f6fb; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5; --seq-5: #1c5cab;
+    --shadow: 0 1px 2px rgba(16,24,40,0.05), 0 4px 16px rgba(16,24,40,0.06);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px 64px; }
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.top-inner { max-width: 1240px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #6366f1, #14b8a6); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px; }
+.brand h1 { font-size: 16px; margin: 0; letter-spacing: 0.1px; }
+.brand p { margin: 0; font-size: 12px; color: var(--text-muted); }
+nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+nav.tabs button, .chip, .ghost {
+  font: inherit; font-size: 13px; color: var(--text-secondary); background: transparent;
+  border: 1px solid transparent; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+nav.tabs button:hover, .ghost:hover { background: var(--surface-2); color: var(--text-primary); }
+nav.tabs button[aria-selected="true"] { background: var(--surface-1); border-color: var(--border); color: var(--text-primary); box-shadow: var(--shadow); }
+.ghost { border-color: var(--border); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.meta { font-size: 12px; color: var(--text-muted); margin: 22px 0 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+.meta span b { color: var(--text-secondary); font-weight: 500; }
+.hero { margin: 8px 0 22px; }
+.hero h2 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.3px; max-width: 900px; }
+.hero p { margin: 0; color: var(--text-secondary); max-width: 860px; }
+.grid { display: grid; gap: 16px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 16px; }
+.two { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.half { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 900px) { .two, .half { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 18px 18px 14px; box-shadow: var(--shadow); min-width: 0; }
+.card h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+.card .sub { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
+.kpi .label { color: var(--text-muted); font-size: 12px; }
+.kpi .value { font-size: 30px; font-weight: 650; letter-spacing: -0.5px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .note { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+.kpi .delta { font-size: 12px; font-weight: 600; }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-secondary); background: var(--surface-2); white-space: nowrap; }
+.pill.ok::before { content: "✓"; color: var(--good); font-weight: 700; }
+.pill.no::before { content: "✕"; color: var(--bad); font-weight: 700; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 10px; font-size: 12.5px; color: var(--text-secondary); }
+.legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.legend input { accent-color: var(--accent); margin: 0; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--text-muted); font-size: 11px; }
+.axis line, .gridline { stroke: var(--grid); stroke-width: 1; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover td { background: var(--surface-2); }
+.scroll { overflow-x: auto; }
+.heat td.cell { text-align: center; font-variant-numeric: tabular-nums; font-size: 12.5px; border: 2px solid var(--surface-1); border-radius: 6px; min-width: 64px; }
+.tooltip { position: fixed; pointer-events: none; z-index: 50; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.08s; min-width: 140px; }
+.tooltip .t-title { color: var(--text-muted); font-size: 11.5px; margin-bottom: 4px; }
+.tooltip .t-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tooltip .t-row span:first-child { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.tooltip b { font-variant-numeric: tabular-nums; }
+details.data { margin-top: 10px; }
+details.data summary { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+.empty { padding: 60px 24px; text-align: center; color: var(--text-secondary); }
+.empty code { background: var(--surface-2); padding: 2px 6px; border-radius: 6px; }
+.drop { margin: 18px auto 0; max-width: 520px; border: 1.5px dashed var(--border); border-radius: 14px; padding: 22px; }
+.flow { display: flex; flex-direction: column; gap: 6px; }
+.node { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.node .op { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px; color: #fff; }
+.node .nm { color: var(--text-secondary); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; }
+.node .sh { margin-left: auto; color: var(--text-muted); font-size: 11.5px; }
+.arrow { text-align: center; color: var(--text-muted); font-size: 11px; line-height: 1; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 640px) { .cols { grid-template-columns: 1fr; } .wrap { padding: 0 16px 48px; } .top-inner { padding: 12px 16px; } }
+.decision { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 8px; }
+.decision:last-child { border-bottom: 0; }
+.small { font-size: 12px; color: var(--text-muted); }
+.claim { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin: 10px 0; color: var(--text-secondary); }
+section[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">MF</div>
+      <div><h1>ModelForge · Guardian-APC</h1><p>Coverage-guided translation validation for ML compilers</p></div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+      <button role="tab" data-tab="faults">Fault families</button>
+      <button role="tab" data-tab="stats">Statistics</button>
+      <button role="tab" data-tab="inspector">Model inspector</button>
+      <button role="tab" data-tab="corpus">Corpus</button>
+    </nav>
+    <button class="ghost" id="theme" type="button" aria-label="Toggle colour theme">◐ Theme</button>
+  </div>
+</header>
+
+<main class="wrap" id="app"></main>
+<div class="tooltip" id="tip" role="status" aria-live="polite"></div>
+
+<script src="data.js"></script>
+<script>
+"use strict";
+(() => {
+const STRATS = ["guardian_apc", "random", "guardian_v1", "generic", "deep_boundary", "union_unordered", "apc_without_deep"];
+const NAMES = {
+  guardian_apc: "Guardian-APC (ours)", random: "Uniform random", guardian_v1: "Guardian v1",
+  generic: "Generic probes", deep_boundary: "Deep boundary only", union_unordered: "Union, unordered",
+  apc_without_deep: "APC order, no deep"
+};
+const DEFAULT_ON = new Set(["guardian_apc", "random", "guardian_v1", "generic"]);
+const OP_COLOURS = { INPUT: "#64748b", RETURN: "#64748b", GEMM: "#4f46e5", MATMUL: "#4f46e5", FUSED_GEMM_RELU: "#0d9488", ADD: "#2563eb", RELU: "#b45309", SIGMOID: "#be185d", SOFTMAX: "#7c3aed" };
+
+const app = document.getElementById("app");
+const tip = document.getElementById("tip");
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const colour = (s) => css("--s-" + s) || css("--muted-mark");
+const pct = (v, d = 1) => v == null || isNaN(v) ? "–" : (v * 100).toFixed(d) + "%";
+const fmt = (v, d = 1) => v == null || isNaN(v) ? "–" : Number(v).toFixed(d);
+const el = (tag, attrs = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v; else if (k === "text") node.textContent = v;
+    else if (k === "style") node.setAttribute("style", v); else node.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return node;
+};
+const svgEl = (tag, attrs = {}) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+};
+
+// ------------------------------------------------------------- tooltip
+function showTip(evt, title, rows) {
+  tip.replaceChildren(el("div", { class: "t-title", text: title }));
+  for (const r of rows) {
+    const left = el("span");
+    if (r.colour) left.append(el("i", { class: "swatch", style: "background:" + r.colour }));
+    left.append(document.createTextNode(r.label));
+    tip.append(el("div", { class: "t-row" }, left, el("b", { text: r.value })));
+  }
+  tip.style.opacity = 1;
+  const x = Math.min(evt.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  const y = Math.min(evt.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+// ------------------------------------------------------------- charts
+function lineChart(points, series, opts) {
+  // points: x values; series: [{key, values:[y], lo:[], hi:[]}]
+  const W = 720, H = 320, m = { l: 44, r: 170, t: 12, b: 34 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label });
+  const xs = (i) => m.l + (i / (points.length - 1)) * (W - m.l - m.r);
+  const ys = (v) => m.t + (1 - (v - opts.yMin) / (opts.yMax - opts.yMin)) * (H - m.t - m.b);
+  for (let t = 0; t <= 4; t++) {
+    const v = opts.yMin + (t / 4) * (opts.yMax - opts.yMin);
+    svg.append(svgEl("line", { class: "gridline", x1: m.l, x2: W - m.r, y1: ys(v), y2: ys(v) }));
+    const label = svgEl("text", { x: m.l - 8, y: ys(v) + 4, "text-anchor": "end" }); label.textContent = pct(v, 0); svg.append(label);
+  }
+  points.forEach((p, i) => { const t = svgEl("text", { x: xs(i), y: H - 12, "text-anchor": "middle" }); t.textContent = p; svg.append(t); });
+  const xl = svgEl("text", { x: (m.l + W - m.r) / 2, y: H, "text-anchor": "middle" }); xl.textContent = opts.xLabel; svg.append(xl);
+  const labels = [];
+  for (const s of series) {
+    const c = colour(s.key);
+    if (s.lo && s.key === "guardian_apc") {
+      let d = s.hi.map((v, i) => `${i ? "L" : "M"}${xs(i)},${ys(v)}`).join("");
+      d += s.lo.map((v, i) => `L${xs(s.lo.length - 1 - i)},${ys(s.lo[s.lo.length - 1 - i])}`).join("") + "Z";
+      svg.append(svgEl("path", { d, fill: c, opacity: 0.12 }));
+    }
+    const d = s.values.map((v, i) => `${i ? "L" : "M"}${xs(i)},${ys(v)}`).join("");
+    svg.append(svgEl("path", { d, fill: "none", stroke: c, "stroke-width": s.key === "guardian_apc" ? 2.5 : 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    s.values.forEach((v, i) => svg.append(svgEl("circle", { cx: xs(i), cy: ys(v), r: 3.5, fill: c, stroke: css("--surface-1"), "stroke-width": 2 })));
+    labels.push({ key: s.key, y: ys(s.values[s.values.length - 1]), v: s.values[s.values.length - 1] });
+  }
+  // Direct end labels, nudged apart to avoid collisions.
+  labels.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 14) labels[i].y = labels[i - 1].y + 14;
+  for (const l of labels) {
+    const t = svgEl("text", { x: W - m.r + 10, y: l.y + 4 });
+    t.textContent = `${NAMES[l.key]}  ${pct(l.v, 0)}`;
+    t.setAttribute("style", `fill:${css("--text-secondary")};font-weight:${l.key === "guardian_apc" ? 600 : 400}`);
+    svg.append(t);
+  }
+  const cross = svgEl("line", { y1: m.t, y2: H - m.b, stroke: css("--text-muted"), "stroke-width": 1, opacity: 0 });
+  svg.append(cross);
+  const hit = svgEl("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" });
+  hit.addEventListener("pointermove", (e) => {
+    const box = svg.getBoundingClientRect();
+    const px = ((e.clientX - box.left) / box.width) * W;
+    const i = Math.max(0, Math.min(points.length - 1, Math.round(((px - m.l) / (W - m.l - m.r)) * (points.length - 1))));
+    cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("opacity", 0.6);
+    const rows = series.map((s) => ({ label: NAMES[s.key], value: pct(s.values[i]), colour: colour(s.key), v: s.values[i] })).sort((a, b) => b.v - a.v);
+    showTip(e, `${opts.xLabel} ${points[i]}`, rows);
+  });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("opacity", 0); hideTip(); });
+  svg.append(hit);
+  return svg;
+}
+
+function barList(rows, opts = {}) {
+  // Horizontal bars with optional CI whiskers; emphasis on the highlighted row.
+  const W = 560, rowH = 30, m = { l: 150, r: 64, t: 4, b: 22 };
+  const H = m.t + rows.length * rowH + m.b;
+  const max = opts.max ?? Math.max(...rows.map((r) => r.hi ?? r.value)) * 1.05;
+  const xs = (v) => m.l + (v / max) * (W - m.l - m.r);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.label || "bar chart" });
+  for (let t = 0; t <= 4; t++) {
+    const v = (t / 4) * max;
+    svg.append(svgEl("line", { class: "gridline", x1: xs(v), x2: xs(v), y1: m.t, y2: H - m.b }));
+    const tx = svgEl("text", { x: xs(v), y: H - 6, "text-anchor": "middle" }); tx.textContent = opts.tick ? opts.tick(v) : fmt(v, 0); svg.append(tx);
+  }
+  rows.forEach((r, i) => {
+    const y = m.t + i * rowH + 7, h = rowH - 14;
+    const lab = svgEl("text", { x: m.l - 10, y: y + h / 2 + 4, "text-anchor": "end" });
+    lab.textContent = r.label;
+    lab.setAttribute("style", `fill:${css(r.highlight ? "--text-primary" : "--text-secondary")};font-weight:${r.highlight ? 600 : 400};font-size:12px`);
+    svg.append(lab);
+    const fill = r.colour || (r.highlight ? css("--accent") : css("--muted-mark"));
+    const w = Math.max(2, xs(r.value) - m.l);
+    svg.append(svgEl("path", { d: `M${m.l},${y}h${w - 4}a4,4 0 0 1 4,4v${h - 8}a4,4 0 0 1 -4,4h${-(w - 4)}z`, fill }));
+    if (r.lo != null) {
+      const c = css("--text-secondary");
+      svg.append(svgEl("line", { x1: xs(r.lo), x2: xs(r.hi), y1: y + h / 2, y2: y + h / 2, stroke: c, "stroke-width": 1.5 }));
+      for (const v of [r.lo, r.hi]) svg.append(svgEl("line", { x1: xs(v), x2: xs(v), y1: y + 3, y2: y + h - 3, stroke: c, "stroke-width": 1.5 }));
+    }
+    const val = svgEl("text", { x: xs(r.hi ?? r.value) + 8, y: y + h / 2 + 4 });
+    val.textContent = opts.valueText ? opts.valueText(r) : fmt(r.value);
+    val.setAttribute("style", `fill:${css("--text-primary")};font-size:12px;font-variant-numeric:tabular-nums`);
+    svg.append(val);
+    const hit = svgEl("rect", { x: 0, y: y - 6, width: W, height: rowH, fill: "transparent" });
+    hit.addEventListener("pointermove", (e) => showTip(e, r.label, r.tip || [{ label: "value", value: opts.valueText ? opts.valueText(r) : fmt(r.value) }]));
+    hit.addEventListener("pointerleave", hideTip);
+    svg.append(hit);
+  });
+  return svg;
+}
+
+function seqColour(v) {
+  const steps = [0, 1, 2, 3, 4, 5].map((i) => css("--seq-" + i));
+  return steps[Math.max(0, Math.min(5, Math.round(v * 5)))];
+}
+function heatCell(v, tipTitle, tipRows) {
+  const td = el("td", { class: "cell", text: pct(v, 0) });
+  td.style.background = seqColour(v);
+  td.style.color = v > 0.6 ? (document.documentElement.dataset.theme === "light" || matchMedia("(prefers-color-scheme: light)").matches && document.documentElement.dataset.theme !== "dark" ? "#fff" : "#0b0b0b") : css("--text-primary");
+  td.tabIndex = 0;
+  td.addEventListener("pointermove", (e) => showTip(e, tipTitle, tipRows));
+  td.addEventListener("pointerleave", hideTip);
+  td.addEventListener("focus", () => { const r = td.getBoundingClientRect(); showTip({ clientX: r.right, clientY: r.bottom }, tipTitle, tipRows); });
+  td.addEventListener("blur", hideTip);
+  return td;
+}
+
+function dataTable(headers, rows, numeric = []) {
+  return el("div", { class: "scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, headers.map((h, i) => el("th", { class: numeric.includes(i) ? "num" : "", text: h })))),
+    el("tbody", {}, rows.map((r) => el("tr", {}, r.map((c, i) => c && c.nodeType ? el("td", {}, c) : el("td", { class: numeric.includes(i) ? "num" : "", text: c })))))));
+}
+const card = (title, sub, ...body) => el("div", { class: "card" }, el("h3", { text: title }), sub ? el("p", { class: "sub", text: sub }) : null, ...body);
+const details = (label, content) => el("details", { class: "data" }, el("summary", { text: label }), content);
+
+// ------------------------------------------------------------- sections
+function overview(bench) {
+  const s = Object.fromEntries(bench.strategies.map((x) => [x.name, x]));
+  const ours = s.guardian_apc, rnd = s.random, v1 = s.guardian_v1;
+  const cmp = Object.fromEntries(bench.comparisons.map((c) => [c.b, c]));
+  const wrap = el("section", { "data-panel": "overview" });
+  wrap.append(el("div", { class: "hero" },
+    el("h2", { text: `Guardian-APC catches ${pct(ours.overall.rate)} of observable faulty rewrites at a ${bench.config.budget}-probe budget, versus ${pct(rnd.overall.rate)} for uniform random testing.` }),
+    el("p", { text: `Equal-budget fault injection over ${bench.corpus.models} synthetic feed-forward models (${bench.corpus.faults_total} injected faults, ${bench.corpus.observable} observable). Interval bound propagation marks unstable ReLUs; Newton steps on the exact input gradient place probes on each unstable kink at every depth; probes are scheduled by activation-pattern coverage.` })));
+
+  const fp = bench.strategies.reduce((a, x) => a + x.false_positives, 0);
+  const kpi = (label, value, note, delta) => el("div", { class: "card kpi" }, el("div", { class: "label", text: label }), el("div", { class: "value", text: value }), delta || null, el("div", { class: "note", text: note }));
+  wrap.append(el("div", { class: "grid kpis" },
+    kpi("Detection rate (ours)", pct(ours.overall.rate), `95% CI ${pct(ours.overall.ci[0])} – ${pct(ours.overall.ci[1])}`,
+      el("div", { class: "delta pos", text: `+${((ours.overall.rate - rnd.overall.rate) * 100).toFixed(1)} pts vs random · +${((ours.overall.rate - v1.overall.rate) * 100).toFixed(1)} vs v1` })),
+    kpi("Probes to first detection", fmt(ours.mean_first), `mean over detected faults; random needs ${fmt(rnd.mean_first)}`),
+    kpi("Activation-pattern coverage", pct(ours.apc, 0), `random reaches ${pct(rnd.apc, 0)} · boundary APC ${pct(ours.boundary_apc, 0)}`),
+    kpi("Paired McNemar vs random", cmp.random ? (cmp.random.p_value < 1e-4 ? "p < 1e-4" : "p = " + cmp.random.p_value.toPrecision(2)) : "–",
+      cmp.random ? `${cmp.random.only_a} cases only ours, ${cmp.random.only_b} only random` : ""),
+    kpi("False alarms", String(fp), `on ${bench.corpus.controls} unreachable-node negative controls`),
+    kpi("Synthesis cost", fmt(ours.generation_ms, 2) + " ms", "per model, probe generation + IBP + ordering")));
+
+  // Budget curve
+  const active = new Set(DEFAULT_ON);
+  const legend = el("div", { class: "legend", role: "group", "aria-label": "Strategies shown" });
+  const chartBox = el("div");
+  const redraw = () => {
+    const shown = STRATS.filter((k) => active.has(k) && s[k]);
+    const points = s.guardian_apc.curve.map((p) => p.budget);
+    const series = shown.map((k) => ({ key: k, values: s[k].curve.map((p) => p.rate), lo: s[k].curve.map((p) => p.ci[0]), hi: s[k].curve.map((p) => p.ci[1]) }));
+    chartBox.replaceChildren(lineChart(points, series, { yMin: 0.2, yMax: 1, xLabel: "Probe budget B", label: "Detection rate versus probe budget" }));
+  };
+  for (const k of STRATS) {
+    if (!s[k]) continue;
+    const box = el("input", { type: "checkbox" }); box.checked = active.has(k);
+    box.addEventListener("change", () => { box.checked ? active.add(k) : active.delete(k); redraw(); });
+    legend.append(el("label", {}, box, el("i", { class: "swatch", style: "background:" + colour(k) }), NAMES[k]));
+  }
+  redraw();
+  const curveTable = dataTable(["Strategy", ...s.guardian_apc.curve.map((p) => "B=" + p.budget)],
+    STRATS.filter((k) => s[k]).map((k) => [NAMES[k], ...s[k].curve.map((p) => pct(p.rate))]), s.guardian_apc.curve.map((_, i) => i + 1));
+
+  const ranked = [...bench.strategies].sort((a, b) => b.overall.rate - a.overall.rate);
+  const leader = barList(ranked.map((x) => ({
+    label: NAMES[x.name], value: x.overall.rate, lo: x.overall.ci[0], hi: x.overall.ci[1], highlight: x.name === "guardian_apc",
+    tip: [{ label: "detected", value: `${x.overall.detected}/${x.overall.trials}` }, { label: "rate", value: pct(x.overall.rate) }, { label: "95% CI", value: `${pct(x.overall.ci[0])} – ${pct(x.overall.ci[1])}` }, { label: "mean 1st", value: fmt(x.mean_first) }]
+  })), { max: 1, tick: (v) => pct(v, 0), valueText: (r) => pct(r.value), label: "Detection rate at full budget" });
+
+  wrap.append(el("div", { class: "grid two" },
+    card("Detection rate vs probe budget", "Share of observable faults exposed within the first B probes. Shaded band: Wilson 95% CI for Guardian-APC. Toggle ablations below.", legend, chartBox, details("Show data table", curveTable)),
+    card("Leaderboard at B = " + bench.config.budget, "Detection rate with Wilson 95% intervals. Random counts every seed as a trial.", leader)));
+  return wrap;
+}
+
+function faults(bench) {
+  const wrap = el("section", { "data-panel": "faults", hidden: "" });
+  const s = Object.fromEntries(bench.strategies.map((x) => [x.name, x]));
+  const families = Object.keys(s.guardian_apc.families);
+  const order = STRATS.filter((k) => s[k]);
+  const heat = el("table", { class: "heat" },
+    el("thead", {}, el("tr", {}, el("th", { text: "Fault family" }), order.map((k) => el("th", { class: "num", text: NAMES[k] })))),
+    el("tbody", {}, families.map((f) => el("tr", {}, el("td", { text: f }),
+      order.map((k) => { const p = s[k].families[f]; return heatCell(p ? p.rate : 0, `${f} · ${NAMES[k]}`, [{ label: "detected", value: p ? `${p.detected}/${p.trials}` : "–" }, { label: "rate", value: pct(p && p.rate) }, { label: "95% CI", value: p ? `${pct(p.ci[0])} – ${pct(p.ci[1])}` : "–" }]); })))));
+  const scale = el("div", { class: "legend" }, el("span", { text: "0%" }), ...[0, 1, 2, 3, 4, 5].map((i) => el("i", { class: "swatch", style: `background:${css("--seq-" + i)};width:22px` })), el("span", { text: "100%" }));
+  wrap.append(card("Detection rate by fault family", "Rows are injected fault families; dead_zone_1e-* match the boundary-probe offsets, while dead_zone_random, relu_clamp, leaky_relu and the ε-faults are held out from the probe design.", scale, el("div", { class: "scroll" }, heat)));
+
+  const subsetNames = { design_aligned: "Design-aligned faults", held_out: "Held-out faults", first_layer: "First ReLU layer", deep_layers: "Deeper ReLU layers" };
+  const subsetCards = Object.keys(subsetNames).map((key) => card(subsetNames[key], key === "held_out" ? "Families the probe targets were not tuned for." : key === "deep_layers" ? "Faults injected beyond the first activation layer, where v1 had no boundary probes." : key === "first_layer" ? "Faults in the first activation layer (v1's model-conditioned probes apply here)." : "Dead zones whose widths match the probe offsets.",
+    barList(order.filter((k) => s[k].subsets && s[k].subsets[key]).map((k) => ({ label: NAMES[k], value: s[k].subsets[key].rate, lo: s[k].subsets[key].ci[0], hi: s[k].subsets[key].ci[1], highlight: k === "guardian_apc", tip: [{ label: "detected", value: `${s[k].subsets[key].detected}/${s[k].subsets[key].trials}` }, { label: "rate", value: pct(s[k].subsets[key].rate) }] })), { max: 1, tick: (v) => pct(v, 0), valueText: (r) => pct(r.value), label: subsetNames[key] })));
+  wrap.append(el("div", { class: "grid half", style: "margin-top:16px" }, ...subsetCards));
+  return wrap;
+}
+
+function stats(bench) {
+  const wrap = el("section", { "data-panel": "stats", hidden: "" });
+  const s = Object.fromEntries(bench.strategies.map((x) => [x.name, x]));
+  const rows = bench.comparisons.map((c) => {
+    const verdict = c.p_value < 0.05 ? (c.only_a > c.only_b ? el("span", { class: "pill ok", text: "better" }) : el("span", { class: "pill no", text: "worse" })) : el("span", { class: "pill", text: "n.s." });
+    return [NAMES[c.b], String(c.only_a), String(c.only_b), String(c.both), String(c.neither), c.p_value < 1e-4 ? "< 1e-4" : c.p_value.toPrecision(3), verdict];
+  });
+  wrap.append(card("Paired exact McNemar tests", "Guardian-APC against each baseline on the same (model, fault) cases. Discordant pairs decide the test; random contributes one pair per seed.",
+    dataTable(["Baseline", "Only ours", "Only baseline", "Both", "Neither", "Exact p", "Verdict"], rows, [1, 2, 3, 4, 5])));
+
+  // Coverage vs detection scatter
+  const W = 560, H = 320, m = { l: 48, r: 16, t: 14, b: 40 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Activation-pattern coverage versus detection rate" });
+  const xs = (v) => m.l + ((v - 0.4) / 0.6) * (W - m.l - m.r), ys = (v) => m.t + (1 - (v - 0.6) / 0.4) * (H - m.t - m.b);
+  for (let t = 0; t <= 4; t++) {
+    const xv = 0.4 + t * 0.15, yv = 0.6 + t * 0.1;
+    svg.append(svgEl("line", { class: "gridline", x1: xs(xv), x2: xs(xv), y1: m.t, y2: H - m.b }));
+    svg.append(svgEl("line", { class: "gridline", x1: m.l, x2: W - m.r, y1: ys(yv), y2: ys(yv) }));
+    const a = svgEl("text", { x: xs(xv), y: H - m.b + 16, "text-anchor": "middle" }); a.textContent = pct(xv, 0); svg.append(a);
+    const b = svgEl("text", { x: m.l - 8, y: ys(yv) + 4, "text-anchor": "end" }); b.textContent = pct(yv, 0); svg.append(b);
+  }
+  const xl = svgEl("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }); xl.textContent = "Activation-pattern coverage (mean per model)"; svg.append(xl);
+  for (const k of STRATS) {
+    if (!s[k]) continue;
+    const x = xs(s[k].apc), y = ys(Math.max(0.6, s[k].overall.rate));
+    const dot = svgEl("circle", { cx: x, cy: y, r: k === "guardian_apc" ? 8 : 6.5, fill: colour(k), stroke: css("--surface-1"), "stroke-width": 2 });
+    dot.addEventListener("pointermove", (e) => showTip(e, NAMES[k], [{ label: "APC", value: pct(s[k].apc) }, { label: "detection", value: pct(s[k].overall.rate) }, { label: "boundary APC", value: pct(s[k].boundary_apc) }]));
+    dot.addEventListener("pointerleave", hideTip);
+    svg.append(dot);
+    if (["guardian_apc", "random"].includes(k)) {
+      const t = svgEl("text", { x: x + (k === "guardian_apc" ? -12 : 12), y: y + (k === "guardian_apc" ? 18 : 4), "text-anchor": k === "guardian_apc" ? "end" : "start" });
+      t.textContent = NAMES[k]; t.setAttribute("style", `fill:${css("--text-secondary")}`); svg.append(t);
+    }
+  }
+  const legend = el("div", { class: "legend" }, STRATS.filter((k) => s[k]).map((k) => el("span", { style: "display:inline-flex;gap:6px;align-items:center" }, el("i", { class: "swatch", style: "background:" + colour(k) }), NAMES[k])));
+  const cost = barList(STRATS.filter((k) => s[k]).map((k) => ({ label: NAMES[k], value: s[k].generation_ms, highlight: k === "guardian_apc", tip: [{ label: "ms / model", value: fmt(s[k].generation_ms, 3) }, { label: "native probes", value: fmt(s[k].native_probes, 1) }] })), { tick: (v) => fmt(v, 1), valueText: (r) => fmt(r.value, 2) + " ms", label: "Probe synthesis time per model" });
+  wrap.append(el("div", { class: "grid half", style: "margin-top:16px" },
+    card("Coverage predicts detection", "Each dot is a strategy: higher activation-pattern coverage of (neuron, pre-activation bin) states goes with higher fault detection.", legend, svg),
+    card("Cost of probe synthesis", "Mean wall-clock per model on this machine, including IBP, Newton boundary solving and greedy ordering.", cost,
+      el("p", { class: "small", text: `Total benchmark runtime: ${fmt(bench.runtime_seconds, 1)} s on ${bench.platform} (${bench.compiler}).` }))));
+  return wrap;
+}
+
+function inspector(data) {
+  const wrap = el("section", { "data-panel": "inspector", hidden: "" });
+  if (!data) { wrap.append(el("div", { class: "card empty", text: "No inspector data. Run modelforge_bench to generate it." })); return wrap; }
+  const flow = (ins) => el("div", { class: "flow" }, ins.flatMap((x, i) => [
+    el("div", { class: "node" }, el("span", { class: "op", style: "background:" + (OP_COLOURS[x.op] || "#475569"), text: x.op }), el("span", { class: "nm", text: `${x.node}  →  ${x.output}` }), el("span", { class: "sh mono", text: x.shape.join("×") })),
+    i + 1 < ins.length ? el("div", { class: "arrow", "aria-hidden": "true", text: "▼" }) : null]));
+  wrap.append(el("div", { class: "hero" }, el("h2", { text: `Model inspector · ${data.model}` }),
+    el("p", { text: `Input ${data.input_shape.join("×")}, output ${data.output_shape.join("×")} · ${data.guardian_probe_count} Guardian-APC probes · source ${data.path}` })));
+  wrap.append(card("IR before and after guarded optimisation", "Each rewrite is applied to a copy and only kept if every probe agrees with the graph before it.",
+    el("div", { class: "cols" }, el("div", {}, el("p", { class: "small", text: "Lowered IR" }), flow(data.ir_before)), el("div", {}, el("p", { class: "small", text: "Guardian-accepted IR" }), flow(data.ir_after)))));
+
+  const decisions = el("div", {}, data.guardian.map((d) => el("div", { class: "decision" },
+    el("div", {}, el("b", { text: d.pass }), el("div", { class: "small", text: d.events.length ? d.events.join(" · ") : "no rewrite proposed" })),
+    el("div", { style: "text-align:right" }, el("span", { class: "pill " + (d.accepted ? "ok" : "no"), text: d.accepted ? "accepted" : "rejected" }), el("div", { class: "small", text: `${d.probes} probes · max |err| ${Number(d.max_error).toExponential(1)}` })))));
+  let demo = el("p", { class: "small", text: "No demo bug available for this model." });
+  if (data.demo_bug && data.demo_bug.original_output) {
+    const a = data.demo_bug.original_output, b = data.demo_bug.candidate_output;
+    const rows = [];
+    a.forEach((v, i) => { rows.push({ label: `class ${i} · original`, value: v, colour: css("--s-guardian_apc") }); rows.push({ label: `class ${i} · faulty`, value: b[i], colour: css("--s-random") }); });
+    demo = el("div", {},
+      el("p", { class: "claim", text: `ReLU → Sigmoid rewrite ${data.demo_bug.accepted ? "was missed" : "rejected and rolled back"} after ${data.demo_bug.probes} probes. Minimised witness: ${data.demo_bug.probe}, input [${data.demo_bug.input.map((v) => fmt(v, 3)).join(", ")}].` }),
+      barList(rows.map((r) => ({ ...r, tip: [{ label: "probability", value: fmt(r.value, 4) }] })), { max: 1, tick: (v) => fmt(v, 2), valueText: (r) => fmt(r.value, 4), label: "Original versus faulty output" }),
+      el("div", { class: "legend" }, el("span", {}, el("i", { class: "swatch", style: "background:" + css("--s-guardian_apc") }), " original graph"), el("span", {}, el("i", { class: "swatch", style: "background:" + css("--s-random") }), " faulty candidate")));
+  }
+  wrap.append(el("div", { class: "grid half", style: "margin-top:16px" }, card("Guardian decisions", "One verdict per optimisation pass.", decisions), card("Replayable counterexample", "Saved to counterexample.json by the compiler.", demo)));
+
+  // IBP intervals
+  const site = data.sites[0];
+  if (site) {
+    const ext = Math.max(1, ...site.lower.map(Math.abs), ...site.upper.map(Math.abs));
+    const W = 560, rowH = 26, m = { l: 60, r: 20, t: 8, b: 24 }, H = m.t + site.width * rowH + m.b;
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Pre-activation intervals" });
+    const xs = (v) => m.l + ((v + ext) / (2 * ext)) * (W - m.l - m.r);
+    svg.append(svgEl("line", { x1: xs(0), x2: xs(0), y1: m.t, y2: H - m.b, stroke: css("--s-deep_boundary"), "stroke-width": 1.5 }));
+    for (const v of [-ext, 0, ext]) { const t = svgEl("text", { x: xs(v), y: H - 6, "text-anchor": "middle" }); t.textContent = fmt(v, 1); svg.append(t); }
+    site.lower.forEach((lo, i) => {
+      const y = m.t + i * rowH + rowH / 2, hi = site.upper[i];
+      const st = lo > 0 ? "stable active" : hi <= 0 ? "stable inactive" : "unstable";
+      const t = svgEl("text", { x: m.l - 10, y: y + 4, "text-anchor": "end" }); t.textContent = "n" + i; svg.append(t);
+      svg.append(svgEl("line", { x1: xs(lo), x2: xs(hi), y1: y, y2: y, stroke: st === "unstable" ? css("--warn") : css("--good"), "stroke-width": 6, "stroke-linecap": "round" }));
+      const hit = svgEl("rect", { x: 0, y: y - rowH / 2, width: W, height: rowH, fill: "transparent" });
+      hit.addEventListener("pointermove", (e) => showTip(e, `${site.node} · neuron ${i}`, [{ label: "lower", value: fmt(lo, 3) }, { label: "upper", value: fmt(hi, 3) }, { label: "status", value: st }]));
+      hit.addEventListener("pointerleave", hideTip);
+      svg.append(hit);
+    });
+    const covRows = data.coverage.map((c) => ({ label: NAMES[c.strategy] || c.strategy, value: c.coverage.apc, highlight: c.strategy === "guardian_apc", tip: [{ label: "APC", value: pct(c.coverage.apc) }, { label: "boundary APC", value: pct(c.coverage.boundary_apc) }, { label: "states", value: `${c.coverage.covered}/${c.coverage.feasible}` }] }));
+    wrap.append(el("div", { class: "grid half", style: "margin-top:16px" },
+      card(`IBP pre-activation intervals · ${site.node}`, `Interval bound propagation over D = [-10, 10]^n. Amber: unstable (the kink at 0, pink line, is reachable), green: stable. ${site.unstable} of ${site.width} unstable.`, svg),
+      card("Activation-pattern coverage at equal budget", "Share of reachable (neuron, pre-activation bin) states hit by each 128-probe suite on this model.", barList(covRows, { max: 1, tick: (v) => pct(v, 0), valueText: (r) => pct(r.value, 0), label: "Coverage by strategy" }))));
+  }
+  const strategies = STRATS.filter((k) => data.faults[0] && k in data.faults[0].first);
+  const ftable = el("table", { class: "heat" },
+    el("thead", {}, el("tr", {}, el("th", { text: "Injected fault" }), el("th", { text: "Kind" }), strategies.map((k) => el("th", { class: "num", text: NAMES[k] || k })))),
+    el("tbody", {}, data.faults.map((f) => el("tr", {}, el("td", { class: "mono", text: f.fault }), el("td", { class: "small", text: f.locality + (f.held_out ? " · held-out" : "") }),
+      strategies.map((k) => {
+        const v = f.first[k];
+        const td = el("td", { class: "num", text: f.locality === "control" ? (v ? "false alarm" : "silent ✓") : v ? "#" + v : "missed" });
+        td.style.color = f.locality === "control" ? (v ? css("--bad") : css("--good")) : v ? (v <= 8 ? css("--good") : css("--text-primary")) : css("--bad");
+        if (k === "guardian_apc") td.style.fontWeight = 600;
+        return td;
+      })))));
+  wrap.append(el("div", { style: "margin-top:16px" }, card("Fault-injection arena", "#k is the index of the first probe that exposed the fault (lower is better); 'missed' means no probe in the 128-probe budget did.", el("div", { class: "scroll" }, ftable))));
+  return wrap;
+}
+
+function corpus(bench) {
+  const wrap = el("section", { "data-panel": "corpus", hidden: "" });
+  const c = bench.corpus;
+  const depthRows = Object.entries(c.depths).map(([d, n]) => ({ label: `${d} hidden layer${d === "1" ? "" : "s"}`, value: n, highlight: false, colour: css("--accent"), tip: [{ label: "models", value: String(n) }] }));
+  const neuronRows = [["Unstable", c.neurons.unstable, "--warn"], ["Stable active", c.neurons.stable_active, "--good"], ["Stable inactive", c.neurons.stable_inactive, "--muted-mark"]].map(([label, value, tok]) => ({ label, value, colour: css(tok), tip: [{ label: "neurons", value: String(value) }] }));
+  wrap.append(el("div", { class: "grid kpis" },
+    ...[["Models", c.models], ["Injected faults", c.faults_total], ["Observable", c.observable], ["Unknown (excluded)", c.unknown], ["Negative controls", c.controls], ["IBP soundness violations", c.ibp_violations]].map(([l, v]) => el("div", { class: "card kpi" }, el("div", { class: "label", text: l }), el("div", { class: "value", text: String(v) })))));
+  wrap.append(el("div", { class: "grid half" },
+    card("Depth distribution", "Synthetic He-initialised classifiers; depth cycles 1–4 hidden ReLU layers, widths 4–16, inputs 4–16, classes 2–5.", barList(depthRows, { valueText: (r) => String(r.value), tick: (v) => fmt(v, 0), label: "Models by depth" })),
+    card("Neuron stability over D", "Interval bound propagation on [-10, 10]^n. Unstable neurons are the targets for deep boundary probes.", barList(neuronRows, { valueText: (r) => String(r.value), tick: (v) => fmt(v, 0), label: "Neuron stability counts" }))));
+  wrap.append(el("div", { style: "margin-top:16px" }, card("Models", "Every model in the corpus, with its layer widths and fault counts.",
+    details("Show all " + bench.models.length + " models", dataTable(["Model", "Inputs", "Classes", "Hidden widths", "Unstable", "Faults", "Observable"], bench.models.map((x) => [x.name, String(x.inputs), String(x.classes), x.hidden.join(" · "), String(x.unstable), String(x.faults), String(x.observable)]), [1, 2, 4, 5, 6])),
+    bench.misses.length ? details(`Guardian-APC misses (${bench.misses.length} listed)`, dataTable(["Model", "Fault"], bench.misses.map((x) => [x.model, x.fault]))) : null)));
+  wrap.append(el("p", { class: "small", style: "margin-top:16px", text: `Config: budget ${bench.config.budget}, ${bench.config.random_seeds} random seeds, ${bench.config.oracle_probes} oracle probes per fault, tolerance ${bench.config.tolerance}, master seed ${bench.config.seed}. A fault counts as observable when any suite or the random oracle exposes it; others are reported as unknown and excluded.` }));
+  return wrap;
+}
+
+// ------------------------------------------------------------- boot
+function render(data) {
+  app.replaceChildren();
+  if (!data || !data.bench) { empty(); return; }
+  const b = data.bench;
+  app.append(el("div", { class: "meta" },
+    el("span", {}, "Generated ", el("b", { text: b.generated_at })), el("span", {}, "Platform ", el("b", { text: `${b.platform} · ${b.compiler}` })),
+    el("span", {}, "Corpus ", el("b", { text: `${b.corpus.models} models · ${b.corpus.faults_total} faults` })), el("span", {}, "Budget ", el("b", { text: String(b.config.budget) }))));
+  app.append(overview(b), faults(b), stats(b), inspector(data.inspect), corpus(b));
+  selectTab(currentTab);
+}
+function empty() {
+  const input = el("input", { type: "file", accept: ".json" });
+  input.addEventListener("change", () => { const f = input.files[0]; if (f) f.text().then((t) => render({ bench: JSON.parse(t), inspect: null })); });
+  app.append(el("div", { class: "card empty" }, el("h2", { text: "No benchmark data yet" }),
+    el("p", {}, "Build the project and run ", el("code", { text: "modelforge_bench" }), " (or menu option 6 in ", el("code", { text: "modelforge_studio" }), "). It writes ", el("code", { text: "dashboard/data.js" }), " next to this page."),
+    el("div", { class: "drop" }, el("p", { text: "Or load a results.json file:" }), input)));
+}
+let currentTab = "overview";
+function selectTab(name) {
+  currentTab = name;
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  document.querySelectorAll("section[data-panel]").forEach((s) => { s.hidden = s.dataset.panel !== name; });
+  try { localStorage.setItem("mf-tab", name); } catch (e) { /* storage unavailable */ }
+}
+document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.tab)));
+try { currentTab = localStorage.getItem("mf-tab") || "overview"; } catch (e) { /* storage unavailable */ }
+try { const t = localStorage.getItem("mf-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) { /* storage unavailable */ }
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("mf-theme", document.documentElement.dataset.theme); } catch (e) { /* storage unavailable */ }
+  render(window.MODELFORGE_DATA);
+});
+render(window.MODELFORGE_DATA);
+})();
+</script>
+</body>
+</html>

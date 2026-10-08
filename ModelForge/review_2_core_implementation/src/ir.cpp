@@ -16,6 +16,10 @@ std::string irOpName(IROp operation) {
             return "ADD";
         case IROp::Relu:
             return "RELU";
+        case IROp::TestReluClamp:
+            return "TEST_RELU_CLAMP";
+        case IROp::TestLeakyRelu:
+            return "TEST_LEAKY_RELU";
         case IROp::TestReluDeadZone:
             return "TEST_RELU_DEAD_ZONE";
         case IROp::Sigmoid:

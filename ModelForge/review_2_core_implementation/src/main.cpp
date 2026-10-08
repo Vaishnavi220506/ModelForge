@@ -1,3 +1,4 @@
+#include "analysis.h"
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
@@ -134,6 +135,7 @@ bool writeOptimizationCertificate(
     const modelforge::GuardianReport& guardian,
     const modelforge::TranslationValidationReport& validation,
     const std::vector<modelforge::ValidationProbe>& probes,
+    const modelforge::CoverageReport& coverage,
     modelforge::DiagnosticEngine& diagnostics) {
     const std::filesystem::path certificatePath =
         outputDirectory / "optimization_certificate.json";
@@ -147,7 +149,11 @@ bool writeOptimizationCertificate(
     certificate << std::setprecision(9)
                 << "{\n"
                 << "  \"model\": \"" << jsonEscape(model.name) << "\",\n"
-                << "  \"method\": \"bounded empirical translation validation\",\n"
+                << "  \"method\": \"bounded empirical translation validation (Guardian-APC)\",\n"
+                << "  \"activation_coverage\": {\"apc\": " << coverage.ratio()
+                << ", \"boundary_apc\": " << coverage.boundaryRatio()
+                << ", \"covered_states\": " << coverage.covered
+                << ", \"feasible_states\": " << coverage.feasible << "},\n"
                 << "  \"optimization\": {\n"
                 << "    \"instructions_before\": " << optimization.instructionsBefore << ",\n"
                 << "    \"instructions_after\": " << optimization.instructionsAfter << ",\n"
@@ -296,8 +302,23 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
+    // Guardian-APC suite: generic + first-layer probes, IBP-guided deep boundary
+    // probes, ordered by activation-pattern coverage gain.
     std::vector<modelforge::ValidationProbe> validationProbes =
-        modelforge::generateValidationProbes(*ir);
+        modelforge::generateGuardianProbes(*ir);
+    const auto activationSites = modelforge::analyzeActivationSites(*ir);
+    const auto coverage =
+        modelforge::measureActivationCoverage(*ir, activationSites, validationProbes);
+    std::size_t unstableNeurons = 0;
+    for (const auto& site : activationSites) {
+        unstableNeurons += site.count(modelforge::NeuronStability::Unstable);
+    }
+    std::cout << "      Guardian-APC: " << validationProbes.size() << " probes, "
+              << activationSites.size() << " ReLU layer(s), " << unstableNeurons
+              << " IBP-unstable neuron(s), activation-pattern coverage "
+              << std::fixed << std::setprecision(1) << coverage.ratio() * 100.0
+              << "% (boundary " << coverage.boundaryRatio() * 100.0 << "%).\n"
+              << std::defaultfloat << std::setprecision(6);
     modelforge::TranslationValidationReport translationValidation;
     if (options->optimize) {
         std::cout << "[4/5] Optimizing IR...\n";
@@ -367,6 +388,7 @@ int main(int argc, char* argv[]) {
                                       guardianReport,
                                       translationValidation,
                                       validationProbes,
+                                      coverage,
                                       diagnostics)) {
         diagnostics.print(std::cerr);
         return 1;

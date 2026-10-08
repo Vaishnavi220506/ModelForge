@@ -17,7 +17,10 @@ enum class IROp {
     MatMul,
     Add,
     Relu,
-    TestReluDeadZone, // Fault injection only; never accepted from a model or emitted as C++.
+    // Fault injection only; never accepted from a model or emitted as C++.
+    TestReluDeadZone,  // 0 on (0, p): a narrow band at the kink
+    TestReluClamp,     // min(relu(z), p): a wrong ReLU6-style fusion
+    TestLeakyRelu,     // z < 0 ? p * z : z: a wrong activation lowering
     Sigmoid,
     Softmax,
     FusedGemmRelu,
@@ -35,6 +38,8 @@ struct IRInstruction {
     int axis = -1;
     bool transA = false;
     bool transB = false;
+    // Parameter p of the test-only fault operators above.
+    float testFaultParameter = 0.1f;
 };
 
 struct IRGraph {

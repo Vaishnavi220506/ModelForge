@@ -84,6 +84,14 @@ std::vector<float> softmax(const std::vector<float>& input) {
 std::optional<std::vector<float>> executeIR(const IRGraph& graph,
                                             const std::vector<float>& input,
                                             DiagnosticEngine& diagnostics) {
+    return executeIRTrace(graph, input, diagnostics, nullptr);
+}
+
+std::optional<std::vector<float>> executeIRTrace(
+    const IRGraph& graph,
+    const std::vector<float>& input,
+    DiagnosticEngine& diagnostics,
+    std::unordered_map<std::string, std::vector<float>>* trace) {
     const auto inputInfo = graph.values.find(graph.inputName);
     if (inputInfo == graph.values.end() || input.size() != elementCount(inputInfo->second.shape)) {
         diagnostics.error("runtime", "Input size does not match the IR input shape");
@@ -102,6 +110,7 @@ std::optional<std::vector<float>> executeIR(const IRGraph& graph,
                 diagnostics.error("runtime", "Return value is unavailable");
                 return std::nullopt;
             }
+            if (trace != nullptr) *trace = values;
             return *result;
         }
 
@@ -185,7 +194,21 @@ std::optional<std::vector<float>> executeIR(const IRGraph& graph,
             case IROp::TestReluDeadZone:
                 result = *first;
                 for (float& value : result) {
-                    value = value > 0.0f && value < 0.1f ? 0.0f : std::max(0.0f, value);
+                    value = value > 0.0f && value < instruction.testFaultParameter
+                                ? 0.0f
+                                : std::max(0.0f, value);
+                }
+                break;
+            case IROp::TestReluClamp:
+                result = *first;
+                for (float& value : result) {
+                    value = std::min(std::max(0.0f, value), instruction.testFaultParameter);
+                }
+                break;
+            case IROp::TestLeakyRelu:
+                result = *first;
+                for (float& value : result) {
+                    value = value < 0.0f ? instruction.testFaultParameter * value : value;
                 }
                 break;
             case IROp::Sigmoid:

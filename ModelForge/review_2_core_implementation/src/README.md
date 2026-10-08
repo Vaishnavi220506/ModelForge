@@ -41,3 +41,10 @@ node activation Relu hidden -> activated
 For a common ONNX-exported `Gemm`, `transB=1` preserves the original weight layout.
 
 ONNX-specific code is isolated in `loadOnnx`; it is compiled only when `MODELFORGE_WITH_ONNX` is enabled.
+
+## Guardian-APC research modules
+
+- `analysis.h/.cpp` - interval bound propagation, deep boundary probes (Newton on the exact input gradient), activation-pattern coverage and greedy coverage ordering.
+- `research.h/.cpp` - synthetic model zoo, fault catalogue, equal-budget strategies, benchmark statistics (Wilson intervals, exact McNemar) and JSON export for the dashboard.
+- `../tools/studio.cpp` - `modelforge_studio`, the interactive terminal dashboard.
+- `../tools/bench.cpp` - `modelforge_bench`, the research benchmark.
