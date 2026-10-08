@@ -12,7 +12,7 @@
 namespace render {
 
 inline std::string strategyLabel(const std::string& name) {
-    if (name == "guardian_apc") return term::bold() + term::teal() + "guardian_apc ★" + term::reset();
+    if (name == "guardian_apc_plus") return term::bold() + term::teal() + "guardian_apc_plus ★" + term::reset();
     return name;
 }
 
@@ -46,7 +46,7 @@ inline void benchmark(const modelforge::BenchmarkSummary& summary, std::size_t b
     table.rightAlign = {false, true, false, true, true, true};
     for (const auto& s : summary.strategies) {
         table.rows.push_back({strategyLabel(s.name), rateColour(s.rate) + percent(s.rate) + reset(),
-                              bar(s.rate, 16, s.name == "guardian_apc" ? teal() : accent()),
+                              bar(s.rate, 16, s.name == "guardian_apc_plus" ? teal() : accent()),
                               muted() + percent(s.low, 0) + "-" + percent(s.high, 0) + reset(),
                               fixed(s.meanFirst, 1),
                               (s.falsePositives ? bad() : good()) +
@@ -67,8 +67,8 @@ inline void benchmark(const modelforge::BenchmarkSummary& summary, std::size_t b
         curve.rightAlign.push_back(false);
     }
     for (const auto& s : summary.strategies) {
-        if (s.name != "random" && s.name != "guardian_v1" && s.name != "deep_boundary" &&
-            s.name != "guardian_apc") {
+        if (s.name != "random" && s.name != "guardian_v1" &&
+            s.name != "guardian_apc" && s.name != "guardian_apc_plus") {
             continue;  // ablations stay in the leaderboard and the dashboard
         }
         std::vector<std::string> row = {strategyLabel(s.name)};
@@ -77,7 +77,7 @@ inline void benchmark(const modelforge::BenchmarkSummary& summary, std::size_t b
             row.push_back(rateColour(point.second) + percent(point.second, 0) + reset());
             values.push_back(point.second);
         }
-        row.push_back(sparkline(values, s.name == "guardian_apc" ? teal() : accent()));
+        row.push_back(sparkline(values, s.name == "guardian_apc_plus" ? teal() : accent()));
         curve.rows.push_back(std::move(row));
     }
     curve.print();
@@ -86,14 +86,14 @@ inline void benchmark(const modelforge::BenchmarkSummary& summary, std::size_t b
     Table families;
     families.headers = {"family"};
     families.rightAlign = {false};
-    std::vector<std::string> shown = {"random", "generic", "guardian_v1", "guardian_apc"};
+    std::vector<std::string> shown = {"random", "guardian_v1", "guardian_apc", "guardian_apc_plus"};
     for (const auto& name : shown) {
         families.headers.push_back(name);
         families.rightAlign.push_back(true);
     }
     const modelforge::StrategySummary* reference = nullptr;
     for (const auto& s : summary.strategies) {
-        if (s.name == "guardian_apc") reference = &s;
+        if (s.name == "guardian_apc_plus") reference = &s;
     }
     if (reference != nullptr) {
         for (const auto& [family, unused] : reference->families) {
@@ -111,7 +111,7 @@ inline void benchmark(const modelforge::BenchmarkSummary& summary, std::size_t b
     }
     families.print();
 
-    rule("Paired McNemar tests (guardian_apc vs ...)");
+    rule("Paired McNemar tests (guardian_apc_plus vs ...)");
     Table tests;
     tests.headers = {"baseline", "only ours", "only baseline", "exact p", "verdict"};
     tests.rightAlign = {false, true, true, true, false};

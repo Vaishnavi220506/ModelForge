@@ -413,6 +413,8 @@ void screenFaults(const Session& session) {
         table.headers.push_back(name.substr(0, name.find('#')));
         table.rightAlign.push_back(true);
     }
+    table.headers.push_back("apc_plus ★");
+    table.rightAlign.push_back(true);
     std::vector<std::vector<std::optional<std::vector<float>>>> expected;
     for (const auto& suite : suites) {
         std::vector<std::optional<std::vector<float>>> outputs;
@@ -448,6 +450,18 @@ void screenFaults(const Session& session) {
                 }
             }
         }
+        modelforge::GuardianPlusOptions plus;
+        plus.staticBudget = kBudget - kBudget / 4;
+        plus.adaptiveBudget = kBudget / 4;
+        const auto result = modelforge::runGuardianPlus(session.original, fault.candidate, plus);
+        const std::size_t first = result.firstDetection;
+        if (fault.negativeControl) {
+            row.push_back(first ? bad() + "false alarm" + reset()
+                                : good() + "silent " + glyphs().check + reset());
+        } else {
+            row.push_back(first ? good() + bold() + "#" + std::to_string(first) + reset()
+                                : bad() + "missed" + reset());
+        }
         table.rows.push_back(std::move(row));
     }
     table.print();
@@ -468,6 +482,11 @@ void screenFaults(const Session& session) {
                     (decision.accepted ? bad() + "MISSED" : good() + "REJECTED + rolled back") +
                     reset(),
                 muted() + "witness  " + reset() + f.name};
+            if (decision.divergence.found) {
+                lines.push_back(muted() + "where    " + reset() + "first diverges at " + bold() +
+                                decision.divergence.node + reset() + muted() + " (value '" +
+                                decision.divergence.value + "')" + reset());
+            }
             std::string input = muted() + "input    " + reset() + "[";
             for (std::size_t k = 0; k < std::min<std::size_t>(f.values.size(), 8); ++k) {
                 input += (k ? ", " : "") + fixed(f.values[k], 3);
@@ -544,6 +563,55 @@ void screenCode(const Session& session) {
     }
     std::cout << "  " << muted() << "... full file: " << (session.generated / "model.cpp").string()
               << reset() << "\n";
+}
+
+void screenCompare(const Session& session) {
+    rule("9  Model diff checker: does a second model behave like this one?", kWidth);
+    std::string path = (fs::path(MODELFORGE_MODELS_DIR) / "iris_handopt_bug.mforge").string();
+    if (session.interactive) {
+        std::cout << "  " << muted() << "Second model (Enter = " << path << "):" << reset()
+                  << "\n  " << accent() << glyphs().arrow << reset() << " " << std::flush;
+        std::string typed;
+        std::getline(std::cin, typed);
+        if (!typed.empty()) path = typed;
+    }
+    modelforge::IRGraph other;
+    modelforge::DiagnosticEngine diagnostics;
+    const std::string text = readFile(path);
+    if (text.empty() || !modelforge::compileManifestText(text, other, diagnostics)) {
+        std::cout << "  " << bad() << "Could not load " << path << reset() << "\n";
+        return;
+    }
+    modelforge::GuardianPlusOptions options;
+    options.adaptiveBudget = 64;
+    const auto result = modelforge::runGuardianPlus(session.original, other, options);
+    const auto impact =
+        modelforge::analyzeRewriteImpact(session.original, other, session.sites);
+    std::string changed;
+    for (const auto& node : impact.changedNodes) changed += (changed.empty() ? "" : ", ") + node;
+    std::vector<std::string> lines = {
+        muted() + "candidate  " + reset() + fs::path(path).filename().string(),
+        muted() + "changed    " + reset() + (changed.empty() ? "nothing" : changed),
+        muted() + "tested     " + reset() + std::to_string(result.evaluations) + " inputs"};
+    if (!result.firstDetection) {
+        lines.push_back(good() + bold() + glyphs().check + " No behavioural difference found" + reset());
+        box("Same behaviour", lines, kWidth, good());
+        return;
+    }
+    const auto where = modelforge::localizeDivergence(session.original, other, result.witness->values);
+    lines.push_back(bad() + bold() + glyphs().cross + " The models DIFFER" + reset() + muted() +
+                    "  (caught at input #" + std::to_string(result.firstDetection) + ")" + reset());
+    if (where.found) {
+        lines.push_back(muted() + "where      " + reset() + "first difference at " + bold() +
+                        where.node + reset() + muted() + " (max diff " +
+                        fixed(where.maximumDifference, 6) + ")" + reset());
+    }
+    for (std::size_t k = 0; k < std::min(result.originalOutput.size(), result.candidateOutput.size()); ++k) {
+        lines.push_back(muted() + "class " + std::to_string(k) + "    " + reset() +
+                        fixed(result.originalOutput[k], 6) + muted() + "  vs  " + reset() +
+                        fixed(result.candidateOutput[k], 6));
+    }
+    box("Different behaviour", lines, kWidth, bad());
 }
 
 void screenDashboard() {
@@ -625,6 +693,7 @@ void menu(const Session& session) {
               << item("5", "Fault arena", "who catches which bug") << "\n"
               << group("RESEARCH") << "\n"
               << item("6", "Benchmark", "quick run  (6f = full)") << "\n"
+              << item("9", "Model diff checker", "compare with another model") << "\n"
               << item("8", "Web dashboard", "how to open it") << "\n"
               << group("OTHER") << "\n"
               << item("m", "Change model", "") << "\n"
@@ -672,6 +741,8 @@ int main(int argc, char* argv[]) {
         std::cout << "\n";
         screenCode(session);
         std::cout << "\n";
+        screenCompare(session);
+        std::cout << "\n";
         screenBenchmark(session, true);
         screenDashboard();
         return 0;
@@ -699,6 +770,7 @@ int main(int argc, char* argv[]) {
         else if (choice == "6f") screenBenchmark(session, false);
         else if (choice == "7") screenCode(session);
         else if (choice == "8") screenDashboard();
+        else if (choice == "9") screenCompare(session);
         else continue;
         pause(session);
     }

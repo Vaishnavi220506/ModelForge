@@ -1,3 +1,4 @@
+#include "adaptive.h"
 #include "analysis.h"
 #include "codegen.h"
 #include "guardian.h"
@@ -280,6 +281,51 @@ void testGuardianApc() {
     check(half.wilsonLow() < 0.5 && half.wilsonHigh() > 0.5, "Wilson interval should contain p");
 }
 
+void testGuardianPlus(const std::filesystem::path& fixtureDirectory) {
+    const auto models = fixtureDirectory.parent_path().parent_path() / "models";
+    const auto compile = [&](const char* name) {
+        modelforge::ModelGraph model;
+        modelforge::DiagnosticEngine diagnostics;
+        loadAndValidate(models / name, model, diagnostics);
+        return *modelforge::buildIR(model, diagnostics);
+    };
+    const auto reference = compile("iris_demo.mforge");
+    modelforge::IRGraph fused = reference;
+    modelforge::runOptimizationPass(fused, modelforge::OptimizationPass::DenseReluFusion);
+    const auto sites = modelforge::analyzeActivationSites(reference);
+    const auto impact = modelforge::analyzeRewriteImpact(reference, fused, sites);
+    check(std::count(impact.changedNodes.begin(), impact.changedNodes.end(), "dense_1") == 1 &&
+              std::count(impact.changedNodes.begin(), impact.changedNodes.end(), "activation_1") == 1,
+          "rewrite impact should list the fused Gemm and ReLU");
+    check(impact.impactedSites.size() == 1, "fusion should impact the single ReLU site");
+    check(modelforge::runGuardianPlus(reference, fused).firstDetection == 0,
+          "Guardian-APC+ must accept a correct fusion");
+
+    modelforge::IRGraph wrong = reference;
+    for (auto& instruction : wrong.instructions) {
+        if (instruction.nodeName == "activation_1") instruction.operation = modelforge::IROp::Sigmoid;
+    }
+    const auto result = modelforge::runGuardianPlus(reference, wrong);
+    check(result.firstDetection != 0 && result.witness.has_value(),
+          "Guardian-APC+ should reject a wrong ReLU rewrite");
+    if (result.witness) {
+        const auto where = modelforge::localizeDivergence(reference, wrong, result.witness->values);
+        check(where.found && where.node == "activation_1",
+              "divergence should be localised to the rewritten activation");
+    }
+
+    const auto handOk = compile("iris_handopt_ok.mforge");
+    const auto handBug = compile("iris_handopt_bug.mforge");
+    check(modelforge::runGuardianPlus(reference, handOk).firstDetection == 0,
+          "--compare should accept an equivalent hand-optimised model");
+    const auto bug = modelforge::runGuardianPlus(reference, handBug);
+    check(bug.firstDetection != 0, "--compare should catch a mistyped weight");
+    if (bug.witness) {
+        check(modelforge::localizeDivergence(reference, handBug, bug.witness->values).node == "dense_2",
+              "the mistyped weight should be localised to dense_2");
+    }
+}
+
 void testOutputComparison() {
     const auto report = modelforge::compareOutputs({1.0f, 2.0f}, {1.0f, 2.000001f});
     check(report.passed, "close outputs should pass tolerance comparison");
@@ -301,6 +347,7 @@ int main(int argc, char* argv[]) {
     testInvalidInputs(fixtureDirectory);
     testOutputComparison();
     testGuardianApc();
+    testGuardianPlus(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

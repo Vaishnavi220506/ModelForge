@@ -3,7 +3,7 @@
 Author: **Vaishnavi**
 
 `guardian_apc.tex` is an IEEE two-column conference draft describing the
-Guardian-APC validator and its evaluation. `references.bib` holds the citations.
+Guardian-APC+ validator and its evaluation. `references.bib` holds the citations.
 
 Build it on Overleaf (upload this folder) or locally:
 

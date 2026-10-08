@@ -1,5 +1,6 @@
 #include "research.h"
 
+#include "adaptive.h"
 #include "guardian.h"
 #include "loader.h"
 #include "optimizer.h"
@@ -550,7 +551,9 @@ struct StrategyStats {
     double generationMsSum = 0.0;
     double nativeProbeSum = 0.0;
     std::size_t modelCount = 0;
+    bool perFault = false;
     std::vector<int> outcomes;       // per (case, seed) detection at budget, for McNemar
+    std::vector<std::size_t> firstIndex;  // per (case, seed) first detection (0 = none)
 };
 
 std::string baseName(const std::string& suiteName) {
@@ -628,6 +631,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
         StrategyStats entry;
         entry.name = name;
         entry.description = suite.description;
+        entry.perFault = suite.perFault;
         entry.curve.resize(curve.size());
         stats.push_back(std::move(entry));
         return stats.back();
@@ -653,6 +657,25 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
         const auto sites = analyzeActivationSites(original);
         auto faults = makeFaults(original, sites, spec.seed ^ 0x9e3779b9u);
         auto suites = buildStrategies(original, config.budget, spec.seed, config.randomSeeds);
+        {
+            // Guardian-APC+ variants, evaluated per fault at the same total budget.
+            const std::size_t reserve = config.budget / 4;
+            const auto perFault = [&](const std::string& name, const std::string& description,
+                                      bool rewriteAware, std::size_t adaptive) {
+                StrategySuite suite;
+                suite.name = name;
+                suite.description = description;
+                suite.perFault = true;
+                suite.rewriteAware = rewriteAware;
+                suite.adaptiveBudget = adaptive;
+                suites.push_back(std::move(suite));
+            };
+            perFault("guardian_delta", "Ablation: rewrite-aware static suite only", true, 0);
+            perFault("apc_near_miss", "Ablation: Guardian-APC static + near-miss search", false,
+                     reserve);
+            perFault("guardian_apc_plus",
+                     "Guardian-APC+ (ours): rewrite-aware probes + near-miss search", true, reserve);
+        }
         const std::size_t inputCount = spec.inputs;
         const auto oracle = uniformRandomProbes(inputCount, config.oracleProbes,
                                                 spec.seed ^ 0x85ebca6bu);
@@ -669,8 +692,10 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
             modelUnstable += site.count(NeuronStability::Unstable);
             modelStable += site.width - site.count(NeuronStability::Unstable);
         }
+        std::vector<double> perFaultMs(suites.size(), 0.0);
         for (std::size_t s = 0; s < suites.size(); ++s) {
             StrategyStats& entry = statsFor(suites[s]);
+            if (suites[s].perFault) continue;
             if (suites[s].name.find('#') != std::string::npos &&
                 suites[s].name != baseName(suites[s].name) + "#0") {
                 entry.generationMsSum += suites[s].generationMilliseconds / config.randomSeeds;
@@ -692,8 +717,22 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
             std::vector<std::size_t> firsts(suites.size(), 0);
             bool anyDetected = false;
             for (std::size_t s = 0; s < suites.size(); ++s) {
-                firsts[s] = firstDetection(fault.candidate, suites[s].probes, expected[s],
-                                           config.tolerance);
+                if (suites[s].perFault) {
+                    GuardianPlusOptions options;
+                    options.rewriteAware = suites[s].rewriteAware;
+                    options.adaptiveBudget = suites[s].adaptiveBudget;
+                    options.staticBudget = config.budget - suites[s].adaptiveBudget;
+                    options.seed = spec.seed;
+                    options.tolerance = config.tolerance;
+                    const auto start = std::chrono::steady_clock::now();
+                    firsts[s] = runGuardianPlus(original, fault.candidate, options).firstDetection;
+                    perFaultMs[s] += std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - start)
+                                         .count();
+                } else {
+                    firsts[s] = firstDetection(fault.candidate, suites[s].probes, expected[s],
+                                               config.tolerance);
+                }
                 anyDetected = anyDetected || firsts[s] != 0;
             }
             const bool oracleDetected =
@@ -756,11 +795,18 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
                 entry.censoredFirstSum +=
                     hit ? static_cast<double>(firsts[s]) : static_cast<double>(config.budget + 1);
                 entry.outcomes.push_back(hit ? 1 : 0);
-                if (suites[s].name == "guardian_apc" && !hit && missCount < 60) {
+                entry.firstIndex.push_back(firsts[s]);
+                if (suites[s].name == "guardian_apc_plus" && !hit && missCount < 60) {
                     missesJson += (missCount++ ? "," : "") + std::string("{\"model\":") +
                                   quoted(spec.name) + ",\"fault\":" + quoted(fault.name) + "}";
                 }
             }
+        }
+        for (std::size_t s = 0; s < suites.size(); ++s) {
+            if (!suites[s].perFault || faults.empty()) continue;
+            StrategyStats& entry = statsFor(suites[s]);
+            entry.generationMsSum += perFaultMs[s] / static_cast<double>(faults.size());
+            entry.modelCount += 1;
         }
         if (m) modelsJson += ",";
         modelsJson += "{\"name\":" + quoted(spec.name) + ",\"inputs\":" +
@@ -781,7 +827,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
     // Random has `randomSeeds` outcomes per case; Guardian's outcome is repeated.
     const StrategyStats* ours = nullptr;
     for (const auto& entry : stats) {
-        if (entry.name == "guardian_apc") ours = &entry;
+        if (entry.name == "guardian_apc_plus") ours = &entry;
     }
     std::string comparisons = "[";
     bool firstComparison = true;
@@ -803,7 +849,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
         }
         summary.comparisons.push_back({entry.name, onlyOurs, onlyOther,
                                        mcnemarExactP(onlyOurs, onlyOther)});
-        comparisons += std::string(firstComparison ? "" : ",") + "{\"a\":\"guardian_apc\",\"b\":" +
+        comparisons += std::string(firstComparison ? "" : ",") + "{\"a\":\"guardian_apc_plus\",\"b\":" +
                        quoted(entry.name) + ",\"only_a\":" + std::to_string(onlyOurs) +
                        ",\"only_b\":" + std::to_string(onlyOther) + ",\"both\":" +
                        std::to_string(both) + ",\"neither\":" + std::to_string(neither) +
@@ -811,6 +857,36 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
         firstComparison = false;
     }
     comparisons += "]";
+
+    // Paired tests at every budget on the curve: does Guardian-APC+ find faults
+    // with fewer test inputs than Guardian-APC and than random testing?
+    std::string budgetTests = "[";
+    bool firstBudgetTest = true;
+    for (const auto& entry : stats) {
+        if (ours == nullptr || (entry.name != "guardian_apc" && entry.name != "random")) continue;
+        const std::size_t repeat =
+            entry.firstIndex.size() / std::max<std::size_t>(1, ours->firstIndex.size());
+        for (const std::size_t budget : curve) {
+            std::size_t onlyOurs = 0, onlyOther = 0;
+            for (std::size_t c = 0; c < ours->firstIndex.size(); ++c) {
+                for (std::size_t r = 0; r < repeat; ++r) {
+                    const std::size_t a = ours->firstIndex[c];
+                    const std::size_t b = entry.firstIndex[c * repeat + r];
+                    const bool x = a != 0 && a <= budget;
+                    const bool y = b != 0 && b <= budget;
+                    onlyOurs += x && !y;
+                    onlyOther += y && !x;
+                }
+            }
+            budgetTests += std::string(firstBudgetTest ? "" : ",") + "{\"b\":" +
+                           quoted(entry.name) + ",\"budget\":" + std::to_string(budget) +
+                           ",\"only_a\":" + std::to_string(onlyOurs) + ",\"only_b\":" +
+                           std::to_string(onlyOther) + ",\"p_value\":" +
+                           number(mcnemarExactP(onlyOurs, onlyOther)) + "}";
+            firstBudgetTest = false;
+        }
+    }
+    budgetTests += "]";
 
     std::string strategiesJson = "[";
     for (std::size_t index = 0; index < stats.size(); ++index) {
@@ -884,8 +960,10 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
                           ",\"subsets\":" + mapJson(entry.subsets) +
                           ",\"false_positives\":" + std::to_string(entry.falsePositives) +
                           ",\"controls\":" + std::to_string(entry.controls) +
-                          ",\"apc\":" + number(entry.apcSum / models) +
-                          ",\"boundary_apc\":" + number(entry.boundaryApcSum / models) +
+                          ",\"per_fault\":" + (entry.perFault ? "true" : "false") +
+                          ",\"apc\":" + (entry.perFault ? "null" : number(entry.apcSum / models)) +
+                          ",\"boundary_apc\":" +
+                          (entry.perFault ? "null" : number(entry.boundaryApcSum / models)) +
                           ",\"generation_ms\":" + number(entry.generationMsSum / models) +
                           ",\"native_probes\":" + number(entry.nativeProbeSum / models) + "}";
     }
@@ -918,6 +996,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
          << ",\"neurons\":{\"stable_active\":" << stableActive << ",\"stable_inactive\":"
          << stableInactive << ",\"unstable\":" << unstable << "}}"
          << ",\"strategies\":" << strategiesJson << ",\"comparisons\":" << comparisons
+         << ",\"budget_tests\":" << budgetTests
          << ",\"models\":" << modelsJson << ",\"misses\":" << missesJson << "}";
     summary.json = json.str();
     summary.models = specs.size();
@@ -953,6 +1032,10 @@ std::string inspectModelJson(const std::string& manifestPath, const IRGraph& gra
                     checkCandidate(graph, buggy, "deliberately_wrong_relu_rewrite", local);
                 demo = "{\"accepted\":" + std::string(decision.accepted ? "true" : "false") +
                        ",\"probes\":" + std::to_string(decision.validation.probeCount);
+                if (decision.divergence.found) {
+                    demo += ",\"divergent_node\":" + quoted(decision.divergence.node) +
+                            ",\"divergent_value\":" + quoted(decision.divergence.value);
+                }
                 if (decision.validation.firstFailure) {
                     demo += ",\"probe\":" + quoted(decision.validation.firstFailure->name) +
                             ",\"input\":" + floats(decision.validation.firstFailure->values) +
@@ -991,8 +1074,14 @@ std::string inspectModelJson(const std::string& manifestPath, const IRGraph& gra
                       quoted(faults[f].locality) + ",\"held_out\":" +
                       (faults[f].heldOut ? "true" : "false") + ",\"provably_unobservable\":" +
                       (faults[f].provablyUnobservable ? "true" : "false") + ",\"first\":{";
+        GuardianPlusOptions plus;
+        plus.staticBudget = budget - budget / 4;
+        plus.adaptiveBudget = budget / 4;
+        plus.seed = seed;
+        faultTable += "\"guardian_apc_plus\":" +
+                      std::to_string(runGuardianPlus(graph, faults[f].candidate, plus).firstDetection);
         for (std::size_t s = 0; s < suites.size(); ++s) {
-            faultTable += std::string(s ? "," : "") + quoted(baseName(suites[s].name)) + ":" +
+            faultTable += "," + quoted(baseName(suites[s].name)) + ":" +
                           std::to_string(firstDetection(faults[f].candidate, suites[s].probes,
                                                         expected[s], 1.0e-5f));
         }

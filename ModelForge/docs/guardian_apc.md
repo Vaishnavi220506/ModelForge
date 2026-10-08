@@ -2,7 +2,8 @@
 
 Author: **Vaishnavi**
 
-Guardian-APC extends the original Guardian per-pass validator with three ideas.
+Guardian-APC extends the original Guardian per-pass validator with three ideas,
+and Guardian-APC+ adds three more (sections 4 to 6).
 Together they form the project's research contribution. The conference draft is
 in [`../paper/guardian_apc.tex`](../paper/guardian_apc.tex).
 
@@ -43,22 +44,54 @@ Coverage is monotone submodular, so every greedy prefix of length B covers at
 least (1 - 1/e) of what the best B probes from the pool could cover. Order
 matters because Guardian stops at the first mismatch and budgets are finite.
 
+## 4. Guardian-APC+: rewrite-aware targeting
+
+`analyzeRewriteImpact()` (`src/adaptive.cpp`) diffs the IR before and after a
+pass (operator, operands, attributes, constant data). The changed instructions
+and everything downstream of them are "impacted". Guardian-APC+ generates
+boundary probes for the impacted ReLU layers and covers those first, so the
+inputs most likely to expose this particular rewrite run first.
+
+## 5. Near-miss search
+
+Most inputs give a faulty candidate an output difference below the tolerance.
+Guardian-APC+ scores each input by that difference (plus a small weight on
+internal differences) and, after the targeted suite, hill-climbs the score from
+the four most divergent inputs. It mainly catches small numeric errors.
+
+## 6. Bug localisation and the model diff checker
+
+When a rewrite is rejected, Guardian traces both graphs on the minimised witness
+and reports the first value that differs, for example
+`first diverges at activation_1 (value 'hidden2')`. It is also in
+`counterexample.json`.
+
+The same engine compares two model files:
+
+```text
+modelforge models/iris_demo.mforge --compare models/iris_handopt_bug.mforge
+```
+
+It reports which nodes differ, whether the behaviour differs, the input that
+proves it, and where the difference starts. Exit code 0 means no difference
+found, 3 means the models differ. Studio option 9 shows the same thing.
+
 ## Measured results (96 models, 2,160 faults, budget 128)
 
-| Strategy | Detection | 95% CI | Mean probes to 1st detection |
+| Strategy | Detection | 95% CI | Caught within 8 inputs |
 |---|---|---|---|
-| Uniform random | 75.1% | 74.2–75.9 | 11.0 |
-| Generic probes | 83.9% | 82.2–85.4 | 9.4 |
-| Guardian v1 | 85.7% | 84.1–87.1 | 11.2 |
-| **Guardian-APC** | **99.1%** | 98.6–99.4 | 5.6 |
+| Uniform random | 75.0% | 74.2 to 75.8 | 57.9% |
+| Guardian v1 | 85.6% | 84.0 to 87.1 | 62.0% |
+| Guardian-APC | 99.0% | 98.5 to 99.4 | 79.9% |
+| **Guardian-APC+** | **99.2%** | 98.7 to 99.5 | **88.2%** |
 
-- Held-out fault families: 97.9% (random 85.4%, v1 90.9%).
-- Faults beyond the first ReLU layer: 99.0% (v1 82.1%).
-- Exact McNemar: 2,451 vs 26 discordant cases against random, 273 vs 2 against
-  v1 (p < 1e-4). No false alarms on 96 negative controls.
-- With 16 probes Guardian-APC already detects 91.6% (random 62.4%).
-- Master seeds 1, 2, 3: 99.4%, 99.5%, 99.2%.
-- Weakness: on a 1e-3 weight perturbation, random (97.1%) beats Guardian-APC (94.5%).
+- At 128 inputs, APC+ and APC are statistically tied (p = 0.34). The gain is
+  speed: with 4, 8 or 16 inputs APC+ is significantly better (p < 1e-11), and
+  the B = 8 result replicates with seeds 1, 2 and 3.
+- Near-miss search lifts the 1e-3 weight perturbation from 94.5% to 97.8%
+  (random testing 97.1%).
+- Held-out fault families: 98.2% (random 85.2%, v1 90.7%).
+- No false alarms on 96 negative controls.
 
 Snapshot: [`../research/results/results.json`](../research/results/results.json).
 
@@ -74,6 +107,8 @@ Snapshot: [`../research/results/results.json`](../research/results/results.json)
 
 1. `modelforge_studio` in the VS Code terminal: screen 1 (pipeline), 2 (IR
    graph), 3 (neuron stability map), 5 (fault arena and counterexample).
-2. Option 6 runs the quick benchmark live and refreshes the dashboard.
-3. Open `dashboard/index.html`: Overview (headline and budget curve), Fault
+2. Option 9 compares the Iris model with a hand-optimised copy that has one
+   mistyped weight: the difference is found at the second input and traced to `dense_2`.
+3. Option 6 runs the quick benchmark live and refreshes the dashboard.
+4. Open `dashboard/index.html`: Overview (headline and budget curve), Fault
    families (where the methods differ), Statistics (McNemar), Model inspector.

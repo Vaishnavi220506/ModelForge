@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace modelforge {
@@ -29,6 +30,9 @@ struct ActivationSite {
 
     std::size_t count(NeuronStability kind) const;
 };
+
+// Values that can reach the returned output (dead code excluded).
+std::unordered_set<std::string> liveValues(const IRGraph& graph);
 
 // Splits FusedGemmRelu into Gemm + Relu so pre-activations become named values.
 // Inputs and outputs are unchanged, so probes transfer between both graphs.

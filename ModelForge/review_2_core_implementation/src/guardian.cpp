@@ -44,11 +44,28 @@ GuardianDecision checkCandidate(const IRGraph& before,
                                 float tolerance) {
     GuardianDecision decision;
     decision.passName = passName;
-    const auto probes = generateGuardianProbes(before);
-    decision.validation = validateOptimization(before, candidate, probes, diagnostics, tolerance);
-    decision.accepted = !probes.empty() && decision.validation.passed && !diagnostics.hasErrors();
+    // Guardian-APC+: rewrite-aware static suite, then near-miss search.
+    GuardianPlusOptions options;
+    options.tolerance = tolerance;
+    const auto result = runGuardianPlus(before, candidate, options);
+    auto& validation = decision.validation;
+    validation.probeCount = result.evaluations;
+    validation.maximumAbsoluteError = result.maximumAbsoluteError;
+    validation.passed = result.firstDetection == 0;
+    if (!validation.passed) {
+        validation.outputMismatches = 1;
+        validation.firstFailure = result.witness;
+        validation.originalOutput = result.originalOutput;
+        validation.candidateOutput = result.candidateOutput;
+    }
+    decision.foundByNearMiss = result.foundByNearMiss;
+    decision.accepted = result.staticProbes > 0 && validation.passed && !diagnostics.hasErrors();
     if (!decision.accepted) {
         simplifyFailure(before, candidate, decision.validation, diagnostics, tolerance);
+        if (validation.firstFailure) {
+            decision.divergence = localizeDivergence(before, candidate,
+                                                     validation.firstFailure->values, tolerance);
+        }
     }
     return decision;
 }

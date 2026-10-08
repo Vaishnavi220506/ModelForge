@@ -1,5 +1,6 @@
 #pragma once
 
+#include "adaptive.h"
 #include "optimizer.h"
 #include "verifier.h"
 
@@ -13,6 +14,8 @@ struct GuardianDecision {
     bool accepted = false;
     OptimizationReport optimization;
     TranslationValidationReport validation;
+    bool foundByNearMiss = false;
+    DivergenceLocation divergence;  // where the minimised witness first diverges
 };
 
 struct GuardianReport {

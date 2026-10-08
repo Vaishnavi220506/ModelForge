@@ -27,6 +27,7 @@ struct CommandLineOptions {
     bool optimize = true;
     bool verifyOnnx = false;
     bool guardianDemoBug = false;
+    std::string comparePath;
 };
 
 void printUsage() {
@@ -39,6 +40,8 @@ void printUsage() {
               << "  --no-ir            Do not print IR before and after optimization\n"
               << "  --verify-onnx      Compare zero-input output with ONNX Runtime\n"
               << "  --guardian-demo-bug  Demonstrate detection of a deliberately wrong ReLU rewrite\n"
+              << "  --compare <other>  Check that <other> behaves like the input model\n"
+              << "                     (e.g. a hand-optimised, converted or edited copy)\n"
               << "  --help             Show this help\n";
 }
 
@@ -69,6 +72,14 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
         }
         if (argument == "--verify-onnx") {
             options.verifyOnnx = true;
+            continue;
+        }
+        if (argument == "--compare") {
+            if (index + 1 >= argc) {
+                std::cerr << "--compare requires a second model\n";
+                return std::nullopt;
+            }
+            options.comparePath = argv[++index];
             continue;
         }
         if (argument == "--guardian-demo-bug") {
@@ -232,6 +243,13 @@ bool writeCounterexample(const std::filesystem::path& outputDirectory,
            << jsonEscape(decision.passName) << "\",\n  \"probe\": \""
            << jsonEscape(decision.validation.firstFailure->name) << "\",\n  \"input\": ";
     writeVector(decision.validation.firstFailure->values);
+    if (decision.divergence.found) {
+        output << ",\n  \"first_divergent_node\": \"" << jsonEscape(decision.divergence.node)
+               << "\",\n  \"first_divergent_value\": \"" << jsonEscape(decision.divergence.value)
+               << "\",\n  \"first_divergence\": " << decision.divergence.maximumDifference;
+    }
+    output << ",\n  \"found_by_near_miss_search\": "
+           << (decision.foundByNearMiss ? "true" : "false");
     output << ",\n  \"original_output\": ";
     writeVector(decision.validation.originalOutput);
     output << ",\n  \"candidate_output\": ";
@@ -242,6 +260,113 @@ bool writeCounterexample(const std::filesystem::path& outputDirectory,
 
 }  // namespace
 
+std::optional<modelforge::IRGraph> compileForComparison(const std::string& path,
+                                                         modelforge::DiagnosticEngine& diagnostics) {
+    modelforge::ModelGraph model;
+    modelforge::SymbolTable symbols;
+    if (!modelforge::loadModel(path, model, diagnostics) ||
+        !modelforge::validate(model, diagnostics, symbols)) {
+        return std::nullopt;
+    }
+    return modelforge::buildIR(model, diagnostics);
+}
+
+// Model equivalence check: Guardian-APC+ applied to two independently written
+// models instead of one rewrite. Exit code 0 = no difference found, 3 = differ.
+int compareModels(const CommandLineOptions& options) {
+    modelforge::DiagnosticEngine diagnostics;
+    std::cout << "Comparing models with Guardian-APC+\n"
+              << "  reference: " << options.inputPath << "\n"
+              << "  candidate: " << options.comparePath << "\n";
+    const auto reference = compileForComparison(options.inputPath, diagnostics);
+    const auto candidate = compileForComparison(options.comparePath, diagnostics);
+    if (!reference || !candidate) {
+        diagnostics.print(std::cerr);
+        return 1;
+    }
+    const auto referenceInput = reference->values.find(reference->inputName);
+    const auto candidateInput = candidate->values.find(candidate->inputName);
+    if (referenceInput == reference->values.end() || candidateInput == candidate->values.end() ||
+        referenceInput->second.shape != candidateInput->second.shape) {
+        std::cerr << "The two models must take inputs of the same shape\n";
+        return 1;
+    }
+    modelforge::GuardianPlusOptions guardianOptions;
+    guardianOptions.adaptiveBudget = 64;
+    const auto result = modelforge::runGuardianPlus(*reference, *candidate, guardianOptions);
+    const auto impact = modelforge::analyzeRewriteImpact(
+        *reference, *candidate, modelforge::analyzeActivationSites(*reference));
+
+    std::filesystem::create_directories(options.outputDirectory);
+    const auto reportPath =
+        std::filesystem::path(options.outputDirectory) / "equivalence_report.json";
+    std::ofstream report(reportPath);
+    const auto writeVector = [&](const std::vector<float>& values) {
+        report << "[";
+        for (std::size_t i = 0; i < values.size(); ++i) report << (i ? ", " : "") << values[i];
+        report << "]";
+    };
+    report << std::setprecision(9) << "{\n  \"author\": \"Vaishnavi\",\n  \"reference\": \""
+           << jsonEscape(options.inputPath) << "\",\n  \"candidate\": \""
+           << jsonEscape(options.comparePath) << "\",\n  \"verdict\": \""
+           << (result.firstDetection ? "DIFFERENT" : "NO_DIFFERENCE_FOUND")
+           << "\",\n  \"evaluations\": " << result.evaluations
+           << ",\n  \"changed_nodes\": [";
+    for (std::size_t i = 0; i < impact.changedNodes.size(); ++i) {
+        report << (i ? ", " : "") << "\"" << jsonEscape(impact.changedNodes[i]) << "\"";
+    }
+    report << "]";
+
+    std::cout << "\n  Nodes that differ structurally: ";
+    if (impact.changedNodes.empty()) std::cout << "none";
+    for (std::size_t i = 0; i < impact.changedNodes.size(); ++i) {
+        std::cout << (i ? ", " : "") << impact.changedNodes[i];
+    }
+    std::cout << "\n  Test inputs evaluated: " << result.evaluations << " ("
+              << result.staticProbes << " targeted + near-miss search)\n";
+    if (result.firstDetection == 0) {
+        std::cout << "\n  RESULT: no behavioural difference found (max output difference "
+                  << result.maximumAbsoluteError << ").\n"
+                  << "  This is strong evidence, not a proof of equivalence.\n";
+        report << ",\n  \"maximum_absolute_error\": " << result.maximumAbsoluteError << "\n}\n";
+        std::cout << "  Report: " << reportPath.string() << "\n";
+        return 0;
+    }
+    const auto where = modelforge::localizeDivergence(*reference, *candidate,
+                                                      result.witness->values);
+    std::cout << "\n  RESULT: the models DIFFER (found at test input #" << result.firstDetection
+              << (result.foundByNearMiss ? ", by near-miss search" : "") << ").\n  input:     ";
+    for (std::size_t i = 0; i < result.witness->values.size(); ++i) {
+        std::cout << (i ? ", " : "") << result.witness->values[i];
+    }
+    std::cout << "\n  reference: ";
+    for (std::size_t i = 0; i < result.originalOutput.size(); ++i) {
+        std::cout << (i ? ", " : "") << result.originalOutput[i];
+    }
+    std::cout << "\n  candidate: ";
+    for (std::size_t i = 0; i < result.candidateOutput.size(); ++i) {
+        std::cout << (i ? ", " : "") << result.candidateOutput[i];
+    }
+    std::cout << "\n";
+    if (where.found) {
+        std::cout << "  First difference inside the model: node '" << where.node << "' (value '"
+                  << where.value << "'), max difference " << where.maximumDifference << "\n";
+    }
+    report << ",\n  \"found_by_near_miss_search\": " << (result.foundByNearMiss ? "true" : "false")
+           << ",\n  \"input\": ";
+    writeVector(result.witness->values);
+    report << ",\n  \"reference_output\": ";
+    writeVector(result.originalOutput);
+    report << ",\n  \"candidate_output\": ";
+    writeVector(result.candidateOutput);
+    if (where.found) {
+        report << ",\n  \"first_divergent_node\": \"" << jsonEscape(where.node) << "\"";
+    }
+    report << "\n}\n";
+    std::cout << "  Report: " << reportPath.string() << "\n";
+    return 3;
+}
+
 int main(int argc, char* argv[]) {
     const auto options = parseArguments(argc, argv);
     if (!options.has_value()) {
@@ -250,6 +375,10 @@ int main(int argc, char* argv[]) {
 
     modelforge::DiagnosticEngine diagnostics;
     modelforge::ModelGraph model;
+
+    if (!options->comparePath.empty()) {
+        return compareModels(*options);
+    }
 
     std::cout << "[1/5] Loading model...\n";
     if (!modelforge::loadModel(options->inputPath, model, diagnostics)) {
@@ -298,6 +427,12 @@ int main(int argc, char* argv[]) {
         std::cout << "      Guardian demo: " << (demoFailure->accepted ? "MISSED" : "REJECTED")
                   << " incorrect ReLU rewrite after " << demoFailure->validation.probeCount
                   << " targeted probes.\n";
+        if (demoFailure->divergence.found) {
+            std::cout << "      Bug localised: outputs first diverge at '"
+                      << demoFailure->divergence.node << "' (value '"
+                      << demoFailure->divergence.value << "', max difference "
+                      << demoFailure->divergence.maximumDifference << ").\n";
+        }
         if (demoFailure->accepted || !demoFailure->validation.firstFailure) {
             std::cerr << "Guardian failed to detect the demonstration bug\n";
             return 1;

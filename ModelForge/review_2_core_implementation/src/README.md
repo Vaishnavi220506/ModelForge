@@ -45,6 +45,7 @@ ONNX-specific code is isolated in `loadOnnx`; it is compiled only when `MODELFOR
 ## Guardian-APC research modules
 
 - `analysis.h/.cpp` - interval bound propagation, deep boundary probes (Newton on the exact input gradient), activation-pattern coverage and greedy coverage ordering.
+- `adaptive.h/.cpp` - Guardian-APC+: rewrite impact diff, rewrite-aware probes, near-miss search, divergence localisation (used by Guardian and `--compare`).
 - `research.h/.cpp` - synthetic model zoo, fault catalogue, equal-budget strategies, benchmark statistics (Wilson intervals, exact McNemar) and JSON export for the dashboard.
 - `../tools/studio.cpp` - `modelforge_studio`, the interactive terminal dashboard.
 - `../tools/bench.cpp` - `modelforge_bench`, the research benchmark.

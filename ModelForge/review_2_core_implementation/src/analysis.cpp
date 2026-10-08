@@ -416,6 +416,16 @@ void stepToward(std::vector<float>& point, const std::vector<float>& gradient,
 
 }  // namespace
 
+std::unordered_set<std::string> liveValues(const IRGraph& graph) {
+    std::unordered_set<std::string> live = {graph.outputName};
+    for (auto it = graph.instructions.rbegin(); it != graph.instructions.rend(); ++it) {
+        if (it->operation == IROp::Return || live.count(it->output) != 0) {
+            live.insert(it->inputs.begin(), it->inputs.end());
+        }
+    }
+    return live;
+}
+
 std::size_t ActivationSite::count(NeuronStability kind) const {
     return static_cast<std::size_t>(std::count(stability.begin(), stability.end(), kind));
 }
@@ -452,12 +462,7 @@ std::vector<ActivationSite> analyzeActivationSites(const IRGraph& original, floa
     auto intervals = propagateIntervals(graph, radius);
     // Only activations that can reach the returned output are analysed; a
     // fault or probe aimed at a dead node is wasted budget.
-    std::unordered_set<std::string> live = {graph.outputName};
-    for (auto it = graph.instructions.rbegin(); it != graph.instructions.rend(); ++it) {
-        if (it->operation == IROp::Return || live.count(it->output) != 0) {
-            live.insert(it->inputs.begin(), it->inputs.end());
-        }
-    }
+    const auto live = liveValues(graph);
     std::vector<ActivationSite> sites;
     for (const IRInstruction& instruction : graph.instructions) {
         if (!isActivation(instruction.operation) || instruction.inputs.empty() ||

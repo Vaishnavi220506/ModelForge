@@ -62,6 +62,11 @@ struct StrategySuite {
     std::vector<ValidationProbe> probes;  // already padded / truncated to the budget
     std::size_t nativeProbes = 0;         // probes produced before random padding
     double generationMilliseconds = 0.0;
+    // Per-fault (adaptive) strategies run Guardian-APC+ against each candidate
+    // instead of replaying a fixed probe list.
+    bool perFault = false;
+    bool rewriteAware = false;
+    std::size_t adaptiveBudget = 0;
 };
 
 std::vector<ValidationProbe> uniformRandomProbes(std::size_t inputCount, std::size_t count,

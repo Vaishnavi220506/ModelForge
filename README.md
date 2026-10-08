@@ -3,14 +3,23 @@
 **Author: Vaishnavi**
 
 ModelForge is a C++17 compiler for small neural-network models with a built-in
-per-pass validator, **Guardian-APC**. Before any graph rewrite is kept, Guardian
-tests it with probes placed on the model's own ReLU boundaries at every depth,
-ordered by activation-pattern coverage. A wrong rewrite is rolled back and
-saved as a replayable counterexample.
+per-pass validator, **Guardian-APC+**. Before any graph rewrite is kept, Guardian
+tests it with inputs placed on the model's own ReLU boundaries at every depth,
+focused on the layers the rewrite changed, ordered by activation-pattern
+coverage, and followed by a near-miss search. A wrong rewrite is rolled back
+with a replayable counterexample and the layer where the bug first shows.
 
-On 96 synthetic models with 2,160 injected faults, Guardian-APC detects 99.1%
-of observable faults with 128 probes. Uniform random testing detects 75.1% and
-the previous Guardian 85.7% (paired McNemar p < 1e-4). See
+On 96 synthetic models with 2,160 injected faults, Guardian-APC+ detects 99.2%
+of observable faults with 128 inputs. Uniform random testing detects 75.0% and
+the previous Guardian 85.6% (paired McNemar p < 1e-4). With only 8 inputs it
+already catches 88.2%.
+
+**Model diff checker:** check that an edited or hand-optimised model still
+behaves like the original:
+
+```powershell
+.\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\iris_demo.mforge --compare .\ModelForge\review_2_core_implementation\models\iris_handopt_bug.mforge
+``` See
 [Guardian-APC](ModelForge/docs/guardian_apc.md) and the
 [paper draft](ModelForge/paper/guardian_apc.tex).
 

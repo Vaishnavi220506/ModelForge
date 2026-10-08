@@ -19,6 +19,7 @@ if(MODELFORGE_WITH_ONNX_RUNTIME AND NOT MODELFORGE_WITH_ONNX)
 endif()
 
 add_library(modelforge_core
+    src/adaptive.cpp
     src/analysis.cpp
     src/codegen.cpp
     src/diagnostics.cpp
