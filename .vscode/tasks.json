@@ -275,6 +275,30 @@
                 "focus": true,
                 "clear": true
             }
+        },
+        {
+            "label": "ModelForge: open website",
+            "type": "shell",
+            "command": "Start-Process",
+            "args": [
+                "website\\index.html"
+            ],
+            "linux": {
+                "command": "xdg-open",
+                "args": [
+                    "website/index.html"
+                ]
+            },
+            "osx": {
+                "command": "open",
+                "args": [
+                    "website/index.html"
+                ]
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
         }
     ]
 }

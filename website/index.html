@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModelForge Shrink Lab</title>
+<meta name="author" content="Vaishnavi">
+<meta name="description" content="Shrink a trained neural network and find realistic inputs where the smaller model disagrees with the original. Built by Vaishnavi.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top"><span class="logo" aria-hidden="true">MF</span>ModelForge</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#lab">Shrink lab</a>
+      <a href="#explorer">Boundary explorer</a>
+      <a href="#playground">Try an input</a>
+      <a href="#how">How it works</a>
+      <a href="#results">Results</a>
+    </nav>
+    <button id="theme" type="button" aria-label="Toggle colour theme">◐</button>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <div>
+      <p class="eyebrow">Model compression, checked</p>
+      <h1>Will your smaller model still give the same answers?</h1>
+      <p class="lead">Shrinking a neural network to 8 or 4 bits, or pruning it, can keep accuracy the same while quietly changing predictions near class boundaries. ModelForge finds those realistic inputs for you, right here in your browser.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#lab">Open the shrink lab</a>
+        <a class="button" href="#how">How it works</a>
+      </div>
+      <p class="byline">Designed and built by <b>Vaishnavi</b>. C++17 compiler, guarded optimiser and research benchmark on <a href="https://github.com/vaishnavi220506/ModelForge">GitHub</a>.</p>
+    </div>
+    <canvas id="hero-canvas" width="460" height="400" aria-label="Animation: the decision boundary of a compressed model drifting away from the original"></canvas>
+  </div>
+
+  <section class="block wrap" id="lab">
+    <p class="eyebrow">1 · Shrink lab</p>
+    <h2>Pick a real model, shrink it, and check it</h2>
+    <p class="lead">Eight classifiers trained on real data. Choose a compression and watch accuracy, then run the Guardian check to hunt for inputs close to real data where the two models disagree.</p>
+    <div class="grid lab">
+      <div class="card reveal">
+        <div class="grid" style="gap:16px">
+          <label class="field">Dataset
+            <select id="dataset"></select>
+          </label>
+          <label class="field">Network
+            <select id="arch">
+              <option value="mlp16">1 hidden layer (16 neurons)</option>
+              <option value="mlp32x16">2 hidden layers (32, 16)</option>
+            </select>
+          </label>
+          <div class="field">Compression
+            <div class="segmented" id="kinds" role="group" aria-label="Compression">
+              <button type="button" data-kind="fp16">float16</button>
+              <button type="button" data-kind="int8">int8</button>
+              <button type="button" data-kind="int4">int4</button>
+              <button type="button" data-kind="prune">prune</button>
+            </div>
+          </div>
+          <label class="field" id="bits-field">Bits per weight: <b id="bits-value">4</b>
+            <input id="bits" type="range" min="2" max="12" value="4">
+          </label>
+          <label class="field" id="prune-field">Weights removed: <b id="prune-value">30%</b>
+            <input id="prune" type="range" min="5" max="90" step="5" value="30">
+          </label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="primary" id="run" type="button">Run Guardian check</button>
+            <button id="compare-all" type="button">Compare all levels</button>
+          </div>
+        </div>
+      </div>
+      <div class="grid" style="gap:20px">
+        <div class="card reveal">
+          <div class="stats">
+            <div class="tile stat"><span class="label">Weight size</span><span class="value" id="s-size">50%</span><span class="note">of float32</span></div>
+            <div class="tile stat"><span class="label">Test accuracy</span><span class="value" id="s-acc">-</span><span class="note" id="s-acc-note">original</span></div>
+            <div class="tile stat"><span class="label">Test-set flips</span><span class="value" id="s-flips">-</span><span class="note" id="s-flips-note">what most people check</span></div>
+          </div>
+          <div style="margin-top:18px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+              <h3>Guardian check</h3>
+              <span id="risk" class="small" aria-live="polite">not run yet</span>
+            </div>
+            <p class="sub" id="verdict">Guardian walks between pairs of real samples that the original model classifies differently, finds where its decision changes, and checks whether the smaller model moved that boundary.</p>
+            <div class="stats" style="margin-bottom:12px">
+              <div class="tile stat"><span class="label">Lines scanned</span><span class="value" id="g-lines">0</span></div>
+              <div class="tile stat"><span class="label">Boundary moved on</span><span class="value" id="g-moved">0</span></div>
+              <div class="tile stat"><span class="label">Model runs used</span><span class="value" id="g-evals">0</span><span class="note" id="g-budget">of 200 extra</span></div>
+            </div>
+            <div class="small" style="margin-bottom:6px">Worst realistic flip: how sure the original model was (0 = coin flip, 1 = certain)</div>
+            <div class="meter"><span id="g-meter"></span></div>
+            <div class="small" id="g-worst" style="margin:6px 0 12px">none yet</div>
+            <div class="log" id="log" aria-live="polite"></div>
+          </div>
+        </div>
+        <div class="card reveal" id="compare-card" hidden>
+          <h3>All compression levels</h3>
+          <p class="sub">Accuracy, test-set flips and Guardian's worst realistic flip for each level. The highlighted row is the smallest low-risk option.</p>
+          <div class="scroll"><table id="compare-table"></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="explorer">
+    <p class="eyebrow">2 · Boundary explorer</p>
+    <h2>See where the two models disagree</h2>
+    <p class="lead">A flat slice through the input space, passing through two real samples (A, B) and the worst flip Guardian found (W). Colours show the original model's class; red marks inputs where the smaller model gives a different answer. Hover to read both models.</p>
+    <div class="grid two">
+      <div class="card reveal">
+        <div class="plane-wrap"><canvas id="plane" width="180" height="180"></canvas></div>
+        <div class="legend" id="plane-legend"></div>
+        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <div class="segmented" id="view" role="group" aria-label="Colour by">
+            <button type="button" data-view="original" aria-pressed="true">Original</button>
+            <button type="button" data-view="compressed">Smaller</button>
+          </div>
+          <div class="segmented" id="zoom" role="group" aria-label="Zoom into the boundary between A and B">
+            <button type="button" data-zoom="1" aria-pressed="true">1x</button>
+            <button type="button" data-zoom="4">4x</button>
+            <button type="button" data-zoom="16">16x</button>
+          </div>
+          <button type="button" id="new-slice">Another slice</button>
+        </div>
+      </div>
+      <div class="grid" style="gap:20px">
+        <div class="card reveal">
+          <h3 id="hover-title">Point on the slice</h3>
+          <p class="sub" id="hover-sub">Move the pointer over the slice.</p>
+          <div class="two grid" style="gap:16px">
+            <div><div class="small">Original model</div><div class="pred" id="hover-orig">-</div><div class="probs" id="hover-orig-probs"></div></div>
+            <div><div class="small">Smaller model</div><div class="pred" id="hover-comp">-</div><div class="probs" id="hover-comp-probs"></div></div>
+          </div>
+        </div>
+        <div class="card reveal segment-chart">
+          <h3>Along the line from A to B</h3>
+          <p class="sub">Original model's probability for A's class (blue) and the smaller model's (orange). Where they cross 50% at different places, the gap between is where they disagree.</p>
+          <div id="segment"></div>
+          <input id="scrub" type="range" min="0" max="1000" value="500" aria-label="Position between A and B">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="playground">
+    <p class="eyebrow">3 · Try an input</p>
+    <h2 id="play-title">Draw a digit</h2>
+    <p class="lead" id="play-lead">Draw on the 8 by 8 grid (the size of the Digits dataset). Both models predict as you draw. Then ask Guardian to find the closest drawing where the smaller model changes its answer.</p>
+    <div class="grid two">
+      <div class="card reveal">
+        <div id="input-area"></div>
+        <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+          <button type="button" id="sample">Random real sample</button>
+          <button type="button" id="clear">Clear</button>
+          <button type="button" class="primary" id="nearby">Find a nearby flip</button>
+        </div>
+      </div>
+      <div class="card reveal">
+        <div class="two grid" style="gap:16px">
+          <div><div class="small">Original model</div><div class="pred" id="play-orig">-</div><div class="probs" id="play-orig-probs"></div></div>
+          <div><div class="small">Smaller model (<span id="play-kind">int4</span>)</div><div class="pred" id="play-comp">-</div><div class="probs" id="play-comp-probs"></div></div>
+        </div>
+        <div id="nearby-result" class="small" style="margin-top:16px" aria-live="polite"></div>
+        <div id="nearby-area" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="how">
+    <p class="eyebrow">4 · How it works</p>
+    <h2>Boundary-shift probing in four steps</h2>
+    <p class="lead">The original model's decisions change at boundaries between classes. Compression moves those boundaries a little. Guardian measures how far, using very few runs of the smaller model.</p>
+    <div class="steps">
+      <div class="card step reveal"><h3>Pick two real samples</h3><p class="sub">Two test samples the original model puts in different classes, nearest pairs first.</p></div>
+      <div class="card step reveal"><h3>Find the original boundary</h3><p class="sub">Halve the line between them about 30 times to find exactly where the original's answer changes.</p></div>
+      <div class="card step reveal"><h3>Did it move?</h3><p class="sub">Two runs of the smaller model either side of that point show whether its boundary moved, and which way.</p></div>
+      <div class="card step reveal"><h3>Measure the gap</h3><p class="sub">Halve again to find the smaller model's boundary. The far edge of the gap is the worst disagreement on that line.</p></div>
+    </div>
+    <div class="card reveal bisect" style="margin-top:20px">
+      <h3>Watch it search one line</h3>
+      <p class="sub">Dots are model runs: blue for the original's bisection, orange for the smaller model. The red band is where they disagree.</p>
+      <div id="bisect"></div>
+      <button type="button" id="replay" style="margin-top:10px">Replay</button>
+    </div>
+    <div class="grid two" style="margin-top:20px">
+      <div class="card reveal"><h3>Inside the compiler too</h3><p class="sub">The same idea guards ModelForge's own optimiser. Before keeping any rewrite (fusing layers, removing dead code), Guardian aims test inputs at the switching point of every ReLU neuron in the layers that changed, and rolls back the rewrite if any output differs. In a 96-model study it caught 99.2% of injected bugs, versus 75.0% for random inputs.</p></div>
+      <div class="card reveal"><h3>Run it yourself</h3><p class="sub">Everything on this page runs in your browser. The C++ tool does the same on any model file:</p><pre class="log" style="height:auto">modelforge wine_mlp16.mforge --shrink all --data wine_test.csv</pre></div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="results">
+    <p class="eyebrow">5 · Results</p>
+    <h2>Measured on 40 compressed models</h2>
+    <p class="lead">8 networks trained on Iris, Wine, Breast Cancer and Digits, each compressed 5 ways. A compression is risky if there is a realistic input where the original is sure but the smaller model disagrees.</p>
+    <div class="grid three" id="result-tiles"></div>
+    <p style="margin-top:20px"><a class="button" href="../dashboard/index.html">Open the full research dashboard</a></p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>ModelForge · designed and built by <b>Vaishnavi</b></span>
+    <a href="https://github.com/vaishnavi220506/ModelForge">github.com/vaishnavi220506/ModelForge</a>
+  </div>
+</footer>
+
+<script src="models.js"></script>
+<script src="../dashboard/data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

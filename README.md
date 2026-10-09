@@ -34,6 +34,22 @@ behaves like the original:
 [Guardian-APC](ModelForge/docs/guardian_apc.md) and the
 [paper draft](ModelForge/paper/guardian_apc.tex).
 
+## Interactive website
+
+Open `website/index.html` in a browser (no server or install needed). It runs
+the real trained models in the page:
+
+- **Shrink lab**: pick a model, compress it (float16, int8, int4, pruning),
+  run the Guardian check live and compare all levels with a recommendation.
+- **Boundary explorer**: a 2D slice through the input space showing where the
+  original and the smaller model disagree; hover to read both models.
+- **Try an input**: draw a digit or move feature sliders, then ask Guardian to
+  find the closest input where the smaller model changes its answer.
+
+To publish it, enable GitHub Pages (Settings, Pages, Source: GitHub Actions);
+the `Publish ModelForge website` workflow deploys it on every push to `main`
+at `https://vaishnavi220506.github.io/ModelForge/`.
+
 ## Quick demo (terminal + dashboard)
 
 After building (below), run in the VS Code terminal:
