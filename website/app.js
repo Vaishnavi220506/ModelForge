@@ -782,7 +782,7 @@ function results() {
 }
 function reveal() {
   const observer = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { e.target.classList.add("visible"); observer.unobserve(e.target); } }), { threshold: 0.12 });
-  document.querySelectorAll(".reveal").forEach((n, i) => { n.style.transitionDelay = `${(i % 4) * 60}ms`; observer.observe(n); });
+  document.querySelectorAll(".reveal").forEach((n, i) => { n.style.animationDelay = `${(i % 4) * 60}ms`; observer.observe(n); });
   const links = [...document.querySelectorAll(".nav-links a")];
   const sections = links.map((a) => document.querySelector(a.getAttribute("href")));
   const spy = new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) links.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#" + e.target.id)); }), { rootMargin: "-40% 0px -55% 0px" });

@@ -51,7 +51,7 @@ code, .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Cons
 .wrap { max-width: 1160px; margin: 0 auto; padding: 0 28px; }
 
 /* Navigation */
-header.nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+header.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
 .nav-inner { max-width: 1160px; margin: 0 auto; padding: 12px 28px; display: flex; align-items: center; gap: 18px; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text-primary); font-weight: 650; }
 .brand:hover { text-decoration: none; }
@@ -186,13 +186,11 @@ footer b { color: var(--text-primary); }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 @keyframes pop { 0% { transform: scale(0.9); opacity: 0; } 60% { transform: scale(1.04); } 100% { transform: none; opacity: 1; } }
-.reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.2, 0.75, 0.2, 1); }
-.reveal.visible { opacity: 1; transform: none; }
+.reveal.visible { animation: rise 0.6s cubic-bezier(0.2, 0.75, 0.2, 1) both; }
 .pop { animation: pop 0.45s cubic-bezier(0.2, 0.75, 0.2, 1) both; }
 .card { transition: border-color 0.25s ease; }
 .card:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-  .reveal { opacity: 1; transform: none; }
   html { scroll-behavior: auto; }
 }
