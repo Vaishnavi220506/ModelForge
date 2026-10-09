@@ -34,11 +34,28 @@ behaves like the original:
 [Guardian-APC](ModelForge/docs/guardian_apc.md) and the
 [paper draft](ModelForge/paper/guardian_apc.tex).
 
+## Demo for faculty (one command)
+
+`samples/` has a ready-made model and a script that compiles it without and
+with optimisation, shows the generated C++ side by side, builds and runs both
+programs on the same inputs (identical answers), shows Guardian rejecting a
+broken rewrite, and checks compressed versions of a real model. See
+[samples/README.md](samples/README.md).
+
+```powershell
+.\samples\run_demo.ps1
+```
+
 ## Interactive website
 
 Open `website/index.html` in a browser (no server or install needed). It runs
 the real trained models in the page:
 
+- **Compiler**: paste, upload or pick a `.mforge` model and get the same C++
+  the real compiler writes, with a before/after view of the optimised code, an
+  inspector (internal graph, Guardian decisions, neuron analysis, symbol
+  table), a run panel and an effectiveness table. Plant a bug in the optimiser
+  to watch Guardian reject it, or switch Guardian off to see the bug reach the C++.
 - **Shrink lab**: pick a model, compress it (float16, int8, int4, pruning),
   run the Guardian check live and compare all levels with a recommendation.
 - **Boundary explorer**: a 2D slice through the input space showing where the

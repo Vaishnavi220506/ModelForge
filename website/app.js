@@ -410,6 +410,7 @@ function renderExplorer() {
   const s0 = centreS - span / 2, t0 = centreT - span / 2;
   const point = (s, t) => A.map((a, i) => a + s * u[i] + t * v[i]);
   explorer.basis = { point, s0, t0, span, A, B, W, label, wt, dot };
+  if (!$("plane")) return;  // the 2D view is optional; the walkthrough only needs A and B
   const canvas = $("plane");
   const N = PLANE;
   const orig = new Int16Array(N * N), comp = new Int16Array(N * N);
@@ -800,7 +801,7 @@ function theme() {
 
 theme();
 setupLab();
-setupExplorer();
+if ($("plane")) setupExplorer();
 setupPlayground();
 refresh();
 results();

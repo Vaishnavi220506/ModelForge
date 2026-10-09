@@ -1,0 +1,26 @@
+# ModelForge sample: three-layer classifier (author: Vaishnavi).
+# Built to show all three optimisations:
+#   constant folding : bias b1 is written as base + offset (two constants added)
+#   layer fusion     : each Gemm followed by Relu becomes one fused step
+#   dead-code removal: 'debug_probe' computes a value nobody uses
+model three_layer_demo
+input x float32 1,6
+output y float32 1,3
+tensor w1 float32 6,8 values=0.0658,-0.5145,0.4933,-0.2123,0.0741,-0.5176,-0.3045,-0.0682,-0.3712,0.0735,0.3333,-0.3594,0.2190,-0.3464,-0.2189,-0.1612,-0.2586,-0.0431,-0.1160,0.3622,-0.3920,0.1852,0.3068,0.2062,0.1149,-0.3640,-0.4758,-0.4723,-0.0298,0.0531,-0.1272,0.1266,0.0321,0.4867,0.2102,-0.0515,0.1252,0.1464,-0.0230,0.5112,-0.3566,0.5828,-0.0458,-0.0882,0.5647,-0.5895,0.4853,0.2504
+tensor b1_base float32 1,8 values=-0.1292,-0.1020,0.0972,-0.1229,-0.1416,-0.0656,0.0228,-0.0180
+tensor b1_offset float32 1,8 values=0.0250,0.0051,-0.1221,0.0575,0.1424,0.1946,-0.1627,-0.1480
+tensor w2 float32 8,8 values=0.4250,-0.4749,0.5313,0.1360,-0.0349,-0.4942,-0.5930,0.2510,-0.0436,0.0492,0.0279,0.3562,0.2828,0.1455,-0.1524,0.2132,0.1993,0.1122,0.3681,0.0047,-0.5549,0.0194,-0.4662,0.5598,-0.3904,0.0504,0.4776,0.2904,0.5182,-0.2438,-0.3244,0.4992,0.3233,-0.1309,0.2206,0.4676,-0.4291,0.3031,-0.0822,0.1395,-0.0251,0.5676,0.3662,0.0331,-0.2841,-0.5353,-0.4930,-0.1008,0.3529,0.3762,-0.3847,-0.3405,0.2803,-0.3514,-0.5117,0.2230,-0.2871,-0.4022,0.4023,0.4859,-0.4091,0.4671,-0.2110,-0.5076
+tensor b2 float32 1,8 values=-0.0932,0.1880,0.1449,0.1222,0.1227,-0.0861,-0.0027,-0.0616
+tensor w3 float32 8,3 values=0.4735,0.2115,-0.0424,0.4898,-0.5221,0.3761,-0.2127,0.1672,0.2484,0.0394,0.1854,0.2827,0.1644,-0.1146,0.5954,0.4724,-0.1223,-0.1466,-0.4664,0.4005,0.2405,0.0749,-0.1322,0.1376
+tensor b3 float32 1,3 values=-0.1081,-0.1832,-0.0457
+
+node bias_sum Add b1_base b1_offset -> b1
+node dense_1 Gemm x w1 b1 -> z1
+node relu_1 Relu z1 -> h1
+node dense_2 Gemm h1 w2 b2 -> z2
+node relu_2 Relu z2 -> h2
+node classifier Gemm h2 w3 b3 -> logits
+node probabilities Softmax logits -> y axis=1
+
+# Dead code: computed but never used by the output.
+node debug_probe Sigmoid h1 -> debug_value

@@ -13,8 +13,8 @@
   <div class="nav-inner">
     <a class="brand" href="#top"><span class="logo" aria-hidden="true">MF</span>ModelForge</a>
     <nav class="nav-links" aria-label="Sections">
+      <a href="#compiler">Compiler</a>
       <a href="#lab">Shrink lab</a>
-      <a href="#explorer">Boundary explorer</a>
       <a href="#playground">Try an input</a>
       <a href="#how">How it works</a>
       <a href="#results">Results</a>
@@ -26,11 +26,12 @@
 <main id="top">
   <div class="wrap hero">
     <div>
-      <p class="eyebrow">Model compression, checked</p>
-      <h1>Will your smaller model still give the same answers?</h1>
-      <p class="lead">Shrinking a neural network to 8 or 4 bits, or pruning it, can keep accuracy the same while quietly changing predictions near class boundaries. ModelForge finds those realistic inputs for you, right here in your browser.</p>
+      <p class="eyebrow">Neural network compiler, checked</p>
+      <h1>Turn a neural network into C++ you can trust</h1>
+      <p class="lead">ModelForge compiles a trained model into a standalone C++ program and tests every optimisation it makes before keeping it. It also checks whether a shrunk (8-bit, 4-bit or pruned) model still gives the same answers. Everything below runs in your browser.</p>
       <div class="hero-actions">
-        <a class="button primary" href="#lab">Open the shrink lab</a>
+        <a class="button primary" href="#compiler">Compile a model</a>
+        <a class="button" href="#lab">Open the shrink lab</a>
         <a class="button" href="#how">How it works</a>
       </div>
       <p class="byline">Designed and built by <b>Vaishnavi</b>. C++17 compiler, guarded optimiser and research benchmark on <a href="https://github.com/vaishnavi220506/ModelForge">GitHub</a>.</p>
@@ -38,8 +39,82 @@
     <canvas id="hero-canvas" width="460" height="400" aria-label="Animation: the decision boundary of a compressed model drifting away from the original"></canvas>
   </div>
 
+  <section class="block wrap" id="compiler">
+    <p class="eyebrow">1 · Compiler</p>
+    <h2>Give it a model, get C++ back</h2>
+    <p class="lead">Paste or upload a model in ModelForge's <code>.mforge</code> format, or pick a sample. The compiler checks it, optimises it with Guardian testing every rewrite, and writes the standalone C++ program. The code below is the same code the real C++17 compiler produces.</p>
+    <div class="grid lab">
+      <div class="card reveal">
+        <div class="grid" style="gap:14px">
+          <label class="field">Sample model
+            <select id="c-sample"></select>
+          </label>
+          <label class="field">Or upload a .mforge file
+            <input id="c-file" type="file" accept=".mforge,.txt">
+          </label>
+          <label class="field">Model source
+            <textarea id="c-source" rows="14" spellcheck="false"></textarea>
+          </label>
+          <label class="check"><input id="c-guardian" type="checkbox" checked> Guardian checks every optimisation</label>
+          <label class="field">Plant a bug in the optimiser (to see Guardian at work)
+            <select id="c-bug">
+              <option value="">No bug: correct optimiser</option>
+              <option value="drop_bias">Layer fusion forgets the bias</option>
+              <option value="relu6">Layer fusion clamps at 6 (ReLU6 instead of ReLU)</option>
+              <option value="sigmoid">Layer fusion uses Sigmoid instead of ReLU</option>
+              <option value="fold_round">Constant folding rounds to 2 decimals</option>
+            </select>
+          </label>
+          <button class="primary" id="c-compile" type="button">Compile to C++</button>
+        </div>
+      </div>
+      <div class="grid" style="gap:20px">
+        <div class="card reveal">
+          <h3>Compilation pipeline</h3>
+          <ol class="stages" id="c-stages"></ol>
+          <div id="c-errors" aria-live="polite"></div>
+          <div class="stats" id="c-summary" style="margin-top:14px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card reveal" style="margin-top:20px" id="c-results">
+      <div class="tabs" role="tablist" aria-label="Compiler results">
+        <button role="tab" type="button" data-panel="code" aria-selected="true">Generated C++</button>
+        <button role="tab" type="button" data-panel="diff" aria-selected="false">Before vs after</button>
+        <button role="tab" type="button" data-panel="inspect" aria-selected="false">Inspector</button>
+        <button role="tab" type="button" data-panel="run" aria-selected="false">Run it</button>
+        <button role="tab" type="button" data-panel="effect" aria-selected="false">Effectiveness</button>
+      </div>
+      <div class="tab-panel" data-panel="code">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <div class="segmented" id="c-files" role="group" aria-label="Generated file">
+            <button type="button" data-file="source" aria-pressed="true">model.cpp</button>
+            <button type="button" data-file="header" aria-pressed="false">model.h</button>
+            <button type="button" data-file="cmake" aria-pressed="false">CMakeLists.txt</button>
+          </div>
+          <button type="button" id="c-copy">Copy file</button>
+          <span class="small" id="c-copy-note" aria-live="polite"></span>
+        </div>
+        <pre class="code" id="c-code"></pre>
+      </div>
+      <div class="tab-panel" data-panel="diff" hidden></div>
+      <div class="tab-panel" data-panel="inspect" hidden></div>
+      <div class="tab-panel" data-panel="run" hidden>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <label class="field" style="flex:1;min-width:220px">Input values (comma separated)
+            <input id="c-input" type="text">
+          </label>
+          <button type="button" id="c-random">Random input</button>
+          <button type="button" class="primary" id="c-run">Run</button>
+        </div>
+        <div id="c-run-out" style="margin-top:14px"></div>
+      </div>
+      <div class="tab-panel" data-panel="effect" hidden></div>
+    </div>
+  </section>
+
   <section class="block wrap" id="lab">
-    <p class="eyebrow">1 · Shrink lab</p>
+    <p class="eyebrow">2 · Shrink lab</p>
     <h2>Pick a real model, shrink it, and check it</h2>
     <p class="lead">Eight classifiers trained on real data. Choose a compression and watch accuracy, then run the Guardian check to hunt for inputs close to real data where the two models disagree.</p>
     <div class="grid lab">
@@ -102,46 +177,6 @@
           <h3>All compression levels</h3>
           <p class="sub">Accuracy, test-set flips and Guardian's worst realistic flip for each level. The highlighted row is the smallest low-risk option.</p>
           <div class="scroll"><table id="compare-table"></table></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="block wrap" id="explorer">
-    <p class="eyebrow">2 · Boundary explorer</p>
-    <h2>See where the two models disagree</h2>
-    <p class="lead">A flat slice through the input space, passing through two real samples (A, B) and the worst flip Guardian found (W). Colours show the original model's class; red marks inputs where the smaller model gives a different answer. Hover to read both models.</p>
-    <div class="grid two">
-      <div class="card reveal">
-        <div class="plane-wrap"><canvas id="plane" width="180" height="180"></canvas></div>
-        <div class="legend" id="plane-legend"></div>
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <div class="segmented" id="view" role="group" aria-label="Colour by">
-            <button type="button" data-view="original" aria-pressed="true">Original</button>
-            <button type="button" data-view="compressed">Smaller</button>
-          </div>
-          <div class="segmented" id="zoom" role="group" aria-label="Zoom into the boundary between A and B">
-            <button type="button" data-zoom="1" aria-pressed="true">1x</button>
-            <button type="button" data-zoom="4">4x</button>
-            <button type="button" data-zoom="16">16x</button>
-          </div>
-          <button type="button" id="new-slice">Another slice</button>
-        </div>
-      </div>
-      <div class="grid" style="gap:20px">
-        <div class="card reveal">
-          <h3 id="hover-title">Point on the slice</h3>
-          <p class="sub" id="hover-sub">Move the pointer over the slice.</p>
-          <div class="two grid" style="gap:16px">
-            <div><div class="small">Original model</div><div class="pred" id="hover-orig">-</div><div class="probs" id="hover-orig-probs"></div></div>
-            <div><div class="small">Smaller model</div><div class="pred" id="hover-comp">-</div><div class="probs" id="hover-comp-probs"></div></div>
-          </div>
-        </div>
-        <div class="card reveal segment-chart">
-          <h3>Along the line from A to B</h3>
-          <p class="sub">Original model's probability for A's class (blue) and the smaller model's (orange). Where they cross 50% at different places, the gap between is where they disagree.</p>
-          <div id="segment"></div>
-          <input id="scrub" type="range" min="0" max="1000" value="500" aria-label="Position between A and B">
         </div>
       </div>
     </div>
@@ -210,7 +245,11 @@
 </footer>
 
 <script src="models.js"></script>
+<script src="cpp_template.js"></script>
+<script src="samples.js"></script>
+<script src="compiler.js"></script>
 <script src="../dashboard/data.js"></script>
 <script src="app.js"></script>
+<script src="compiler_ui.js"></script>
 </body>
 </html>
