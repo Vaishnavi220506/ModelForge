@@ -440,10 +440,10 @@ int shrinkModel(const CommandLineOptions& options) {
     float recommendedSize = 1.0f;
     for (std::size_t k = 0; k < kinds.size(); ++k) {
         const auto& kind = kinds[k];
-        const auto small = modelforge::compressModel(*graph, kind);
-        const auto testSet = modelforge::searchTestSet(*graph, small, test);
-        const auto search = modelforge::searchBoundaryShift(*graph, small, test, 200);
-        const double smallAccuracy = modelforge::accuracy(small, test);
+        const auto compressed = modelforge::compressModel(*graph, kind);
+        const auto testSet = modelforge::searchTestSet(*graph, compressed, test);
+        const auto search = modelforge::searchBoundaryShift(*graph, compressed, test, 200);
+        const double compressedAccuracy = modelforge::accuracy(compressed, test);
         const std::string risk = modelforge::riskLevel(search.worstSeverity, 0);
         // Fraction of the float32 weight storage that remains (ignoring sparse indexing).
         const float size = kind.kind == modelforge::CompressionKind::Pruning
@@ -451,7 +451,7 @@ int shrinkModel(const CommandLineOptions& options) {
                                : static_cast<float>(kind.bits) / 32.0f;
         std::ostringstream accuracyText;
         accuracyText << std::fixed << std::setprecision(1) << baseAccuracy * 100 << "% -> "
-                     << smallAccuracy * 100 << "%";
+                     << compressedAccuracy * 100 << "%";
         std::ostringstream flipText;
         if (search.worstInput.empty()) {
             flipText << "none found";
@@ -470,10 +470,10 @@ int shrinkModel(const CommandLineOptions& options) {
             recommendedSize = size;
         }
         const auto modelPath = out / (graph->name + "_" + kind.name + ".mforge");
-        std::ofstream(modelPath) << modelforge::writeManifestText(small);
+        std::ofstream(modelPath) << modelforge::writeManifestText(compressed);
         report << "    {\"compression\": \"" << kind.name << "\", \"weight_size\": " << size
                << ", \"accuracy_before\": " << baseAccuracy << ", \"accuracy_after\": "
-               << smallAccuracy << ", \"test_set_flips\": " << testSet.disagreements
+               << compressedAccuracy << ", \"test_set_flips\": " << testSet.disagreements
                << ", \"worst_margin\": " << search.worstSeverity << ", \"risk\": \"" << risk
                << "\", \"boundary_shift\": " << search.maxBoundaryShift
                << ", \"witness_distance\": " << search.worstDistance
@@ -482,7 +482,7 @@ int shrinkModel(const CommandLineOptions& options) {
             report << (i ? ", " : "") << search.worstInput[i];
         }
         report << "]}" << (k + 1 == kinds.size() ? "\n" : ",\n");
-        if (kinds.size() == 1 && !modelforge::generateCpp(small, (out / "cpp").string(), diagnostics)) {
+        if (kinds.size() == 1 && !modelforge::generateCpp(compressed, (out / "cpp").string(), diagnostics)) {
             diagnostics.print(std::cerr);
             return 1;
         }

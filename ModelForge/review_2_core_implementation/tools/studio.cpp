@@ -656,9 +656,9 @@ void screenShrink(const Session& session) {
     std::string recommended;
     float recommendedSize = 1.0f;
     for (const auto& kind : modelforge::standardCompressions()) {
-        const auto small = modelforge::compressModel(graph, kind);
-        const auto testSet = modelforge::searchTestSet(graph, small, test);
-        const auto search = modelforge::searchBoundaryShift(graph, small, test, 200);
+        const auto compressed = modelforge::compressModel(graph, kind);
+        const auto testSet = modelforge::searchTestSet(graph, compressed, test);
+        const auto search = modelforge::searchBoundaryShift(graph, compressed, test, 200);
         const std::string risk = modelforge::riskLevel(search.worstSeverity, 0);
         const float size = kind.kind == modelforge::CompressionKind::Pruning
                                ? 1.0f - kind.pruneFraction
@@ -668,7 +668,7 @@ void screenShrink(const Session& session) {
                                                                          : bad();
         table.rows.push_back(
             {bold() + kind.name + reset(), percent(size, 0),
-             percent(base, 1) + " " + glyphs().arrow + " " + percent(modelforge::accuracy(small, test), 1),
+             percent(base, 1) + " " + glyphs().arrow + " " + percent(modelforge::accuracy(compressed, test), 1),
              (testSet.disagreements ? warn() : muted()) + std::to_string(testSet.disagreements) + "/" +
                  std::to_string(test.rows.size()) + reset(),
              search.worstInput.empty()

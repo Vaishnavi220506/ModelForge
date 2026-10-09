@@ -1144,23 +1144,23 @@ RealStudySummary runRealStudy(const std::string& realDirectory, std::size_t budg
             continue;
         }
         for (const auto& compression : standardCompressions()) {
-            const IRGraph small = compressModel(graph, compression);
-            const auto testSet = searchTestSet(graph, small, test);
-            const auto ours = searchBoundaryShift(graph, small, test, budget);
+            const IRGraph compressed = compressModel(graph, compression);
+            const auto testSet = searchTestSet(graph, compressed, test);
+            const auto ours = searchBoundaryShift(graph, compressed, test, budget);
             std::vector<DisagreementSearch> noise, genetic;
             for (std::size_t s = 0; s < seeds; ++s) {
-                noise.push_back(searchNoise(graph, small, test, budget, 101 + static_cast<std::uint32_t>(s)));
-                genetic.push_back(searchGenetic(graph, small, test, budget, 201 + static_cast<std::uint32_t>(s)));
+                noise.push_back(searchNoise(graph, compressed, test, budget, 101 + static_cast<std::uint32_t>(s)));
+                genetic.push_back(searchGenetic(graph, compressed, test, budget, 201 + static_cast<std::uint32_t>(s)));
             }
             // Best known: everything above plus long reference runs.
             float best = std::max(testSet.worstSeverity, ours.worstSeverity);
             for (const auto& run : noise) best = std::max(best, run.worstSeverity);
             for (const auto& run : genetic) best = std::max(best, run.worstSeverity);
-            best = std::max({best, searchBoundaryShift(graph, small, test, 5000).worstSeverity,
-                             searchGenetic(graph, small, test, 5000, 999).worstSeverity,
-                             searchNoise(graph, small, test, 5000, 999).worstSeverity});
+            best = std::max({best, searchBoundaryShift(graph, compressed, test, 5000).worstSeverity,
+                             searchGenetic(graph, compressed, test, 5000, 999).worstSeverity,
+                             searchNoise(graph, compressed, test, 5000, 999).worstSeverity});
             const double accuracyBefore = accuracy(graph, test);
-            const double accuracyAfter = accuracy(small, test);
+            const double accuracyAfter = accuracy(compressed, test);
             const bool risky = best >= kRisky;
             const bool hidden = risky && testSet.worstSeverity < kRisky;
             const bool unchanged = risky && accuracyAfter >= accuracyBefore;
