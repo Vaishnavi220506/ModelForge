@@ -29,6 +29,12 @@ Linux or macOS:
 ./samples/run_demo.sh
 ```
 
+If Windows says **"An Application Control policy has blocked this file"**,
+your laptop's security setting blocks newly built programs. The demo handles
+it: step 5 then compares the predictions from `modelforge --predict`, which
+runs the same compiled model and prints the same format as the generated
+program (checked byte for byte on Linux).
+
 ## What the demo shows
 
 1. **Compile without optimisation**: `modelforge ... --no-opt` writes the
@@ -79,6 +85,13 @@ cmake -S build\mine -B build\mine\build
 cmake --build build\mine\build --config Release
 .\build\mine\build\Release\generated_model.exe 1 -2 0.5 3 0 -1
 .\build\mine\build\Release\generated_model.exe --csv samples\inputs.csv
+```
+
+If the generated program is blocked by Windows, run the compiled model inside
+ModelForge instead:
+
+```powershell
+.\build\Release\modelforge.exe samples\three_layer_demo.mforge --out build\mine --no-ir --predict samples\inputs.csv
 ```
 
 The interactive website (`website/index.html`, section **Compiler**) does the

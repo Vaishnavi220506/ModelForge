@@ -31,6 +31,7 @@ struct CommandLineOptions {
     bool guardianDemoBug = false;
     std::string comparePath;
     std::string shrink;
+    std::string predictPath;
     std::string dataPath;
 };
 
@@ -47,6 +48,8 @@ void printUsage() {
               << "  --shrink <kind>    Compress (fp16, int8, int4, prune30, prune50 or all),\n"
               << "                     hunt for realistic prediction flips, recommend a level\n"
               << "  --data <csv>       Test data for --shrink (features..., label per row)\n"
+              << "  --predict <csv>    Run the compiled model on every CSV row and write\n"
+              << "                     <out>/predictions.csv (same format as generated_model --csv)\n"
               << "  --compare <other>  Check that <other> behaves like the input model\n"
               << "                     (e.g. a hand-optimised, converted or edited copy)\n"
               << "  --help             Show this help\n";
@@ -79,6 +82,14 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
         }
         if (argument == "--verify-onnx") {
             options.verifyOnnx = true;
+            continue;
+        }
+        if (argument == "--predict") {
+            if (index + 1 >= argc) {
+                std::cerr << "--predict requires a CSV file\n";
+                return std::nullopt;
+            }
+            options.predictPath = argv[++index];
             continue;
         }
         if (argument == "--shrink" || argument == "--data") {
@@ -703,6 +714,62 @@ int main(int argc, char* argv[]) {
         if (!report.passed) {
             return 1;
         }
+    }
+
+    if (!options->predictPath.empty()) {
+        // Same computation and output format as `generated_model --csv`, run on
+        // the compiled graph. Useful where security policy blocks new programs.
+        std::ifstream rows(options->predictPath);
+        if (!rows) {
+            std::cerr << "Cannot open " << options->predictPath << "\n";
+            return 1;
+        }
+        const auto predictionsPath =
+            std::filesystem::path(options->outputDirectory) / "predictions.csv";
+        std::ofstream predictions(predictionsPath);
+        std::ostringstream text;
+        text << std::setprecision(9);
+        const std::size_t inputs = sampleInput.size();
+        const std::size_t outputs = executionResult->size();
+        text << "row,prediction";
+        for (std::size_t i = 0; i < outputs; ++i) text << ",score_" << i;
+        text << "\n";
+        std::string line;
+        std::size_t row = 0, lineNumber = 0;
+        while (std::getline(rows, line)) {
+            ++lineNumber;
+            if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+            std::vector<float> values;
+            std::stringstream cells(line);
+            std::string cell;
+            while (std::getline(cells, cell, ',')) {
+                char* end = nullptr;
+                const float value = std::strtof(cell.c_str(), &end);
+                if (end == cell.c_str()) {
+                    std::cerr << options->predictPath << " line " << lineNumber << ": not a number\n";
+                    return 1;
+                }
+                values.push_back(value);
+            }
+            if (values.size() != inputs) {
+                std::cerr << options->predictPath << " line " << lineNumber << ": expected "
+                          << inputs << " values\n";
+                return 1;
+            }
+            modelforge::DiagnosticEngine local;
+            const auto scores = modelforge::executeIR(optimizedIR, values, local);
+            if (!scores) {
+                local.print(std::cerr);
+                return 1;
+            }
+            const auto top = std::max_element(scores->begin(), scores->end());
+            text << ++row << ',' << (top - scores->begin());
+            for (const float value : *scores) text << ',' << value;
+            text << "\n";
+        }
+        predictions << text.str();
+        std::cout << "\nPREDICTIONS (" << row << " rows, written to " << predictionsPath.string()
+                  << ")\n" << text.str();
     }
 
     if (!diagnostics.all().empty()) {
