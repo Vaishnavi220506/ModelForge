@@ -1,0 +1,80 @@
+% Method sections of forgecert.tex (included from the main file).
+
+\section{The Integer Target}\label{sec:target}
+\subsection{Layers as taps}
+ForgeCert accepts ReLU networks built from dense layers (Gemm, MatMul+Add) and 2-D convolutions (NCHW, stride, zero padding), with Flatten and an order-preserving output activation (Softmax or Sigmoid, which do not change the argmax). Every linear layer is normalised to a list of \emph{taps}: output neuron $o$ computes $b_{c(o)}+\sum_{(i,w)\in T_o} W_w\,x_i$, where $c(o)$ is the output channel. A dense layer has $T_o=\{(i,\,o\cdot n+i)\}$; a convolution has one tap per in-bounds kernel position. The rest of the compiler (lowering, analysis, interpreter, checker) works on taps, so dense and convolutional layers share one implementation, while code generation emits a dense loop or a sliding-window loop (Fig.~\ref{fig:code}).
+
+\subsection{Integer semantics}
+Tensor $\ell$ holds integers $q$ that represent $t\cdot q$ for a per-\emph{group} scale $t$. The groups are per input channel for images, per feature for tabular inputs, per output channel for convolutions (so weight sharing survives), per neuron for hidden dense layers, and one shared group for the logits, so that the argmax can compare integers. Weights are quantised symmetrically per output channel \emph{after} folding the input scales in ($W_w\cdot t_{i}$), which makes per-channel input scales free at run time. Input $x_i$ becomes $q_i=\mathrm{clamp}(\mathrm{round}(x_i\cdot s_i^{-1}))$, computed in float32 with round-half-away-from-zero; unsigned codes are used when the domain is non-negative. A layer then computes, for neuron $o$ in channel $c$:
+\begin{align}
+a_o &= q^b_c+\textstyle\sum_{(i,w)\in T_o} q^W_w\,q_i &&\text{(accumulate)}\label{eq:acc}\\
+y_o &= \mathrm{clamp}_{[q^-,q^+]}\bigl(\mathrm{rshift}(\mathrm{ReLU}(a_o)\cdot m_c,\ k_c)\bigr) &&\text{(requantise)}\label{eq:req}
+\end{align}
+with $\mathrm{rshift}(v,k)=\lfloor (v+2^{k-1})/2^{k}\rfloor$, and the class is the first index of the largest logit. The emitted C (Fig.~\ref{fig:code}) implements exactly these equations; its tables live in flash (\texttt{MF\_ROM}, i.e.\ \texttt{\_\_flash} on AVR).
+
+\textbf{Effective weights.} The real value represented by $y_o$ before rounding and clamping is affine in the represented inputs $\hat x_i=s_i q_i$:
+\begin{equation}
+\hat v_o=\textstyle\sum \hat W_{o,k}\,\hat x_i+\hat b_o,\quad \hat W_{o,k}=\frac{t_o m_c 2^{-k_c}}{s_i}\,q^W_w,\quad \hat b_o=t_o m_c 2^{-k_c}\,q^b_c .
+\label{eq:eff}
+\end{equation}
+ReLU commutes with the positive factor $m_c2^{-k_c}$, so $t_o\,y_o=\mathrm{clamp}_{[t_oq^-,t_oq^+]}(t_o\,\mathrm{round}(\mathrm{ReLU}(\hat v_o)/t_o))$. Eq.~\eqref{eq:eff} folds weight quantisation, bias quantisation and the multiplier approximation into one exactly known matrix, which is what makes an exact error analysis of the emitted code possible.
+
+\section{Differential Abstract Interpretation}\label{sec:ai}
+For each neuron the analysis keeps two affine forms over shared noise symbols $\eta_k\in[-1,1]$~\cite{affine}: $R$, the value of the float model $f$ in exact real arithmetic, and $E$, the error of the integer program ($t\cdot q-R$). The input box contributes one symbol per input dimension, so $R$ and $E$ stay correlated with \emph{where} the input is. We write $\mathrm{lb}$/$\mathrm{ub}$ for the bounds of a form.
+
+\textbf{Affine step.} With $\Delta W=\hat W-W$ and $\Delta b=\hat b-b$:
+\[R'=W R+b,\qquad E'=\Delta W\,R+\hat W E+\Delta b .\]
+Both are exact in affine arithmetic.
+
+\textbf{ReLU.} Let $[l,u]$ bound $R$ and $[\hat l,\hat u]$ bound $Q=R+E$. If both are stable inactive the new error is $0$; if both are stable active it is $E$ (exactly). Otherwise it is the tighter of (a)~$\widetilde{\mathrm{ReLU}}(Q)-\widetilde{\mathrm{ReLU}}(R)$ with the DeepZ relaxation~\cite{deepz}, which keeps correlations, and (b)~a fresh symbol spanning $\mathrm{conv}\{0,E\}$~\cite{reludiff}, intersected with what each half-stable case implies (e.g.\ $\max(E,-R)$ when $l\ge0$). The float model continues with $\widetilde{\mathrm{ReLU}}(R)$.
+
+\textbf{Saturation.} The clamp to $U=t\,q^+$ adds $\mathrm{clamp}(Y)-Y=-\mathrm{ReLU}(Y-U)$ to the error ($Y$ the value after ReLU), and the signed lower clamp adds $\mathrm{ReLU}(-U-Y)$. Both terms are relaxed like a ReLU (exactly when the clamp always or never triggers). This lets ForgeCert certify programs whose scales come from calibration data, where saturation does happen, rather than only programs in which it provably cannot.
+
+\textbf{Rounding} adds a fresh symbol of radius $t/2$, except where the value is provably $0$ after ReLU or provably at the clamp: those round exactly. (Without this rule, a convolution channel that is dead on the whole domain adds $\pm t/2$ to each of its neurons; on the MNIST CNN this alone made the 16-bit error bound $70\times$ larger.)
+
+\textbf{Decision.} Let $c$ be the float class at the box centre. A box is \emph{proved} if for every rival $j$: $\mathrm{lb}(R_c-R_j)>0$ and $\mathrm{lb}(Q_c-Q_j)>\theta_j$, where $\theta_j=t_L/2$ for $j<c$ and $0$ otherwise, because the emitted argmax breaks ties toward the lower index and $Q$ is a multiple of $t_L$.
+
+\begin{theorem}[Soundness]\label{thm:sound}
+Let $B\subseteq D$ be a box. If the analysis proves $B$, then for every $x\in B$ the emitted C function \texttt{mf\_infer\_q} applied to \texttt{mf\_quantize\_input}$(x)$ returns $\arg\max f(x)$, provided the domain-wide obligations of \S\ref{sec:lower} hold.
+\end{theorem}
+\noindent The proof (Appendix~\ref{app:proof}) shows that every transfer function over-approximates the corresponding exact operation of Eqs.~\eqref{eq:acc}--\eqref{eq:req}, and that the obligations of \S\ref{sec:lower} make the C program equal to those equations on $D$ (no overflow, no undefined behaviour).
+
+\textbf{Input splitting.} If a box is not proved, it is bisected along the input with the largest coefficient in the failing margin, up to depth 10 and 96 analyses per region. The split tree is stored in the certificate.
+
+\textbf{Provenance.} $E$ can be stored as a sum $\sum_s E^{(s)}$ over error sources: input quantisation, each layer's weights, and each layer's rounding and saturation. Affine steps propagate each part exactly ($\Delta W R$ enters the part of its layer), and relaxation terms are shared out in proportion to each part's magnitude. Proofs use only the sum, so provenance does not affect soundness. For a failing margin, the \emph{blame} of source $s$ is the radius plus the negative centre of $E^{(s)}_c-E^{(s)}_j$. Provenance multiplies the analysis cost by $2L+1$, so ForgeCert proves with a single error form and recomputes provenance only at the leaf where a proof fails.
+
+\section{Proof-Guided Lowering}\label{sec:lower}
+Lowering is interleaved with the analysis of \S\ref{sec:ai} on the whole domain $D$, layer by layer. Every representation decision is derived from a bound that the analysis proves, and becomes a proof obligation that the checker re-establishes:
+
+\textbf{Scales.} With \emph{proved} scales, each group's scale maps its proved range onto the full code range, so no clamp can trigger on $D$. With \emph{calibrated} scales, the range is the largest activation over calibration data, as TFLite-style flows do~\cite{jacob}. Saturation is then possible and is modelled by the clamp rule.
+
+\textbf{Accumulators.} A classical accumulator must hold every partial sum: $|q^b_c|+\sum|q^W_w|\max(|q^-_i|,|q^+_i|)$. A \emph{modular} accumulator computes Eq.~\eqref{eq:acc} in unsigned arithmetic modulo $2^n$, where overflow is defined behaviour in C, and converts the result back to a signed value.
+\begin{lemma}[Modular accumulation]\label{lem:modular}
+If the exact sum $a_o$ satisfies $-2^{n-1}\le a_o<2^{n-1}$, the modular computation followed by the two's-complement reconstruction yields $a_o$, whatever the intermediate values.
+\end{lemma}
+\noindent Since $a_o=\hat v_o/(t_om_c2^{-k_c})$ is exactly the pre-ReLU value that the analysis bounds, the \emph{final-sum} bound comes for free and is tighter than the partial-sum bound. ForgeCert uses the narrower of the two widths.
+
+\textbf{Multiplies.} When $\max_w|q^W_w|\cdot\max_i\max(|q^-_i|,|q^+_i|)\le 2^{15}-1$, every product provably fits a 16-bit multiply. On an 8-bit AVR a 16-bit multiply costs less than half of a 32-bit one (\S\ref{sec:eval}).
+
+\textbf{Dead inputs.} An input that is $0$ on all of $D$ in both $R$ and $Q$ (a dead ReLU) cannot influence anything. Its weights are left out of the per-channel scale and emitted as $0$. Without this rule, the arbitrary scale of a dead convolution channel inflated the next layer's weight scales and quantised its live weights away.
+
+\textbf{Requantisation constants.} Multipliers get as many bits as keep $|a|\cdot m_c<2^{62}$. With proved scales, a scale is grown and the layer re-analysed if rounding the multiplier could push a value past its range.
+
+\section{Counterexample-Guided Precision Tuning}\label{sec:cegar}
+The specification is a domain $D$ and a set of regions, here $L_\infty$ balls of radius $\varepsilon$ around real samples. Regions on which $f$ itself cannot be proved constant are reported and excluded. The tuner starts from the cheapest configuration and iterates:
+\begin{enumerate}
+\item lower the configuration (\S\ref{sec:lower});
+\item for each region (in parallel), analyse once. If that fails, run the \emph{falsifier}: it evaluates the integer program at the box vertex selected by the signs of the failing margin's input coefficients and along the segment to it, then runs an adaptive local search. A hit is a real counterexample: an input in the region on which the emitted code disagrees with $f$. Otherwise, try to prove the region with splitting;
+\item if every region is proved, stop. Otherwise, sum the normalised blame of each source over the failing regions, and raise by one rung the source with the largest blame per unit of added cost.
+\end{enumerate}
+A final \emph{local search} takes any certified one-rung move (down, up, or to the next storage class) that lowers the cost, until none does.
+
+\textbf{Cost models.} \emph{Bytes} counts flash and RAM, with 4-bit (packed), 8-bit and 16-bit weights and 8/16-bit activations. \emph{Bits} counts the ideal packed size on the fine lattice (2--16-bit weights, 4--16-bit activations). \emph{Latency} estimates cycles on an 8-bit AVR on the fine lattice. It uses per-MAC costs measured in the cycle-accurate simulator simavr for every combination of weight storage (packed 4-bit, int8, int16), activation width (8/16), multiply width (16/32) and accumulator width (16/32/64), ranging from 23 to 115 cycles, plus 605 cycles per neuron for requantisation. Under latency, the widths that ForgeCert \emph{proves} become decisive: for example, 6-bit weights times 10-bit activations still fit a 16-bit multiply, and a modular 16-bit accumulator replaces a 32-bit one.
+
+\section{Independent Checking}\label{sec:check}
+The certificate (JSON) contains the domain, the scale policy, the claimed accumulator widths, the error bound and the saturation claim, and for each proved region its box, class and pre-order split tree. The checker (\texttt{tools/certcheck.cpp}, about 1{,}100 lines, no compiler headers) takes only the certificate, the source model (\texttt{.mforge}) and the emitted \texttt{model\_q.c}. It
+(i)~parses the data arrays and checks every value against its declared C type and bit width;
+(ii)~regenerates the code of every function (dense or convolution loop, classical or modular accumulation, multiply type, clamps) from the metadata and requires the C file to contain it verbatim, so it does not trust the compiler about \emph{what the code computes};
+(iii)~re-proves the domain-wide obligations of \S\ref{sec:lower} with its own analysis, built from Eq.~\eqref{eq:eff} on the parsed integers;
+(iv)~replays every split tree and proves each leaf.
+It searches nothing. With \texttt{--expect} it also compares its integer semantics with the output of the binary that a real C compiler produced, which closes the loop to the actual C compiler. During development, the checker rejected 2 of 45 regions of a certificate that the compiler had accepted. The cause was a tie between equal-width candidates that rounding resolved differently in the two implementations. Both analyses were sound, but the checker was looser. The compiler now handles stable cases exactly and keeps a $10^{-9}$ safety margin over the checker.

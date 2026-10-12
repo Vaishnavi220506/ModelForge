@@ -8,43 +8,88 @@ import json
 import sys
 from collections import defaultdict
 
+IMAGE = ("mnist", "fashion")
+
+
+def suite_of(case):
+    return "image" if case["model"].startswith(IMAGE) else "tabular"
+
+
+def table(cases, title):
+    if not cases:
+        return
+    names = []
+    for case in cases:
+        for o in case["outcomes"]:
+            if o["name"] not in names:
+                names.append(o["name"])
+    agg = defaultdict(lambda: defaultdict(float))
+    for case in cases:
+        outcomes = {o["name"]: o for o in case["outcomes"]}
+        int8 = outcomes["uniform_int8"]
+        for o in case["outcomes"]:
+            a = agg[o["name"]]
+            a["cases"] += 1
+            a["robust"] += case["robust"]
+            a["proved"] += o["proved"]
+            a["cex_regions"] += o["counterexamples"]
+            a["cases_with_cex"] += o["counterexamples"] > 0
+            a["silent"] += o["counterexamples"] > 0 and o["test_flips"] == 0
+            a["certified"] += o["unproved"] == 0
+            a["flash_vs_fp32"] += o["flash"] / case["float32_bytes"]
+            a["flash_vs_int8"] += o["flash"] / int8["flash"]
+            a["cycles_vs_int8"] += o.get("cycles", 0) / max(1.0, int8.get("cycles", 1))
+            a["seconds"] += o["seconds"]
+            a["analyses"] += o["analyses"]
+    print(f"\n== {title}: {len(cases)} cases, {int(agg['uniform_int8']['robust'])} regions on which f is constant")
+    print(f"{'method':34}{'certified':>10}{'proved':>13}{'cex':>6}{'cases':>6}{'silent':>7}"
+          f"{'flash/fp32':>11}{'flash/int8':>11}{'cyc/int8':>9}{'time s':>9}")
+    for name in names:
+        a = agg[name]
+        n = a["cases"]
+        print(f"{name:34}{int(a['certified']):>6}/{int(n):<3}{int(a['proved']):>7}/{int(a['robust']):<5}"
+              f"{int(a['cex_regions']):>6}{int(a['cases_with_cex']):>6}{int(a['silent']):>7}"
+              f"{a['flash_vs_fp32'] / n:>11.3f}{a['flash_vs_int8'] / n:>11.3f}{a['cycles_vs_int8'] / n:>9.3f}"
+              f"{a['seconds']:>9.1f}")
+
+
+def paired(cases, a, b, key, only_certified=True):
+    smaller = larger = tie = 0
+    ratio = 0.0
+    for case in cases:
+        o = {x["name"]: x for x in case["outcomes"]}
+        if a not in o or b not in o:
+            continue
+        if only_certified and (o[a]["unproved"] or o[b]["unproved"]):
+            continue
+        x, y = o[a][key], o[b][key]
+        smaller += x < y * (1 - 1e-9)
+        larger += x > y * (1 + 1e-9)
+        tie += abs(x - y) <= y * 1e-9
+        ratio += x / y if y else 1.0
+    n = smaller + larger + tie
+    if n:
+        print(f"  {a} vs {b} on {key}: smaller {smaller}, larger {larger}, tie {tie}, mean ratio {ratio / n:.3f} (n={n})")
+
 
 def main(path):
     data = json.load(open(path))
     cases = data["cases"]
-    methods = [o["name"] for o in cases[0]["outcomes"]]
-    agg = defaultdict(lambda: defaultdict(float))
-    for case in cases:
-        robust = case["robust"]
-        int8 = next(o for o in case["outcomes"] if o["name"] == "uniform_int8")
-        for o in case["outcomes"]:
-            a = agg[o["name"]]
-            a["cases"] += 1
-            a["robust"] += robust
-            a["proved"] += o["proved"]
-            a["unproved"] += o["unproved"]
-            a["cex_regions"] += o["counterexamples"]
-            a["cases_with_cex"] += o["counterexamples"] > 0
-            a["fully_certified"] += o["unproved"] == 0
-            a["flash"] += o["flash"]
-            a["flash_vs_fp32"] += o["flash"] / case["float32_bytes"]
-            a["flash_vs_int8"] += o["flash"] / int8["flash"]
-            a["test_flips"] += o["test_flips"]
-            a["seconds"] += o["seconds"]
-            a["analyses"] += o["analyses"]
-            a["cases_cex_no_test_flip"] += o["counterexamples"] > 0 and o["test_flips"] == 0
-
-    print(f"{len(cases)} cases (8 models x radii), {data['seconds']:.0f} s total\n")
-    print(f"{'method':32}{'certified':>10}{'regions proved':>18}{'cex regions':>12}{'cases w/ cex':>13}"
-          f"{'cex, 0 test flips':>18}{'flash/fp32':>11}{'flash/int8':>11}{'time s':>8}")
-    for m in methods:
-        a = agg[m]
-        n = a["cases"]
-        print(f"{m:32}{int(a['fully_certified']):>6}/{int(n):<3}{int(a['proved']):>11}/{int(a['robust']):<6}"
-              f"{int(a['cex_regions']):>12}{int(a['cases_with_cex']):>13}{int(a['cases_cex_no_test_flip']):>18}"
-              f"{a['flash_vs_fp32'] / n:>11.3f}{a['flash_vs_int8'] / n:>11.3f}{a['seconds']:>8.1f}")
-
-    # Optimality against the exhaustive search (eps = 0.1).
+    print(f"{len(cases)} cases, {data['seconds']:.0f} s total")
+    for suite in ("tabular", "image"):
+        table([c for c in cases if suite_of(c) == suite], suite)
+    print("\nPaired comparisons (cases where both certify every region):")
+    for a, b, key in [("forgecert", "uniform_int16", "cost"), ("forgecert", "accuracy_guided", "cost"),
+                      ("forgecert_latency", "forgecert", "cycles"), ("forgecert_latency", "uniform_int8", "cycles"),
+                      ("forgecert_latency", "uniform_int8_calibrated", "cycles"),
+                      ("forgecert_calibrated", "forgecert", "cost"),
+                      ("ablation_per_tensor_scales", "forgecert", "cost"),
+                      ("forgecert", "ablation_no_modular_accumulation", "cycles"),
+                      ("bits_cost_model", "bits_uniform_refine", "ideal_bytes"),
+                      ("bits_cost_model", "bits_random_refine_s1", "ideal_bytes"),
+                      ("bits_cost_model", "bits_random_refine_s2", "ideal_bytes"),
+                      ("bits_cost_model", "bits_random_refine_s3", "ideal_bytes")]:
+        paired(cases, a, b, key)
     exact = gap = n = 0
     for case in cases:
         e = case["exhaustive"]
@@ -54,23 +99,8 @@ def main(path):
         n += 1
         exact += abs(ours["cost"] - e["optimum_cost"]) < 0.5
         gap += ours["cost"] / e["optimum_cost"] - 1
-        print(f"  optimum {case['model']:24} lattice {e['lattice']:4}  optimum {e['optimum_cost']:7.0f}  "
-              f"ForgeCert {ours['cost']:7.0f}  {e['config']}")
     if n:
         print(f"\nForgeCert reaches the exhaustive optimum in {exact}/{n} cases (mean gap {100 * gap / n:.1f}%)")
-
-    # Accumulator widths: proved vs range-agnostic worst case.
-    narrower = layers = int16 = int16_worst = 0
-    for case in cases:
-        ours = next(o for o in case["outcomes"] if o["name"] == "forgecert")
-        for proved, worst in zip(ours["acc_bits"], ours["worst_case_acc_bits"]):
-            layers += 1
-            narrower += proved < worst
-            int16 += proved == 16
-            int16_worst += worst == 16
-    print(f"accumulators: {layers} layers, narrower than range-agnostic in {narrower}, "
-          f"int16 proved {int16} (range-agnostic {int16_worst})")
-
     audits = [c["audit"] for c in cases]
     print(f"soundness audit: {sum(a['samples'] for a in audits)} samples, "
           f"{sum(a['violations'] for a in audits)} violations, max observed/proved error "

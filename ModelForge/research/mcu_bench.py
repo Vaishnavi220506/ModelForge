@@ -141,6 +141,7 @@ def main():
     parser.add_argument("build")
     parser.add_argument("--samples", type=int, default=5)
     parser.add_argument("--out", default="mcu_results.json")
+    parser.add_argument("--only", default="", help="comma-separated model names (default: all)")
     args = parser.parse_args()
     build = Path(args.build)
     modelforge = build / "Release" / "modelforge"
@@ -154,6 +155,9 @@ def main():
     ]
     variants = [("forgecert", None), ("forgecert_latency", "latency"), ("uniform_int8", "int8")]
     results = []
+    if args.only:
+        wanted = set(args.only.split(","))
+        cases = [c for c in cases if Path(c[0]).name in wanted]
     for model, data, domain, box, eps in cases:
         name = Path(model).name
         for variant, precision in variants:
@@ -213,6 +217,8 @@ def main():
             sys.stdout.flush()
     Path(args.out).write_text(json.dumps({"author": "Vaishnavi", "mcu": "ATmega2560 @ 16 MHz (simavr)",
                                           "samples": args.samples, "results": results}, indent=2) + "\n")
+    if not all(r["avr_matches_host"] and r.get("avr_float_matches_host", True) for r in results):
+        sys.exit("a prediction on the simulated MCU differs from the host build")
 
 
 if __name__ == "__main__":

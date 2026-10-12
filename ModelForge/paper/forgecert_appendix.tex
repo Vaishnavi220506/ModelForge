@@ -1,0 +1,48 @@
+% Appendix of forgecert.tex.
+\appendix
+\section{Soundness}\label{app:proof}
+Fix a box $B\subseteq D$ and the program of Eqs.~\eqref{eq:acc}--\eqref{eq:req}. For $x\in B$, let $r_n(x)$ be the value of neuron $n$ in $f$ and $\hat q_n(x)=t_n\,q_n(x)$ the value represented by the integer program (for inputs, $s_i q_i$).
+
+\begin{definition}[Representation invariant]
+A set of forms $\{(R_n,E_n)\}$ over symbols $\eta\in[-1,1]^K$ \emph{represents} a layer on $B$ if for every $x\in B$ there is $\eta$ with $R_n(\eta)=r_n(x)$ and $R_n(\eta)+E_n(\eta)=\hat q_n(x)$ for all neurons $n$ of the layer simultaneously.
+\end{definition}
+Fresh symbols introduced by a transfer function do not occur in earlier forms, so a witness $\eta$ for one layer extends to the next by choosing the fresh coordinates. Each lemma below shows that one transfer function preserves the invariant.
+
+\begin{lemma}[Input]
+$R_i=c_i+h_i\eta_i$ and $E_i=\rho_i\eta'_i$ with $\rho_i=s_i(\tfrac12+\delta_i)$ represent the input layer.
+\end{lemma}
+\begin{proof}
+$\eta_i=(x_i-c_i)/h_i\in[-1,1]$ on $B$. The C code computes $t=\mathrm{fl}(x_i\cdot\mathrm{fl}(s_i^{-1}))$ and truncates $\mathrm{fl}(t\pm\tfrac12)$, so $|q_i-x_i/s_i|\le\tfrac12+\delta_i$, where $\delta_i$ bounds the two float32 roundings and the reciprocal (each at most $2^{-24}$ relative). The domain obligation $q^-\le q_i\le q^+$ rules out the clamp. Choose $\eta'_i=(s_iq_i-x_i)/\rho_i$.
+\end{proof}
+
+\begin{lemma}[Affine step]
+If the inputs are represented, so are the forms $R'=WR+b$ and $E'=\Delta W R+\hat W E+\Delta b$ for the pre-activation values $r'$ and $\hat v$ (Eq.~\eqref{eq:eff}), with the same $\eta$.
+\end{lemma}
+\begin{proof}
+Linear forms evaluate linearly: $R'(\eta)=\sum W r+b=r'(x)$ and $R'(\eta)+E'(\eta)=\sum\hat W\hat x+\hat b=\hat v(x)$. The second equality uses Eq.~\eqref{eq:eff}, which holds exactly because the domain obligations rule out overflow: by Lemma~\ref{lem:modular} for modular accumulators, by the partial-sum bound for classical ones, and by the product and $2^{62}$ bounds for the multiplies.
+\end{proof}
+
+\begin{lemma}[ReLU]
+Let $Q=R+E$ and let $\widetilde{\mathrm{ReLU}}(Z)$ denote $\lambda Z+\mu+\mu\eta_{\mathrm{new}}$ with $\lambda=u/(u-l)$, $\mu=-\lambda l/2$ for an unstable $Z\in[l,u]$, the identity if $l\ge0$, and $0$ if $u\le0$. Both candidate error forms of \S\ref{sec:ai} preserve the invariant for $\mathrm{ReLU}(r')$ and $\mathrm{ReLU}(\hat v)$.
+\end{lemma}
+\begin{proof}
+DeepZ property: for every $z\in[l,u]$, $\mathrm{ReLU}(z)=\widetilde{\mathrm{ReLU}}(z)$ for some value of the fresh symbol. (a) With independent fresh symbols for $R$ and $Q$, both relaxations are exact for suitable values at the same time. So $R''=\widetilde{\mathrm{ReLU}}(R')$ and $E''=\widetilde{\mathrm{ReLU}}(Q)-\widetilde{\mathrm{ReLU}}(R')$ give $R''+E''=\mathrm{ReLU}(\hat v)$. (b) $d=\mathrm{ReLU}(\hat v)-\mathrm{ReLU}(r')$ lies between $0$ and $\hat v-r'=E'(\eta)$ because ReLU is monotone and 1-Lipschitz. Each half-stable case is an identity: e.g.\ for $l\ge0$, $d=\max(E',-r')$. Hence $d$ lies in the computed interval $[a,b]$, and the fresh symbol takes the value $(2d-a-b)/(b-a)$. In the stable cases $d=0$ or $d=E'$ exactly.
+\end{proof}
+
+\begin{lemma}[Clamp]
+For $Y$ the value after ReLU and $U=t\,q^+$, adding $-\widetilde{\mathrm{ReLU}}(Y-U)$ (and $\widetilde{\mathrm{ReLU}}(-U-Y)$ for signed outputs) to $E$ preserves the invariant for $\mathrm{clamp}(Y)$.
+\end{lemma}
+\begin{proof}
+$\min(Y,U)=Y-\mathrm{ReLU}(Y-U)$ and $\max(Y,-U)=Y+\mathrm{ReLU}(-U-Y)$; apply the DeepZ property. Clamping commutes with rounding to multiples of $t$ because $U$ is such a multiple: $\mathrm{round}(\min(v,U))=\min(\mathrm{round}(v),U)$.
+\end{proof}
+
+\begin{lemma}[Rounding]
+Adding a fresh symbol of radius $t/2$ preserves the invariant for $t\cdot\mathrm{rshift}(\mathrm{ReLU}(a)m,k)$. If the value is provably $0$ or $U$, no symbol is needed.
+\end{lemma}
+\begin{proof}
+$\mathrm{rshift}(v,k)=\lfloor v/2^k+\tfrac12\rfloor$ and $t\cdot\mathrm{ReLU}(a)\,m\,2^{-k}=\mathrm{ReLU}(\hat v)$, so the represented output differs from $\mathrm{ReLU}(\hat v)$ by at most $t/2$. A value of $0$ or $U$ is a multiple of $t$ and rounds exactly.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:sound}]
+By induction over the layers, the final forms represent the logits: for each $x\in B$ there is $\eta$ with $R_c(\eta)-R_j(\eta)=f_c(x)-f_j(x)$ and $Q_c(\eta)-Q_j(\eta)=t_L(y_c-y_j)$. The proof condition gives $f_c(x)-f_j(x)>0$, so $c=\arg\max f(x)$. It also gives $y_c-y_j>\theta_j/t_L$, i.e.\ $y_c\ge y_j+1$ for $j<c$ (integers) and $y_c>y_j$ for $j>c$, so the first-index argmax of the C code is $c$. The analysis evaluates forms in double precision with outward slack of $10^{-12}$ relative per bound. This is a documented assumption rather than directed rounding (\S\ref{sec:limits}).
+\end{proof}

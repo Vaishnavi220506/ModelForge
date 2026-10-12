@@ -96,3 +96,21 @@ jobs:
             build/research/cases.csv
             build/dashboard/index.html
             build/dashboard/data.js
+
+  microcontroller:
+    # The certified integer C on an 8-bit AVR (ATmega2560) in the cycle-accurate
+    # simulator simavr: every prediction must equal the host build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install AVR toolchain and simulator
+        run: sudo apt-get update && sudo apt-get install -y gcc-avr avr-libc simavr gcc-arm-none-eabi
+      - name: Build ModelForge
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
+      - name: Certify, build for AVR and run in simavr
+        run: python3 ModelForge/research/mcu_bench.py build --samples 3 --only wine_mlp32x16 --out build/mcu.json
+      - name: Save MCU results
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelforge-mcu
+          path: build/mcu.json

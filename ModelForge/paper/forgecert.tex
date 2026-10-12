@@ -1,7 +1,7 @@
 % ForgeCert: conference paper draft (IEEE two-column format).
 % Build: pdflatex forgecert && bibtex forgecert && pdflatex forgecert && pdflatex forgecert
-% Every number comes from `modelforge_certbench` (ModelForge/research/results/certbench.json),
-% summarised by ModelForge/research/summarize_certbench.py.
+% Numbers: modelforge_certbench (research/results/certbench.json, summarize_certbench.py)
+% and research/mcu_bench.py (research/results/mcu_results.json).
 \documentclass[conference]{IEEEtran}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
@@ -11,11 +11,12 @@
 \lstset{basicstyle=\ttfamily\scriptsize,columns=fullflexible,frame=none}
 
 \newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
 \newtheorem{definition}{Definition}
 
 \begin{document}
 
-\title{ForgeCert: Proof-Carrying Integer Code for Neural Networks\\via Counterexample-Guided Precision Tuning}
+\title{ForgeCert: Proof-Carrying Integer Code for\\Neural Networks on Microcontrollers}
 
 \author{\IEEEauthorblockN{Vaishnavi}
 \IEEEauthorblockA{Department and institution (fill in)\\
@@ -24,213 +25,110 @@ Email (fill in)}}
 \maketitle
 
 \begin{abstract}
-Microcontrollers run neural networks as integer code, and the code that is deployed today is accepted when its test-set accuracy is close to the float model's. That check says nothing about inputs outside the test set and nothing about accumulator overflow. We present \emph{ForgeCert}, a compiler that turns a float network into integer-only C99 together with a certificate, in the style of proof-carrying code. The certificate states that the emitted program never overflows or saturates on a declared input domain, and that it returns the float model's decision for \emph{every} input in each certified region around real samples. The claims hold for the bit-exact semantics of the C code: rounding, fixed-point multipliers and shifts, packed 4-bit weights and argmax tie-breaking. ForgeCert combines (i)~a differential affine abstract interpretation that tracks the float model and the integer program's error over shared noise symbols, (ii)~range inference that derives scales, requantisation constants and accumulator widths from proved bounds, and (iii)~a counterexample-guided precision tuner whose refinement step is driven by error provenance carried in the abstract domain. A 900-line checker that shares no code with the compiler re-validates certificates from the source model and the emitted C file. On 8 trained classifiers and 24 model/radius cases (1{,}441 regions on which the float model is provably constant), ForgeCert certifies 1{,}440 regions with programs at 39.7\% of the float32 size, and reaches the exhaustive optimum in 7 of 8 cases. Common practice does not: uniform int8 can be certified for only 4 cases, and accuracy-guided bit-width selection, which passes the test set by construction, ships programs with real disagreements next to real samples in 4 cases. Over 3 million sampled executions show no violation. The checker accepts all 24 certificates in under 0.1\,s each.
+%%ABSTRACT%%
 \end{abstract}
 
 \begin{IEEEkeywords}
-ML compilers, quantization, abstract interpretation, proof-carrying code, translation validation, embedded systems
+ML compilers, quantization, abstract interpretation, proof-carrying code, translation validation, embedded systems, TinyML
 \end{IEEEkeywords}
 
 \section{Introduction}
-Small neural networks increasingly run on microcontrollers without a floating-point unit. To get there, a model is quantised and compiled to integer code: weights become 4- or 8-bit integers, activations are rescaled with fixed-point multipliers and shifts, and dot products accumulate in 16- or 32-bit registers~\cite{jacob,tflm}. Every one of these steps can change a prediction, and two of them can fail outright: an accumulator that is too narrow overflows (undefined behaviour in C), and a scale that is too small saturates. Today the deployed integer program is accepted when its accuracy on a held-out set is close to the float model's. That check says nothing about inputs that are not in the test set, and nothing about overflow.
+Neural networks increasingly run on microcontrollers that have no floating-point unit and a few kilobytes of RAM. To get there, a model is compiled to integer code~\cite{jacob,tflm}:
+\begin{itemize}
+\item weights become 4- to 16-bit integers;
+\item activations are rescaled with fixed-point multipliers and shifts;
+\item dot products accumulate in 16- or 32-bit registers;
+\item values outside the calibrated range saturate.
+\end{itemize}
+Each of these steps can change a prediction, and two can fail outright: an accumulator that is too narrow overflows, which is undefined behaviour in C, and a scale that is too small clips. Today the integer program is accepted when its accuracy on held-out data is close to the float model's. That check says nothing about the inputs a deployed device actually sees, and nothing about overflow.
 
-Verification research has studied the \emph{relationship} between a network and its quantised version: differential verification bounds the output difference of two networks~\cite{reludiff,neurodiff}, QEBVerif bounds quantization error with differential reachability and MILP~\cite{qebverif}, and CEG4N refines quantization bit widths with a model checker in the loop~\cite{ceg4n}. These works analyse an idealised quantised network (fake quantisation in floating point). The program that actually runs is different: it rounds at specific points, approximates every rescaling by an integer multiplier and a shift, applies ReLU to the accumulator, breaks ties by index and can overflow. On the compiler side, SyFix synthesises fixed-point code that meets an output-error threshold~\cite{syfix}, a property weaker than decision equivalence and not re-checkable by a third party.
+Verification research studies the relationship between a network and a quantised version of it~\cite{reludiff,neurodiff,qebverif,ceg4n,qnnverif}, but analyses an \emph{idealised} quantised network. The program that runs is different: it rounds at specific points, approximates every rescaling by an integer multiplier and a shift, applies ReLU to the accumulator, saturates, breaks ties by index and can overflow. On the compiler side, fixed-point code synthesis~\cite{syfix} meets an output-error threshold, a weaker property than decision equivalence, and produces no evidence that a third party can check.
 
-We present \emph{ForgeCert}, a compiler that closes this gap in the style of proof-carrying code~\cite{pcc}. It compiles a float network to integer-only C99 and emits a certificate that the \emph{emitted C program} (i)~never overflows or saturates on a declared input domain, and (ii)~makes the float model's decision on every input of each certified region. A checker of about 900 lines that shares no code with the compiler re-establishes both claims from the source model and the C file alone. Our contributions:
+\emph{ForgeCert} closes this gap in the style of proof-carrying code~\cite{pcc}. It compiles a network to integer-only C99 and emits a certificate that the \emph{emitted C program}
+(i)~never overflows on a declared input domain, and
+(ii)~returns the float model's decision for \emph{every} input in each certified region around real samples.
+A checker that shares no code with the compiler re-establishes both claims from the source model and the C file alone. The key idea is to use one abstract interpretation for three jobs at once: to \emph{prove} the generated code, to \emph{decide} its representation (scales, accumulator and multiply widths, which weights can be dropped), and to \emph{explain} failed proofs (which layer to make more precise). Every width in the program is therefore a discharged proof obligation, and the compiler can exploit facts that a conventional quantiser must not assume.
+
+\textbf{Contributions.}
 \begin{enumerate}
-\item \textbf{Differential affine abstract interpretation of integer code} (\S\ref{sec:ai}). The float model and the error of the integer program are tracked as affine forms over shared noise symbols, so the analysis keeps the correlation between where the input is and how wrong the integer code is there. Its transfer functions follow the bit-exact semantics of the emitted C, including multiplier/shift requantisation and the argmax tie rule.
-\item \textbf{Range inference as a compilation pass} (\S\ref{sec:lower}). Scales, requantisation constants and accumulator widths are chosen from bounds the same analysis proves, so overflow freedom holds by construction and is part of the certificate.
-\item \textbf{Error provenance and counterexample-guided precision tuning} (\S\ref{sec:cegar}). The error form is split by source (input quantisation, each layer's weights, each layer's rounding). When a region cannot be proved, a falsifier first looks for a real counterexample, and the provenance of the failing margin, per byte of cost, picks the one layer whose precision to raise.
-\item \textbf{An independent certificate checker} (\S\ref{sec:check}) that parses the emitted C, checks it against its own copy of the code template, and replays the split trees in the certificate. Optionally it also compares its semantics with the binary that a real C compiler produced.
-\item \textbf{An evaluation on 8 trained classifiers} (\S\ref{sec:eval}): comparison with common practice and with the exhaustive optimum, ablations, a sampling audit of soundness, and checking cost.
+\item \textbf{Differential affine abstract interpretation of integer code} (\S\ref{sec:ai}). The float model and the integer program's error are tracked over shared noise symbols, with transfer functions for the bit-exact semantics of the emitted C: fixed-point requantisation, rounding, ReLU on the accumulator, \emph{saturation} and argmax tie-breaking. Dense layers and convolutions are handled uniformly.
+\item \textbf{Proof-guided lowering} (\S\ref{sec:lower}): scales from proved ranges or from calibration data (with saturation modelled), \emph{modular accumulators} sized by the proved final sum, \emph{16-bit multiplies} where every product provably fits, and \emph{dead-input elimination}. Each is sound only because of a proof, and each is re-checked.
+\item \textbf{Counterexample-guided precision tuning} (\S\ref{sec:cegar}) driven by \emph{error provenance} carried in the abstract domain, with a falsifier that turns failed proofs into real counterexamples, and with cost models for bytes or for cycles on an 8-bit microcontroller (measured, not assumed).
+\item \textbf{An independent certificate checker} (\S\ref{sec:check}) that parses the emitted C, checks it against its own copy of the code template, re-proves the obligations and replays the split trees.
+\item \textbf{An evaluation} on 12 trained models (tabular MLPs, MNIST and Fashion-MNIST MLPs and CNNs) with a cycle-accurate 8-bit microcontroller (\S\ref{sec:eval}).
 \end{enumerate}
-ForgeCert is part of the open-source ModelForge compiler (C++17). Its graph-level passes are themselves validated by an existing per-pass validator (Guardian-APC+), so every stage from the source model to the C file carries evidence.
+ForgeCert is part of the open-source ModelForge compiler (C++17). Its front end has a lexer/parser for a model language, a semantic validator with shape inference and symbol table, an SSA-style IR, and graph passes that are themselves validated by an existing per-pass validator (Guardian-APC+), so every stage from source to C carries evidence.
 
 \section{Background and Related Work}
-\textbf{Abstract interpretation for networks.} Interval bound propagation and zonotopes (DeepZ~\cite{deepz}, built on affine arithmetic~\cite{affine}) over-approximate a network's outputs on an input box~\cite{cousot}. ReluDiff and NeuroDiff~\cite{reludiff,neurodiff} propagate the \emph{difference} of two networks to verify that a compressed network stays close to the original. QEBVerif~\cite{qebverif} does so for quantised weights and activations and falls back to MILP. Henzinger et al.~\cite{qnnverif} verify bit-precise quantised networks with SMT. All of these analyse one fixed pair of networks and do not generate code.
+\textbf{Abstract interpretation of networks.} Interval bound propagation and zonotopes (DeepZ~\cite{deepz}, built on affine arithmetic~\cite{affine}) over-approximate a network's outputs on an input box~\cite{cousot}. ReluDiff and NeuroDiff~\cite{reludiff,neurodiff} propagate the \emph{difference} of two networks. QEBVerif~\cite{qebverif} bounds quantisation error for weights and activations and falls back to MILP. Henzinger et al.~\cite{qnnverif} verify bit-precise quantised networks with SMT. These works analyse a fixed pair of networks and generate no code. None models requantisation with integer multipliers and shifts, saturation, or the argmax of the deployed code.
 
-\textbf{Precision tuning.} Precimonious~\cite{precimonious} and Daisy~\cite{daisy} tune floating-point or fixed-point precision in numerical programs against error bounds. SyFix~\cite{syfix} uses linear programming to choose fixed-point formats for network neurons under an error threshold. CEG4N~\cite{ceg4n} alternates a genetic search over bit widths with equivalence checking by a bounded model checker. ForgeCert differs in the property (decision equivalence on regions plus overflow freedom, for the emitted integer semantics), in the refinement signal (provenance carried by the abstract domain instead of search), and in the evidence (a certificate checked by an independent program).
+\textbf{Precision tuning and code synthesis.} Precimonious~\cite{precimonious} and Daisy~\cite{daisy} tune floating-point or fixed-point precision against error bounds. SyFix~\cite{syfix} uses linear programming to choose fixed-point formats for network neurons under an output-error threshold. CEG4N~\cite{ceg4n} alternates a genetic search over bit widths with equivalence checking by a bounded model checker. ForgeCert differs in four ways:
+\begin{itemize}
+\item the property: decision equivalence on regions plus overflow freedom, for the emitted integer semantics;
+\item the refinement signal: provenance carried by the abstract domain, not search;
+\item the use of proofs to choose representations: modular accumulators, multiply widths, dead inputs;
+\item the evidence: a certificate checked by an independent program.
+\end{itemize}
+
+\textbf{Deployment.} TensorFlow Lite Micro~\cite{tflm} and integer-only inference~\cite{jacob} calibrate per-tensor or per-channel scales on data and use int8 weights and activations with 32-bit accumulators. ForgeCert can certify exactly such programs (\emph{calibrated} scales) and compares against them.
 
 \textbf{Trusting compilers.} Verified compilers~\cite{compcert} prove the compiler once. Translation validation~\cite{pnueli,necula} checks each run. Proof-carrying code~\cite{pcc} ships the proof with the code, so the consumer trusts only a small checker. ForgeCert follows the last model: finding a proof (search, splitting, refinement) happens in the untrusted compiler, and checking it is a linear replay.
 
-\section{The Integer Target}\label{sec:lower}
-A dense ReLU network $f$ with layers $y=\mathrm{ReLU}(Wx+b)$ and a linear output layer is lowered to the program in Fig.~\ref{fig:code}. Inputs are quantised per feature, $q_i=\mathrm{round}(x_i/s_i)$ in float32. Every layer computes an integer dot product into an accumulator of $a\in\{16,32,64\}$ bits, applies ReLU to the accumulator and requantises with an integer multiplier $m_o$ and shift $k_o$. Weights are quantised symmetrically per output channel after folding the input channel scales in ($W_{oi}s_i$), so per-channel activation scales cost nothing at run time. The logits share one scale so that the argmax compares integers. A precision configuration fixes the weight bits (4, packed two per byte; 8; or 16) and the activation bits (8 or 16) of every tensor.
-
 \begin{figure}[t]
 \begin{lstlisting}[language=C]
-static void mf_layer1(const uint16_t *x, uint16_t *y) {
-  for (int o = 0; o < 16; ++o) {
-    int32_t acc = (int32_t)MF_B1[o];
-    for (int i = 0; i < 32; ++i)
-      acc = (int32_t)(acc + (int32_t)mf_nibble(MF_W1, o*32+i) * (int32_t)x[i]);
-    if (acc < 0) acc = 0;
-    int64_t q = mf_round_shift((int64_t)acc * MF_M1[o], MF_S1[o]);
-    if (q > 65535) q = 65535;  /* proved unreachable on D */
-    if (q < 0) q = 0;
-    y[o] = (uint16_t)q;
-  }
-}
+static void mf_layer0(const uint8_t *x, uint16_t *y) {
+  for (int c = 0; c < 4; ++c) {
+    for (int oy = 0; oy < 13; ++oy) {
+      for (int ox = 0; ox < 13; ++ox) {
+        int32_t acc = (int32_t)MF_B0[c];
+        for (int ci = 0; ci < 1; ++ci) {
+          for (int ky = 0; ky < 3; ++ky) {
+            const int iy = oy * 2 + ky - 0;
+            if (iy < 0 || iy >= 28) continue;
+            for (int kx = 0; kx < 3; ++kx) {
+              const int ix = ox * 2 + kx - 0;
+              if (ix < 0 || ix >= 28) continue;
+              acc = (int32_t)(acc + (int32_t)((int16_t)
+                    mf_nibble(MF_W0, ((c*1+ci)*3+ky)*3+kx)
+                    * (int16_t)x[(ci*28+iy)*28+ix]));
+        }}}
+        if (acc < 0) acc = 0;
+        int64_t q = mf_round_shift((int64_t)acc * MF_M0[c], MF_S0[c]);
+        if (q > 65535) q = 65535;  /* saturate */
+        if (q < 0) q = 0;
+        y[(c * 13 + oy) * 13 + ox] = (uint16_t)q;
+}}}}
 \end{lstlisting}
-\caption{One emitted layer (4-bit packed weights, 32-bit accumulator, 16-bit unsigned activations). No floating point is used after input quantisation.}
+\caption{First layer of the certified MNIST CNN (4-bit packed weights in flash, 16-bit products proved, 16-bit activations). No floating point is used after input quantisation.}
 \label{fig:code}
 \end{figure}
 
-\textbf{Effective weights.} The value represented by the requantised output before rounding is affine in the represented input $\hat x_i=s_iq_i$:
-\begin{equation}
-\hat v_o=\sum_i \hat W_{oi}\hat x_i+\hat b_o,\quad \hat W_{oi}=\frac{t_o m_o 2^{-k_o}}{s_i}\,q^W_{oi},\quad \hat b_o=t_o m_o 2^{-k_o} q^b_o ,
-\label{eq:eff}
-\end{equation}
-where $t_o$ is the output scale. ReLU commutes with the positive factor $m_o2^{-k_o}$, so the emitted output is $t_o\cdot\mathrm{round}(\mathrm{ReLU}(\hat v_o)/t_o)$. Eq.~\eqref{eq:eff} folds weight quantisation, bias quantisation and the multiplier approximation into one exactly known matrix.
-
-\textbf{Range inference.} Lowering is interleaved with the analysis of \S\ref{sec:ai} on the whole domain $D$. For layer $\ell$, the proved range of each pre-rounding value fixes its output scale (largest value maps to the largest code). The proved integer ranges $[q^-_i,q^+_i]$ of its inputs bound every partial sum by $|q^b_o|+\sum_i|q^W_{oi}|\max(|q^-_i|,|q^+_i|)$, which picks the narrowest accumulator type. The multiplier gets as many bits as keep $|\mathrm{acc}|\cdot m_o<2^{62}$. If rounding the multiplier could push a value past its range, the scale is grown and the layer re-analysed. On $D$, overflow and saturation are therefore impossible by construction, and the certificate records it.
-
-\section{Differential Affine Abstract Interpretation}\label{sec:ai}
-\begin{definition}
-For each neuron the analysis keeps affine forms $R=c_R+\sum_k a_k\eta_k$ (value of $f$) and $E$ (error: represented integer value minus $R$) over shared symbols $\eta_k\in[-1,1]$. The input box gives one symbol per input dimension.
-\end{definition}
-
-\textbf{Affine step.} With $\Delta W=\hat W-W$, $\Delta b=\hat b-b$:
-\[R'=WR+b,\qquad E'=\Delta W\,R+\hat W E+\Delta b.\]
-Both are exact in affine arithmetic. Unlike interval-based differential analysis, $\Delta W R$ keeps the dependence of the error on the input.
-
-\textbf{ReLU.} With bounds $[l,u]$ of $R$ and $[\hat l,\hat u]$ of $Q=R+E$, the new error is $\mathrm{ReLU}(Q)-\mathrm{ReLU}(R)$. If both are stable inactive it is 0, and if both are stable active it is $E$, exactly. Otherwise we take the tighter of two sound forms: (a)~$\widetilde{\mathrm{ReLU}}(Q)-\widetilde{\mathrm{ReLU}}(R)$ with the DeepZ relaxation~\cite{deepz}, which keeps correlations; and (b)~a fresh symbol spanning $\mathrm{conv}\{0,E\}$~\cite{reludiff}, intersected with what the half-stable cases imply (e.g.\ $\max(E,-R)$ when $l\ge0$). The float model continues with $\widetilde{\mathrm{ReLU}}(R)$.
-
-\textbf{Rounding} adds a fresh symbol of radius $t_o/2$. Input quantisation adds $s_i(\tfrac12+\delta)$, where $\delta$ covers the float32 multiply and the $\pm\tfrac12$ addition.
-
-\textbf{Decision.} Let $c$ be the float class at the box centre. A box is \emph{proved} if, for every rival $j$, $\mathrm{lb}(R_c-R_j)>0$ and $\mathrm{lb}(Q_c-Q_j)>\theta_j$, where $\theta_j=t_L/2$ for $j<c$ and $0$ otherwise (\texttt{mf\_infer\_q} breaks ties toward the lower index, and $Q$ is a multiple of $t_L$).
-
-\begin{theorem}[Soundness]
-If a box $B\subseteq D$ is proved, then for every $x\in B$ the emitted C function returns $\arg\max f(x)$.
-\end{theorem}
-\noindent\emph{Sketch.} Every transfer function over-approximates the corresponding exact operation: affine steps are exact, the ReLU forms contain all pairs $(\mathrm{ReLU}(r),\mathrm{ReLU}(q))$, rounding error is at most half a step, and range inference rules out the clamps and overflow, so the C program equals the analysed semantics on $D$. Hence $R_c-R_j>0$ and $Q_c-Q_j>\theta_j$ hold at every $x\in B$. \hfill$\square$
-
-\textbf{Input splitting.} If a box is not proved, it is bisected along the input with the largest coefficient in the failing margin form, up to depth 10 and 96 analyses per region. The resulting split tree is stored in the certificate.
-
-\textbf{Provenance.} $E$ is stored as a sum $E=\sum_s E^{(s)}$ over error sources $s$: input quantisation, the weights of each layer and the rounding of each layer. Affine steps propagate each part exactly, and the $\Delta W R$ term enters the part of its layer. Relaxation terms are shared out in proportion to each part's magnitude. Proofs use only the sum, so provenance does not affect soundness. For a failing margin $Q_c-Q_j$ the \emph{blame} of source $s$ is the radius plus the negative centre of $E^{(s)}_c-E^{(s)}_j$: how much $s$ can lower the margin.
-
-\section{Counterexample-Guided Precision Tuning}\label{sec:cegar}
-The specification is a domain $D$ and a set of regions (here, $L_\infty$ balls of radius $\varepsilon$ around real samples). Regions on which the float model itself cannot be proved constant are reported and excluded. The tuner starts from the cheapest configuration and iterates:
-\begin{enumerate}
-\item lower the configuration (range inference);
-\item for each region, analyse it once. If that fails, run the \emph{falsifier}: it evaluates the integer program at the vertex selected by the signs of the failing margin's input coefficients, along the segment to it, and then in an adaptive local search. A hit is a real counterexample. Otherwise try to prove the region with splitting;
-\item if every region is proved, stop. Otherwise sum the normalised blame of each source over the failing regions, and raise by one rung the source with the largest blame per byte of added cost;
-\end{enumerate}
-then \emph{minimise}: lower any width whose removal keeps all regions proved. The falsifier serves two purposes: a cheap disproof avoids a futile splitting search, and the counterexamples it reports, together with the regions left unproved at full precision, tell the user why a region is not certified.
-
-\section{Independent Checking}\label{sec:check}
-The certificate (JSON) contains the domain, the claimed accumulator widths and error bound, and for each proved region its box, class and pre-order split tree. The checker (\texttt{tools/certcheck.cpp}, no compiler headers) takes only the certificate, the source model (\texttt{.mforge}) and the emitted \texttt{model\_q.c}. It
-(i)~parses the data arrays and checks every value against its declared C type and bit width;
-(ii)~regenerates the expected code of every function from the metadata and requires the C file to contain it verbatim, so it is not trusting the compiler about \emph{what the code computes};
-(iii)~re-proves overflow and saturation freedom and the error bound on $D$ with its own analysis, built from Eq.~\eqref{eq:eff} on the parsed integers;
-(iv)~replays every split tree and proves each leaf.
-It searches nothing. With \texttt{--expect} it also compares its integer semantics with the output of the compiled binary, which closes the loop to the actual C compiler. During development, the checker rejected 2 of 45 regions of a certificate that the compiler had accepted. The cause was a tie between equal-width candidates that rounding resolved differently in the two implementations. Both analyses were sound, but the checker was looser. The compiler now handles the stable cases exactly and keeps a $10^{-9}$ safety margin over the checker.
+\input{forgecert_sections}
 
 \section{Evaluation}\label{sec:eval}
-\subsection{Setup}
-\textbf{Models.} With scikit-learn we trained ReLU MLPs with hidden layers (16) and (32,16) on Iris, Wine, Breast Cancer and Digits (70/30 split, standardised features, test accuracy 0.95--1.00). They have 4 to 64 inputs and 2 to 10 classes.
-\textbf{Specification.} The domain $D$ is the per-feature range of the training data widened by 10\% of its spread. The regions are $L_\infty$ balls of radius $\varepsilon\in\{0.05,0.1,0.2\}$ (in standard deviations) around up to 100 test rows each, clipped to $D$. This gives 24 cases and 1{,}794 regions. On 1{,}441 of them (567, 523 and 351 for the three radii) the float model is provably constant. The rest lie at decision boundaries and are excluded for every method.
-\textbf{Cost.} Flash (weights, biases, multipliers, shifts, input scales) plus RAM (two largest consecutive activation buffers), in bytes. The precision lattice is 4/8/16-bit weights and 8/16-bit activations per tensor; logits use 16 bits.
-\textbf{Baselines.} Uniform int8, uniform int4 weights with int8 activations, uniform int16, and \emph{accuracy-guided} selection: start at 16 bits and greedily lower the width that saves the most bytes while no test prediction changes. Each baseline's program is then checked by our prover, with 400 falsifier evaluations per unproved region.
-All runs used one core of a Linux machine with GCC~13.
+%%EVAL%%
 
-\subsection{RQ1: Does common practice produce certifiable programs?}
-\begin{table}[t]
-\centering
-\caption{All 24 cases (1{,}441 regions on which the float model is constant). ``Cert.'': cases with every region proved. ``Cex'': regions with a real counterexample found. ``Silent'': cases with a counterexample but no test-set flip.}
-\label{tab:main}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lrrrrrr}
-\toprule
-Method & Cert. & Regions & Cex & Silent & /fp32 & /int8\\
-\midrule
-Uniform int8 & 4 & 1136 & 1 & 1 & 0.365 & 1.000\\
-Uniform int4 & 2 & 964 & 149 & 0 & 0.243 & 0.657\\
-Uniform int16 & 23 & 1440 & 0 & 0 & 0.630 & 1.739\\
-Accuracy-guided & 9 & 1345 & 4 & 4 & 0.356 & 1.010\\
-\textbf{ForgeCert} & \textbf{23} & \textbf{1440} & 0 & 0 & 0.397 & 1.112\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:main} answers no. Uniform int8 can be certified for only 4 of 24 cases. On Digits (32,16) at $\varepsilon=0.1$ it is proved on just 5 of 76 regions. Uniform int4 has real counterexamples in 149 regions of 11 cases. These are inputs within $\varepsilon$ of a real sample on which the float model is provably constant, yet the integer program answers differently. The test set reveals int4's problems (846 flips in total), but it misses subtler ones. Accuracy-guided selection passes the test set by construction, yet in 4 cases (Iris (32,16) at two radii, Wine (32,16), Breast Cancer (16)) the falsifier found a real disagreement next to a real sample, and uniform int8 has one such case (Iris (16), $\varepsilon=0.2$). Most unproved regions of int8 have no counterexample. We cannot tell whether they hide real disagreements, and this uncertainty is what a certificate removes.
-
-ForgeCert proves every region except one (Breast Cancer (16), $\varepsilon=0.1$). That region cannot be proved even at uniform int16 within the splitting budget, and no counterexample was found. Its programs average 39.7\% of the float32 size: 11\% larger than uniform int8, which is uncertified, and 36\% smaller than uniform int16, the only other method that certifies 23 cases. In the 9 cases where accuracy-guided selection happens to be certifiable, ForgeCert's program is never larger and is smaller in 5 (7.7\% on average). On Digits (32,16) the accuracy-guided program uses 16 bits everywhere and still flips a test row, while ForgeCert's certified program is 11\% smaller.
-
-\begin{table}[t]
-\centering
-\caption{ForgeCert at $\varepsilon=0.1$: regions on which the float model is constant, chosen precision ($w$: weight bits per layer, $a$: input and hidden activation bits), flash, tuning time.}
-\label{tab:models}
-\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{lrlrrr}
-\toprule
-Model & Reg. & Precision & Flash (fp32) & Iter. & s\\
-\midrule
-Iris (16) & 42 & w[4,4] a[8,16] & 211 (524) & 2 & 0.01\\
-Iris (32,16) & 41 & w[8,4,8] a[8,16,16] & 843 (2956) & 5 & 0.07\\
-Wine (16) & 52 & w[4,4] a[16,16] & 345 (1100) & 3 & 0.03\\
-Wine (32,16) & 51 & w[4,4,8] a[16,16,16] & 1023 (4108) & 5 & 0.27\\
-Breast C. (16) & 90 & w[16,16] a[16,16] & 1306 (2120) & 7 & 0.17\\
-Breast C. (32,16) & 88 & w[16,8,8] a[16,16,16] & 3030 (6216) & 9 & 2.24\\
-Digits (16) & 83 & w[16,8] a[16,16] & 2698 (4840) & 6 & 0.60\\
-Digits (32,16) & 76 & w[16,8,8] a[16,16,16] & 5546 (11112) & 8 & 5.06\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:models} shows the chosen precision is mixed and model-specific. Wine and Iris tolerate 4-bit weights. Digits, with 64 inputs, needs 16-bit weights in its first layer but only 8 bits after it.
-
-\subsection{RQ2: How good is the tuned precision?}
-At $\varepsilon=0.1$ we enumerated the whole byte lattice (36 configurations for one hidden layer, 216 for two) and proved every region for each configuration in order of cost. ForgeCert finds the exhaustive optimum in 7 of 8 models. On Breast Cancer (16) it is 2.3\% larger (1{,}398 vs.\ 1{,}366~B), so the mean gap is 0.3\%. It needs 5.3 refinement iterations on average, and 19\,s for all 24 cases (at most 5.1\,s per case).
-
-\subsection{RQ3: Which components matter?}
-\begin{table}[t]
-\centering
-\caption{Ablations over all 24 cases (same excluded regions).}
-\label{tab:ablation}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lrrrr}
-\toprule
-Variant & Cert. & Regions & /fp32 & Time (s)\\
-\midrule
-ForgeCert & 23 & 1440 & 0.397 & 19.0\\
-Interval domain (no affine correlation) & 3 & 937 & 0.588 & 97.7\\
-No input splitting & 15 & 1420 & 0.462 & 6.3\\
-Per-tensor scales & 21 & 1437 & 0.360 & 20.8\\
-No falsifier & 23 & 1440 & 0.397 & 20.8\\
-No minimisation & 23 & 1440 & 0.401 & 17.8\\
-\midrule
-\multicolumn{5}{l}{\emph{Bit-level lattice} (2--16-bit weights, 4--16-bit activations; ideal packed size)}\\
-Provenance-guided refinement & 23 & 1440 & 0.374 & 87.4\\
-Raise all sources & 23 & 1440 & 0.412 & 35.3\\
-Raise a random source (3 seeds) & 23 & 1440 & 0.410--0.458 & 128--172\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{The affine domain is essential} (Table~\ref{tab:ablation}). With intervals, which lose the correlation between the input and the integer error, only 3 cases can be certified even after the tuner has raised the precision as far as it can. \textbf{Input splitting} certifies 8 more cases. \textbf{Per-channel scales} certify 2 more cases than per-tensor scales, but they are not free: where both certify (21 cases), per-tensor programs are 10\% smaller on average and smaller in 15 cases, because per-channel scales need an input-scale table and their extra precision is not always needed. A user can choose either.
-
-\textbf{Provenance matters when the lattice is fine.} On the byte lattice there are only two or three rungs per tensor, and raising every source reaches the same configuration as provenance in all 23 comparable cases (random choice: never smaller, larger in 2--5 cases). On the bit-level lattice the choice matters. Paired over the 23 cases, provenance-guided refinement gives a smaller program than raising every source in 10 cases and a larger one in 2 (mean ratio 0.900), and is smaller than random choice in 17--19 cases (mean ratio 0.77--0.87). It also needs fewer analyses than random choice (211k vs.\ 280k for seed 1), though more than raising everything, which converges in fewer, coarser steps.
-
-\textbf{Falsifier.} Running the falsifier first changes no result and saves 7\% of the analyses (35.8k vs.\ 38.6k). Its value is diagnostic: it produced every counterexample in Table~\ref{tab:main}, and each one replays on the integer program.
-
-\textbf{Accumulators.} The proved accumulator widths equal those of a range-agnostic compiler that assumes every input at its type's extreme, in all 60 layers. Because scales map the proved range onto the full integer range, proved and worst-case ranges coincide. Range inference therefore contributes the \emph{proof} of overflow freedom rather than narrower types. 7 layers use 16-bit accumulators.
-
-\subsection{RQ4: Is it sound, and is checking cheap?}
-We sampled 2{,}000 points per proved region (one third at box vertices) and 5{,}000 points per domain: 3{,}000{,}000 executions of the integer interpreter, which is bit-exact with the compiled C. There was no wrong decision, no overflow, no saturation, and no error outside its proved bound. The largest observed error reached 99.8\% of its bound, so the bounds are tight in the worst case. The independent checker accepted all 24 certificates in at most 0.10\,s each. In CI, the C emitted for Wine (32,16) is compiled with GCC and MSVC, and its integer logits on every test row match the checker's semantics exactly. Across all 8 models and 4 radii (32 certificates) the compiled binaries agreed bit for bit with the checker on every test row. The C code compiles without warnings under \texttt{-std=c99 -Wall -Wextra -pedantic}.
-
-\subsection{Threats to validity}
-The models are small dense networks on tabular and $8\times8$ image data. Regions are $L_\infty$ balls in standardised units, and their radius and the domain widening are our choices. The exhaustive comparison covers the byte lattice only. Timing is single-machine.
-
-\section{Limitations}
-ForgeCert currently supports dense ReLU networks; convolutions lower to the same integer dot product but the analysis cost grows with feature-map size. The reference is the float model in exact real arithmetic, not its float32 execution. Analysis and checker use double precision with outward slack rather than directed rounding. The domain-wide error bound is coarse; the region claims are what we certify. Regions on which the float model is not provably constant are excluded; larger radii exclude many regions (\S\ref{sec:eval}). The checker is independent code but has the same author as the compiler.
+\section{Limitations}\label{sec:limits}
+\begin{itemize}
+\item \textbf{Operators.} ForgeCert supports ReLU networks of dense and convolution layers. Pooling, residual connections, attention and non-ReLU activations need further transfer functions. Batch normalisation must be folded into the weights.
+\item \textbf{Scale.} The analysis is dense in the number of noise symbols. Our largest model has 25k parameters and 784 inputs, which is typical for 8-bit microcontrollers but small for larger devices.
+\item \textbf{Reference semantics.} The reference is the float model in exact real arithmetic, not its float32 execution.
+\item \textbf{Rounding of the analysis.} Analysis and checker use double precision with outward slack rather than directed rounding.
+\item \textbf{Excluded regions.} Regions on which the float model is not provably constant are excluded, and larger radii exclude many regions.
+\item \textbf{Search.} The tuner is greedy. On the fine lattice it can miss a cheaper certified configuration that needs two coordinated changes.
+\item \textbf{Latency model.} The cost model is for one microcontroller and one compiler.
+\item \textbf{Independence.} The checker is independent code, but has the same author as the compiler.
+\end{itemize}
 
 \section{Conclusion}
-Compiling a network to integer code changes its semantics in many small, well-defined ways. ForgeCert tracks all of them in one abstract domain. Doing so turns precision selection into a search with a sound acceptance test, and turns the compiler's output into code that carries its own proof. On 8 trained classifiers it certifies 1{,}440 of 1{,}441 regions with programs at 39.7\% of the float32 size, matches the exhaustive optimum in 7 of 8 cases, and exposes real disagreements that accuracy-guided selection ships. A small checker re-validates every certificate in under 0.1\,s. Next steps are convolutional layers, directed rounding in the checker, and certificates checked by a proof assistant.
+%%CONCLUSION%%
 
 \section*{Reproducibility}
-\texttt{cmake -S . -B build \&\& cmake --build build}, then \texttt{modelforge\_certbench --out build/certbench} and \texttt{python ModelForge/research/summarize\_certbench.py build/certbench/certbench.json}. A single model: \texttt{modelforge m.mforge --certify --data test.csv --domain train.csv --eps 0.1 --out cert}, then \texttt{modelforge\_certcheck cert m.mforge}.
+\texttt{cmake -S . -B build \&\& cmake --build build}, then \texttt{modelforge\_certbench --suite all} and \texttt{python ModelForge/research/mcu\_bench.py build}. For a single model, \texttt{modelforge m.mforge --certify --data test.csv --domain train.csv --eps 0.1 --out cert}, then \texttt{modelforge\_certcheck cert m.mforge}. The image models are retrained with \texttt{research/train\_image\_models.py}.
 
 \bibliographystyle{IEEEtran}
 \bibliography{references}
+
+\input{forgecert_appendix}
 
 \end{document}
