@@ -24,7 +24,7 @@ Email (fill in)}}
 \maketitle
 
 \begin{abstract}
-%%ABSTRACT%%
+Microcontrollers run neural networks as integer code, and the code that is deployed today is accepted when its test-set accuracy is close to the float model's. That check says nothing about inputs outside the test set and nothing about accumulator overflow. We present \emph{ForgeCert}, a compiler that turns a float network into integer-only C99 together with a certificate, in the style of proof-carrying code. The certificate states that the emitted program never overflows or saturates on a declared input domain, and that it returns the float model's decision for \emph{every} input in each certified region around real samples. The claims hold for the bit-exact semantics of the C code: rounding, fixed-point multipliers and shifts, packed 4-bit weights and argmax tie-breaking. ForgeCert combines (i)~a differential affine abstract interpretation that tracks the float model and the integer program's error over shared noise symbols, (ii)~range inference that derives scales, requantisation constants and accumulator widths from proved bounds, and (iii)~a counterexample-guided precision tuner whose refinement step is driven by error provenance carried in the abstract domain. A 900-line checker that shares no code with the compiler re-validates certificates from the source model and the emitted C file. On 8 trained classifiers and 24 model/radius cases (1{,}441 regions on which the float model is provably constant), ForgeCert certifies 1{,}440 regions with programs at 39.7\% of the float32 size, and reaches the exhaustive optimum in 7 of 8 cases. Common practice does not: uniform int8 can be certified for only 4 cases, and accuracy-guided bit-width selection, which passes the test set by construction, ships programs with real disagreements next to real samples in 4 cases. Over 3 million sampled executions show no violation. The checker accepts all 24 certificates in under 0.1\,s each.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -126,13 +126,106 @@ The certificate (JSON) contains the domain, the claimed accumulator widths and e
 It searches nothing. With \texttt{--expect} it also compares its integer semantics with the output of the compiled binary, which closes the loop to the actual C compiler. During development, the checker rejected 2 of 45 regions of a certificate that the compiler had accepted. The cause was a tie between equal-width candidates that rounding resolved differently in the two implementations. Both analyses were sound, but the checker was looser. The compiler now handles the stable cases exactly and keeps a $10^{-9}$ safety margin over the checker.
 
 \section{Evaluation}\label{sec:eval}
-%%EVAL%%
+\subsection{Setup}
+\textbf{Models.} With scikit-learn we trained ReLU MLPs with hidden layers (16) and (32,16) on Iris, Wine, Breast Cancer and Digits (70/30 split, standardised features, test accuracy 0.95--1.00). They have 4 to 64 inputs and 2 to 10 classes.
+\textbf{Specification.} The domain $D$ is the per-feature range of the training data widened by 10\% of its spread. The regions are $L_\infty$ balls of radius $\varepsilon\in\{0.05,0.1,0.2\}$ (in standard deviations) around up to 100 test rows each, clipped to $D$. This gives 24 cases and 1{,}794 regions. On 1{,}441 of them (567, 523 and 351 for the three radii) the float model is provably constant. The rest lie at decision boundaries and are excluded for every method.
+\textbf{Cost.} Flash (weights, biases, multipliers, shifts, input scales) plus RAM (two largest consecutive activation buffers), in bytes. The precision lattice is 4/8/16-bit weights and 8/16-bit activations per tensor; logits use 16 bits.
+\textbf{Baselines.} Uniform int8, uniform int4 weights with int8 activations, uniform int16, and \emph{accuracy-guided} selection: start at 16 bits and greedily lower the width that saves the most bytes while no test prediction changes. Each baseline's program is then checked by our prover, with 400 falsifier evaluations per unproved region.
+All runs used one core of a Linux machine with GCC~13.
+
+\subsection{RQ1: Does common practice produce certifiable programs?}
+\begin{table}[t]
+\centering
+\caption{All 24 cases (1{,}441 regions on which the float model is constant). ``Cert.'': cases with every region proved. ``Cex'': regions with a real counterexample found. ``Silent'': cases with a counterexample but no test-set flip.}
+\label{tab:main}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Cert. & Regions & Cex & Silent & /fp32 & /int8\\
+\midrule
+Uniform int8 & 4 & 1136 & 1 & 1 & 0.365 & 1.000\\
+Uniform int4 & 2 & 964 & 149 & 0 & 0.243 & 0.657\\
+Uniform int16 & 23 & 1440 & 0 & 0 & 0.630 & 1.739\\
+Accuracy-guided & 9 & 1345 & 4 & 4 & 0.356 & 1.010\\
+\textbf{ForgeCert} & \textbf{23} & \textbf{1440} & 0 & 0 & 0.397 & 1.112\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:main} answers no. Uniform int8 can be certified for only 4 of 24 cases. On Digits (32,16) at $\varepsilon=0.1$ it is proved on just 5 of 76 regions. Uniform int4 has real counterexamples in 149 regions of 11 cases. These are inputs within $\varepsilon$ of a real sample on which the float model is provably constant, yet the integer program answers differently. The test set reveals int4's problems (846 flips in total), but it misses subtler ones. Accuracy-guided selection passes the test set by construction, yet in 4 cases (Iris (32,16) at two radii, Wine (32,16), Breast Cancer (16)) the falsifier found a real disagreement next to a real sample, and uniform int8 has one such case (Iris (16), $\varepsilon=0.2$). Most unproved regions of int8 have no counterexample. We cannot tell whether they hide real disagreements, and this uncertainty is what a certificate removes.
+
+ForgeCert proves every region except one (Breast Cancer (16), $\varepsilon=0.1$). That region cannot be proved even at uniform int16 within the splitting budget, and no counterexample was found. Its programs average 39.7\% of the float32 size: 11\% larger than uniform int8, which is uncertified, and 36\% smaller than uniform int16, the only other method that certifies 23 cases. In the 9 cases where accuracy-guided selection happens to be certifiable, ForgeCert's program is never larger and is smaller in 5 (7.7\% on average). On Digits (32,16) the accuracy-guided program uses 16 bits everywhere and still flips a test row, while ForgeCert's certified program is 11\% smaller.
+
+\begin{table}[t]
+\centering
+\caption{ForgeCert at $\varepsilon=0.1$: regions on which the float model is constant, chosen precision ($w$: weight bits per layer, $a$: input and hidden activation bits), flash, tuning time.}
+\label{tab:models}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrlrrr}
+\toprule
+Model & Reg. & Precision & Flash (fp32) & Iter. & s\\
+\midrule
+Iris (16) & 42 & w[4,4] a[8,16] & 211 (524) & 2 & 0.01\\
+Iris (32,16) & 41 & w[8,4,8] a[8,16,16] & 843 (2956) & 5 & 0.07\\
+Wine (16) & 52 & w[4,4] a[16,16] & 345 (1100) & 3 & 0.03\\
+Wine (32,16) & 51 & w[4,4,8] a[16,16,16] & 1023 (4108) & 5 & 0.27\\
+Breast C. (16) & 90 & w[16,16] a[16,16] & 1306 (2120) & 7 & 0.17\\
+Breast C. (32,16) & 88 & w[16,8,8] a[16,16,16] & 3030 (6216) & 9 & 2.24\\
+Digits (16) & 83 & w[16,8] a[16,16] & 2698 (4840) & 6 & 0.60\\
+Digits (32,16) & 76 & w[16,8,8] a[16,16,16] & 5546 (11112) & 8 & 5.06\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:models} shows the chosen precision is mixed and model-specific. Wine and Iris tolerate 4-bit weights. Digits, with 64 inputs, needs 16-bit weights in its first layer but only 8 bits after it.
+
+\subsection{RQ2: How good is the tuned precision?}
+At $\varepsilon=0.1$ we enumerated the whole byte lattice (36 configurations for one hidden layer, 216 for two) and proved every region for each configuration in order of cost. ForgeCert finds the exhaustive optimum in 7 of 8 models. On Breast Cancer (16) it is 2.3\% larger (1{,}398 vs.\ 1{,}366~B), so the mean gap is 0.3\%. It needs 5.3 refinement iterations on average, and 19\,s for all 24 cases (at most 5.1\,s per case).
+
+\subsection{RQ3: Which components matter?}
+\begin{table}[t]
+\centering
+\caption{Ablations over all 24 cases (same excluded regions).}
+\label{tab:ablation}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrr}
+\toprule
+Variant & Cert. & Regions & /fp32 & Time (s)\\
+\midrule
+ForgeCert & 23 & 1440 & 0.397 & 19.0\\
+Interval domain (no affine correlation) & 3 & 937 & 0.588 & 97.7\\
+No input splitting & 15 & 1420 & 0.462 & 6.3\\
+Per-tensor scales & 21 & 1437 & 0.360 & 20.8\\
+No falsifier & 23 & 1440 & 0.397 & 20.8\\
+No minimisation & 23 & 1440 & 0.401 & 17.8\\
+\midrule
+\multicolumn{5}{l}{\emph{Bit-level lattice} (2--16-bit weights, 4--16-bit activations; ideal packed size)}\\
+Provenance-guided refinement & 23 & 1440 & 0.374 & 87.4\\
+Raise all sources & 23 & 1440 & 0.412 & 35.3\\
+Raise a random source (3 seeds) & 23 & 1440 & 0.410--0.458 & 128--172\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{The affine domain is essential} (Table~\ref{tab:ablation}). With intervals, which lose the correlation between the input and the integer error, only 3 cases can be certified even after the tuner has raised the precision as far as it can. \textbf{Input splitting} certifies 8 more cases. \textbf{Per-channel scales} certify 2 more cases than per-tensor scales, but they are not free: where both certify (21 cases), per-tensor programs are 10\% smaller on average and smaller in 15 cases, because per-channel scales need an input-scale table and their extra precision is not always needed. A user can choose either.
+
+\textbf{Provenance matters when the lattice is fine.} On the byte lattice there are only two or three rungs per tensor, and raising every source reaches the same configuration as provenance in all 23 comparable cases (random choice: never smaller, larger in 2--5 cases). On the bit-level lattice the choice matters. Paired over the 23 cases, provenance-guided refinement gives a smaller program than raising every source in 10 cases and a larger one in 2 (mean ratio 0.900), and is smaller than random choice in 17--19 cases (mean ratio 0.77--0.87). It also needs fewer analyses than random choice (211k vs.\ 280k for seed 1), though more than raising everything, which converges in fewer, coarser steps.
+
+\textbf{Falsifier.} Running the falsifier first changes no result and saves 7\% of the analyses (35.8k vs.\ 38.6k). Its value is diagnostic: it produced every counterexample in Table~\ref{tab:main}, and each one replays on the integer program.
+
+\textbf{Accumulators.} The proved accumulator widths equal those of a range-agnostic compiler that assumes every input at its type's extreme, in all 60 layers. Because scales map the proved range onto the full integer range, proved and worst-case ranges coincide. Range inference therefore contributes the \emph{proof} of overflow freedom rather than narrower types. 7 layers use 16-bit accumulators.
+
+\subsection{RQ4: Is it sound, and is checking cheap?}
+We sampled 2{,}000 points per proved region (one third at box vertices) and 5{,}000 points per domain: 3{,}000{,}000 executions of the integer interpreter, which is bit-exact with the compiled C. There was no wrong decision, no overflow, no saturation, and no error outside its proved bound. The largest observed error reached 99.8\% of its bound, so the bounds are tight in the worst case. The independent checker accepted all 24 certificates in at most 0.10\,s each. In CI, the C emitted for Wine (32,16) is compiled with GCC and MSVC, and its integer logits on every test row match the checker's semantics exactly. Across all 8 models and 4 radii (32 certificates) the compiled binaries agreed bit for bit with the checker on every test row. The C code compiles without warnings under \texttt{-std=c99 -Wall -Wextra -pedantic}.
+
+\subsection{Threats to validity}
+The models are small dense networks on tabular and $8\times8$ image data. Regions are $L_\infty$ balls in standardised units, and their radius and the domain widening are our choices. The exhaustive comparison covers the byte lattice only. Timing is single-machine.
 
 \section{Limitations}
 ForgeCert currently supports dense ReLU networks; convolutions lower to the same integer dot product but the analysis cost grows with feature-map size. The reference is the float model in exact real arithmetic, not its float32 execution. Analysis and checker use double precision with outward slack rather than directed rounding. The domain-wide error bound is coarse; the region claims are what we certify. Regions on which the float model is not provably constant are excluded; larger radii exclude many regions (\S\ref{sec:eval}). The checker is independent code but has the same author as the compiler.
 
 \section{Conclusion}
-%%CONCLUSION%%
+Compiling a network to integer code changes its semantics in many small, well-defined ways. ForgeCert tracks all of them in one abstract domain. Doing so turns precision selection into a search with a sound acceptance test, and turns the compiler's output into code that carries its own proof. On 8 trained classifiers it certifies 1{,}440 of 1{,}441 regions with programs at 39.7\% of the float32 size, matches the exhaustive optimum in 7 of 8 cases, and exposes real disagreements that accuracy-guided selection ships. A small checker re-validates every certificate in under 0.1\,s. Next steps are convolutional layers, directed rounding in the checker, and certificates checked by a proof assistant.
 
 \section*{Reproducibility}
 \texttt{cmake -S . -B build \&\& cmake --build build}, then \texttt{modelforge\_certbench --out build/certbench} and \texttt{python ModelForge/research/summarize\_certbench.py build/certbench/certbench.json}. A single model: \texttt{modelforge m.mforge --certify --data test.csv --domain train.csv --eps 0.1 --out cert}, then \texttt{modelforge\_certcheck cert m.mforge}.

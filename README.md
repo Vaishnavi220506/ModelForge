@@ -17,7 +17,25 @@ precise. A separate checker, `modelforge_certcheck`, shares no code with the
 compiler and re-validates the certificate from the source model and the emitted
 `.c` file alone.
 
-Evaluation results: see the [ForgeCert notes](ModelForge/docs/forgecert.md) (numbers are being regenerated with `modelforge_certbench`).
+**Results** (8 trained classifiers, 24 model/radius cases, 1,441 regions on
+which the float model is provably constant; `modelforge_certbench`):
+
+| Method | Cases fully certified | Regions proved | Regions with a real counterexample | Size vs float32 |
+| --- | --- | --- | --- | --- |
+| Uniform int8 | 4 / 24 | 1,136 | 1 | 36.5% |
+| Uniform int4 | 2 / 24 | 964 | 149 | 24.3% |
+| Uniform int16 | 23 / 24 | 1,440 | 0 | 63.0% |
+| Accuracy-guided (common practice) | 9 / 24 | 1,345 | 4 (all missed by the test set) | 35.6% |
+| **ForgeCert** | **23 / 24** | **1,440** | **0** | **39.7%** |
+
+* ForgeCert matches the exhaustive optimum in 7 of 8 models (mean gap 0.3%).
+* 3,000,000 sampled executions: 0 wrong decisions, 0 overflows, 0 error-bound
+  violations.
+* The independent checker accepts all 24 certificates in under 0.1 s each.
+* The compiled C binaries match the checker's semantics bit for bit on every
+  test row.
+* The one unproved region cannot be proved even at 16 bits, and no
+  counterexample exists for it among the inputs we searched.
 
 ```powershell
 .\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\real\wine_mlp32x16.mforge --certify --data .\ModelForge\review_2_core_implementation\models\real\wine_test.csv --domain .\ModelForge\review_2_core_implementation\models\real\wine_train.csv --eps 0.1 --out .\build\cert

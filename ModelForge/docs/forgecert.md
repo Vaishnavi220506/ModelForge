@@ -140,6 +140,38 @@ The compiler is large and does search. The checker is small and does none:
 it only replays the leaves it is given. This is the proof-carrying-code split
 between finding a proof and checking it.
 
+## Results
+
+Results are in `ModelForge/research/results/certbench.json`; summarise them with
+`python ModelForge/research/summarize_certbench.py ModelForge/research/results/certbench.json`.
+
+
+| Method | Cases fully certified | Regions proved | Regions with a real counterexample | Size vs float32 |
+| --- | --- | --- | --- | --- |
+| Uniform int8 | 4 / 24 | 1,136 | 1 | 36.5% |
+| Uniform int4 | 2 / 24 | 964 | 149 | 24.3% |
+| Uniform int16 | 23 / 24 | 1,440 | 0 | 63.0% |
+| Accuracy-guided (common practice) | 9 / 24 | 1,345 | 4 (all missed by the test set) | 35.6% |
+| **ForgeCert** | **23 / 24** | **1,440** | **0** | **39.7%** |
+
+* ForgeCert matches the exhaustive optimum in 7 of 8 models (mean gap 0.3%).
+* 3,000,000 sampled executions: 0 wrong decisions, 0 overflows, 0 error-bound
+  violations.
+* The independent checker accepts all 24 certificates in under 0.1 s each.
+* The compiled C binaries match the checker's semantics bit for bit on every
+  test row.
+* The one unproved region cannot be proved even at 16 bits, and no
+  counterexample exists for it among the inputs we searched.
+
+What did **not** pan out, reported in the paper too:
+
+* On the coarse byte lattice (4/8/16-bit), provenance-guided refinement ties
+  with "raise every layer". Provenance pays off on the fine bit-level lattice:
+  10% smaller programs than raising everything, and 13–23% smaller than random
+  choice.
+* Range inference proves overflow freedom, but it never gave a narrower
+  accumulator than a range-agnostic compiler on these models.
+
 ## Commands
 
 ```bash
