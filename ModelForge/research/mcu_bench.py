@@ -150,6 +150,9 @@ def main():
         ("image/mnist_cnn", "image/mnist_test.csv", "image/mnist_calib.csv", "0,1", 0.01),
         ("image/fashion_cnn", "image/fashion_test.csv", "image/fashion_calib.csv", "0,1", 0.01),
         ("image/mnist_mlp", "image/mnist_test.csv", "image/mnist_calib.csv", "0,1", 0.01),
+        ("image/mnist_lenet", "image/mnist_test.csv", "image/mnist_calib.csv", "0,1", 0.01),
+        ("image/mnist_dscnn", "image/mnist_test.csv", "image/mnist_calib.csv", "0,1", 0.01),
+        ("image/mnist_resnet", "image/mnist_test.csv", "image/mnist_calib.csv", "0,1", 0.01),
         ("real/digits_mlp32x16", "real/digits_test.csv", "real/digits_train.csv", None, 0.1),
         ("real/wine_mlp32x16", "real/wine_test.csv", "real/wine_train.csv", None, 0.1),
     ]

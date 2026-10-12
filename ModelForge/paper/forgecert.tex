@@ -51,7 +51,7 @@ A checker that shares no code with the compiler re-establishes both claims from 
 
 \textbf{Contributions.}
 \begin{enumerate}
-\item \textbf{Differential affine abstract interpretation of integer code} (\S\ref{sec:ai}). The float model and the integer program's error are tracked over shared noise symbols, with transfer functions for the bit-exact semantics of the emitted C: fixed-point requantisation, rounding, ReLU on the accumulator, \emph{saturation} and argmax tie-breaking. Dense layers and convolutions are handled uniformly.
+\item \textbf{Differential affine abstract interpretation of integer code} (\S\ref{sec:ai}). The float model and the integer program's error are tracked over shared noise symbols, with transfer functions for the bit-exact semantics of the emitted C: fixed-point requantisation, rounding, ReLU on the accumulator, \emph{saturation} and argmax tie-breaking. Dense layers, grouped convolutions, pooling and residual additions are handled uniformly as tap graphs, with an exact-where-possible transfer function for max-pooling.
 \item \textbf{Proof-guided lowering} (\S\ref{sec:lower}): scales from proved ranges or from calibration data (with saturation modelled), \emph{modular accumulators} sized by the proved final sum, \emph{16-bit multiplies} where every product provably fits, and \emph{dead-input elimination}. Each is sound only because of a proof, and each is re-checked.
 \item \textbf{Counterexample-guided precision tuning} (\S\ref{sec:cegar}) driven by \emph{error provenance} carried in the abstract domain, with a falsifier that turns failed proofs into real counterexamples, and with cost models for bytes or for cycles on an 8-bit microcontroller (measured, not assumed).
 \item \textbf{An independent certificate checker} (\S\ref{sec:check}) that parses the emitted C, checks it against its own copy of the code template, re-proves the obligations and replays the split trees.
@@ -110,7 +110,7 @@ static void mf_layer0(const uint8_t *x, uint16_t *y) {
 
 \section{Limitations}\label{sec:limits}
 \begin{itemize}
-\item \textbf{Operators.} ForgeCert supports ReLU networks of dense and convolution layers. Pooling, residual connections, attention and non-ReLU activations need further transfer functions. Batch normalisation must be folded into the weights.
+\item \textbf{Operators.} ForgeCert supports ReLU networks built from dense layers, grouped convolutions, batch normalisation, average and max-pooling and residual additions. Concatenation, attention and non-ReLU activations (sigmoid or tanh inside the network, ReLU6) need further transfer functions. Max-pooling must follow the ReLU and have no padding.
 \item \textbf{Scale.} The analysis is dense in the number of noise symbols. Our largest model has 25k parameters and 784 inputs, which is typical for 8-bit microcontrollers but small for larger devices.
 \item \textbf{Reference semantics.} The reference is the float model in exact real arithmetic, not its float32 execution.
 \item \textbf{Rounding of the analysis.} Analysis and checker use double precision with outward slack rather than directed rounding.

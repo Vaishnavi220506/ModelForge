@@ -76,7 +76,7 @@ GuardianReport optimizeWithGuardian(IRGraph& graph, DiagnosticEngine& diagnostic
     // Guardian's boundary probes are defined for dense graphs; convolutional
     // graphs keep their instructions unchanged (no graph pass applies to them).
     for (const auto& instruction : graph.instructions) {
-        if (instruction.operation == IROp::Conv || instruction.operation == IROp::Flatten) return result;
+        if (instruction.operation >= IROp::Conv && instruction.operation != IROp::Return) return result;
     }
     for (const auto pass : {OptimizationPass::ConstantFolding,
                             OptimizationPass::DenseReluFusion,

@@ -104,124 +104,198 @@ void writeUnsignedArray(std::ostream& out, const std::string& type, const std::s
     out << "\n};\n";
 }
 
+std::string tensorType(const QProgram& program, std::size_t tensor) {
+    if (tensor == 0) return cType(program.inputBits, program.inputUnsigned);
+    const QLayer& producer = program.layers[tensor - 1];
+    return cType(producer.outBits, producer.outUnsigned);
+}
+
 // The code of one layer. tools/certcheck.cpp holds an independent copy of
-// this template and requires the emitted file to contain exactly this text.
+// these templates and requires the emitted file to contain exactly this text.
 std::string layerFunction(const QProgram& program, std::size_t l) {
     const QLayer& q = program.layers[l];
-    const char* inT = l == 0 ? cType(program.inputBits, program.inputUnsigned)
-                             : cType(program.layers[l - 1].outBits, program.layers[l - 1].outUnsigned);
+    const std::string inT = tensorType(program, q.sources[0]);
     const char* outT = cType(q.outBits, q.outUnsigned);
+    const std::string id = std::to_string(l);
+    std::ostringstream t;
+    if (q.kind == LayerKind::MaxPool) {
+        const auto& g = q.conv;
+        const std::string s = std::to_string(g.stride);
+        t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n"
+          << "    for (int c = 0; c < " << g.outC << "; ++c) {\n"
+          << "        for (int oy = 0; oy < " << g.outH << "; ++oy) {\n"
+          << "            for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
+          << "                " << outT << " m = x[(c * " << g.inH << " + oy * " << s << ") * " << g.inW << " + ox * "
+          << s << "];\n"
+          << "                for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
+          << "                    for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+          << "                        const " << outT << " v = x[(c * " << g.inH << " + oy * " << s << " + ky) * "
+          << g.inW << " + ox * " << s << " + kx];\n"
+          << "                        if (v > m) m = v;\n"
+          << "                    }\n                }\n"
+          << "                y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = m;\n"
+          << "            }\n        }\n    }\n}\n";
+        return t.str();
+    }
     const char* accT = cType(q.accBits, false);
     const char* uaccT = cType(q.accBits, true);
     const char* mulT = q.mulBits == 16 ? "int16_t" : "int32_t";
-    const std::string id = std::to_string(l);
-    const bool conv = q.kind == LayerKind::Conv;
-    const std::string bias = conv ? "MF_B" + id + "[c]" : "MF_B" + id + "[o]";
-    const std::string indent = conv ? "                " : "        ";
     const auto weightAt = [&](const std::string& index) {
         return q.weightBits <= 4 ? "mf_nibble(MF_W" + id + ", " + index + ")" : "MF_W" + id + "[" + index + "]";
     };
-    const auto step = [&](const std::string& in, const std::string& weightIndex, const std::string& inputIndex) {
-        const std::string product = "(" + std::string(mulT) + ")" + weightAt(weightIndex) + " * (" + mulT + ")x[" +
-                                    inputIndex + "]";
+    const auto step = [&](const std::string& in, const std::string& weightIndex, const std::string& input) {
+        const std::string product = "(" + std::string(mulT) + ")" + weightAt(weightIndex) + " * (" + mulT + ")" + input;
         if (q.modular) {
             return in + "u = (" + uaccT + ")(u + (" + uaccT + ")(" + product + "));\n";
         }
         return in + "acc = (" + accT + ")(acc + (" + accT + ")(" + product + "));\n";
     };
-    std::ostringstream t;
+    const auto init = [&](const std::string& in, const std::string& channel) {
+        if (q.modular) return in + uaccT + " u = MF_B" + id + "[" + channel + "];\n";
+        return in + accT + " acc = (" + accT + ")MF_B" + id + "[" + channel + "];\n";
+    };
+    const auto tail = [&](const std::string& in, const std::string& channel) {
+        std::ostringstream r;
+        if (q.modular) {
+            r << in << "int64_t acc = u >= " << (q.accBits == 16 ? "0x8000u" : "0x80000000u") << " ? (int64_t)u - "
+              << (q.accBits == 16 ? "65536" : "4294967296LL") << " : (int64_t)u;\n";
+        }
+        if (q.relu) r << in << "if (acc < 0) acc = 0;\n";
+        r << in << "int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[" << channel << "], MF_S" << l << "["
+          << channel << "]);\n"
+          << in << "if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturate (modelled by the certificate) */\n"
+          << in << "if (q < " << q.outMin << ") q = " << q.outMin << ";\n";
+        return r.str();
+    };
+    if (q.kind == LayerKind::Add) {
+        const std::string bT = tensorType(program, q.sources[1]);
+        const std::size_t hw = q.out / q.channels;
+        const std::string in = "            ";
+        const std::string at = "[c * " + std::to_string(hw) + " + k]";
+        t << "static void mf_layer" << l << "(const " << inT << " *a, const " << bT << " *b, " << outT << " *y) {\n"
+          << "    for (int c = 0; c < " << q.channels << "; ++c) {\n"
+          << "        for (int k = 0; k < " << hw << "; ++k) {\n"
+          << init(in, "c") << step(in, "c * 2", "a" + at) << step(in, "c * 2 + 1", "b" + at) << tail(in, "c")
+          << in << "y" << at << " = (" << outT << ")q;\n"
+          << "        }\n    }\n}\n";
+        return t.str();
+    }
     t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n";
-    if (conv) {
+    if (q.kind == LayerKind::Conv) {
         const auto& g = q.conv;
+        const std::size_t cpg = g.inC / g.groups, opg = g.outC / g.groups;
+        const std::string in = "                ";
+        const std::string channel =
+            g.groups == 1 ? "ci" : "(c / " + std::to_string(opg) + " * " + std::to_string(cpg) + " + ci)";
         t << "    for (int c = 0; c < " << g.outC << "; ++c) {\n"
           << "        for (int oy = 0; oy < " << g.outH << "; ++oy) {\n"
-          << "            for (int ox = 0; ox < " << g.outW << "; ++ox) {\n";
-    } else {
-        t << "    for (int o = 0; o < " << q.out << "; ++o) {\n";
-    }
-    if (q.modular) {
-        t << indent << uaccT << " u = " << bias << ";\n";
-    } else {
-        t << indent << accT << " acc = (" << accT << ")" << bias << ";\n";
-    }
-    if (conv) {
-        const auto& g = q.conv;
-        t << indent << "for (int ci = 0; ci < " << g.inC << "; ++ci) {\n"
-          << indent << "    for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
-          << indent << "        const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
-          << indent << "        if (iy < 0 || iy >= " << g.inH << ") continue;\n"
-          << indent << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
-          << indent << "            const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
-          << indent << "            if (ix < 0 || ix >= " << g.inW << ") continue;\n"
-          << step(indent + "            ",
-                  "((c * " + std::to_string(g.inC) + " + ci) * " + std::to_string(g.kH) + " + ky) * " +
+          << "            for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
+          << init(in, "c")
+          << in << "for (int ci = 0; ci < " << cpg << "; ++ci) {\n"
+          << in << "    for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
+          << in << "        const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
+          << in << "        if (iy < 0 || iy >= " << g.inH << ") continue;\n"
+          << in << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+          << in << "            const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
+          << in << "            if (ix < 0 || ix >= " << g.inW << ") continue;\n"
+          << step(in + "            ",
+                  "((c * " + std::to_string(cpg) + " + ci) * " + std::to_string(g.kH) + " + ky) * " +
                       std::to_string(g.kW) + " + kx",
-                  "(ci * " + std::to_string(g.inH) + " + iy) * " + std::to_string(g.inW) + " + ix")
-          << indent << "        }\n" << indent << "    }\n" << indent << "}\n";
-    } else {
-        t << indent << "for (int i = 0; i < " << q.in << "; ++i) {\n"
-          << step(indent + "    ", "o * " + std::to_string(q.in) + " + i", "i") << indent << "}\n";
-    }
-    if (q.modular) {
-        t << indent << "int64_t acc = u >= " << (q.accBits == 16 ? "0x8000u" : "0x80000000u") << " ? (int64_t)u - "
-          << (q.accBits == 16 ? "65536" : "4294967296LL") << " : (int64_t)u;\n";
-    }
-    if (q.relu) t << indent << "if (acc < 0) acc = 0;\n";
-    const std::string channel = conv ? "c" : "o";
-    t << indent << "int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[" << channel << "], MF_S" << l << "["
-      << channel << "]);\n"
-      << indent << "if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturate (modelled by the certificate) */\n"
-      << indent << "if (q < " << q.outMin << ") q = " << q.outMin << ";\n";
-    if (conv) {
-        const auto& g = q.conv;
-        t << indent << "y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = (" << outT << ")q;\n"
+                  "x[(" + channel + " * " + std::to_string(g.inH) + " + iy) * " + std::to_string(g.inW) + " + ix]")
+          << in << "        }\n" << in << "    }\n" << in << "}\n"
+          << tail(in, "c")
+          << in << "y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = (" << outT << ")q;\n"
           << "            }\n        }\n    }\n}\n";
-    } else {
-        t << indent << "y[o] = (" << outT << ")q;\n    }\n}\n";
+        return t.str();
     }
+    const std::string in = "        ";
+    t << "    for (int o = 0; o < " << q.out << "; ++o) {\n"
+      << init(in, "o")
+      << in << "for (int i = 0; i < " << q.in << "; ++i) {\n"
+      << step(in + "    ", "o * " + std::to_string(q.in) + " + i", "x[i]") << in << "}\n"
+      << tail(in, "o")
+      << in << "y[o] = (" << outT << ")q;\n    }\n}\n";
     return t.str();
+}
+
+TensorShape shapeOf(const Shape& shape) {
+    TensorShape t;
+    if (shape.size() == 4) {
+        t.c = static_cast<std::size_t>(shape[1]);
+        t.h = static_cast<std::size_t>(shape[2]);
+        t.w = static_cast<std::size_t>(shape[3]);
+        t.spatial = true;
+    } else {
+        t.c = elementCount(shape);
+    }
+    return t;
+}
+
+// A tensor read as a feature map: vectors are C x 1 x 1.
+TensorShape asFeatureMap(TensorShape t) {
+    t.spatial = true;
+    return t;
 }
 
 }  // namespace
 
-void buildTaps(DenseLayer& layer) {
+void buildTaps(DenseLayer& layer, const std::vector<TensorShape>& tensors) {
     layer.taps.assign(layer.out, {});
-    if (layer.kind == LayerKind::Dense) {
-        for (std::size_t o = 0; o < layer.out; ++o) {
-            layer.taps[o].reserve(layer.in);
-            for (std::size_t i = 0; i < layer.in; ++i) {
-                layer.taps[o].push_back({static_cast<std::uint32_t>(i), static_cast<std::uint32_t>(o * layer.in + i)});
+    const auto u32 = [](std::size_t v) { return static_cast<std::uint32_t>(v); };
+    switch (layer.kind) {
+        case LayerKind::Dense:
+            for (std::size_t o = 0; o < layer.out; ++o) {
+                layer.taps[o].reserve(layer.in);
+                for (std::size_t i = 0; i < layer.in; ++i) layer.taps[o].push_back({u32(i), u32(o * layer.in + i)});
             }
+            return;
+        case LayerKind::Add: {
+            const std::size_t size = tensors[layer.sources[0]].size();
+            for (std::size_t o = 0; o < layer.out; ++o) {
+                const std::size_t c = layer.channelOf(o);
+                layer.taps[o] = {{u32(o), u32(2 * c)}, {u32(size + o), u32(2 * c + 1)}};
+            }
+            return;
         }
-        return;
-    }
-    const auto& g = layer.conv;
-    for (std::size_t c = 0; c < g.outC; ++c) {
-        for (std::size_t oy = 0; oy < g.outH; ++oy) {
-            for (std::size_t ox = 0; ox < g.outW; ++ox) {
-                auto& taps = layer.taps[(c * g.outH + oy) * g.outW + ox];
-                for (std::size_t ci = 0; ci < g.inC; ++ci) {
-                    for (std::size_t ky = 0; ky < g.kH; ++ky) {
-                        const long iy = static_cast<long>(oy * g.stride + ky) - static_cast<long>(g.pad);
-                        if (iy < 0 || iy >= static_cast<long>(g.inH)) continue;
-                        for (std::size_t kx = 0; kx < g.kW; ++kx) {
-                            const long ix = static_cast<long>(ox * g.stride + kx) - static_cast<long>(g.pad);
-                            if (ix < 0 || ix >= static_cast<long>(g.inW)) continue;
-                            taps.push_back({static_cast<std::uint32_t>((ci * g.inH + static_cast<std::size_t>(iy)) * g.inW +
-                                                                       static_cast<std::size_t>(ix)),
-                                            static_cast<std::uint32_t>(((c * g.inC + ci) * g.kH + ky) * g.kW + kx)});
+        case LayerKind::Conv:
+        case LayerKind::MaxPool: {
+            const auto& g = layer.conv;
+            const bool pool = layer.kind == LayerKind::MaxPool;
+            const std::size_t cpg = pool ? 1 : g.inC / g.groups, opg = pool ? 1 : g.outC / g.groups;
+            for (std::size_t c = 0; c < g.outC; ++c) {
+                for (std::size_t oy = 0; oy < g.outH; ++oy) {
+                    for (std::size_t ox = 0; ox < g.outW; ++ox) {
+                        auto& taps = layer.taps[(c * g.outH + oy) * g.outW + ox];
+                        for (std::size_t ci = 0; ci < cpg; ++ci) {
+                            const std::size_t channel = c / opg * cpg + ci;
+                            for (std::size_t ky = 0; ky < g.kH; ++ky) {
+                                const long iy = static_cast<long>(oy * g.stride + ky) - static_cast<long>(g.pad);
+                                if (iy < 0 || iy >= static_cast<long>(g.inH)) continue;
+                                for (std::size_t kx = 0; kx < g.kW; ++kx) {
+                                    const long ix = static_cast<long>(ox * g.stride + kx) - static_cast<long>(g.pad);
+                                    if (ix < 0 || ix >= static_cast<long>(g.inW)) continue;
+                                    const std::size_t input = (channel * g.inH + static_cast<std::size_t>(iy)) * g.inW +
+                                                              static_cast<std::size_t>(ix);
+                                    taps.push_back({u32(input), pool ? 0u : u32(((c * cpg + ci) * g.kH + ky) * g.kW + kx)});
+                                }
+                            }
                         }
                     }
                 }
             }
+            return;
         }
     }
 }
 
-std::size_t DenseNetwork::inputGroupOf(std::size_t i) const {
-    if (!layers.empty() && layers.front().kind == LayerKind::Conv) {
-        const auto& g = layers.front().conv;
-        return i / (g.inH * g.inW);
+std::size_t DenseNetwork::scaleGroupOf(std::size_t tensor, std::size_t i) const {
+    const TensorShape& shape = tensors[tensor];
+    if (!shape.spatial) return i;
+    for (const auto& layer : layers) {
+        if (layer.kind == LayerKind::Dense) continue;
+        if (std::find(layer.sources.begin(), layer.sources.end(), tensor) != layer.sources.end()) {
+            return shape.channelOf(i);
+        }
     }
     return i;
 }
@@ -232,207 +306,353 @@ std::size_t DenseNetwork::parameterCount() const {
     return count;
 }
 
+std::vector<std::size_t> DenseNetwork::lastUse() const {
+    std::vector<std::size_t> last(tensors.size(), 0);
+    for (std::size_t t = 1; t < tensors.size(); ++t) last[t] = t - 1;  // dead right after its producer
+    for (std::size_t l = 0; l < layers.size(); ++l) {
+        for (std::size_t s : layers[l].sources) last[s] = std::max(last[s], l);
+    }
+    if (!layers.empty()) last.back() = layers.size();
+    return last;
+}
+
+bool fixedSlot(const DenseNetwork& network, int kind, std::size_t index) {
+    if (kind == 1) return index < network.layers.size() && !network.layers[index].hasWeights();
+    return index > 0 && index <= network.layers.size() && network.layers[index - 1].kind == LayerKind::MaxPool;
+}
+
 std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::string& error) {
     DenseNetwork network;
     network.name = graph.name;
-    const IRInstruction* returned = nullptr;
-    for (const auto& instruction : graph.instructions) {
-        if (instruction.operation == IROp::Return) returned = &instruction;
-    }
-    if (returned == nullptr || returned->inputs.empty()) {
-        error = "the graph has no return value";
+    network.outputActivation = "none";
+    const auto input = graph.values.find(graph.inputName);
+    if (input == graph.values.end()) {
+        error = "the graph has no input";
         return std::nullopt;
     }
-    std::string current = returned->inputs.front();
-    network.outputActivation = "none";
-    std::vector<DenseLayer> reversed;
-    bool pendingRelu = false;
-    bool sawLayer = false;
-    const auto pushLayer = [&](DenseLayer layer, bool fusedRelu) -> bool {
-        if (fusedRelu && pendingRelu) {
-            error = "two consecutive ReLUs";
+    network.tensors.push_back(shapeOf(input->second.shape));
+    // Every IR value is an alias of a tensor. A layer may be changed in place
+    // (ReLU, bias, batch normalisation folded in) only while no other reader
+    // of its tensor remains and no layer has read it yet.
+    std::unordered_map<std::string, std::size_t> uses;
+    for (const auto& instruction : graph.instructions) {
+        for (const auto& name : instruction.inputs) ++uses[name];
+    }
+    std::unordered_map<std::string, std::size_t> tensorOf{{graph.inputName, 0}};
+    std::vector<std::size_t> pending{uses[graph.inputName]};
+    std::vector<bool> read{false};
+    const auto alias = [&](const std::string& value, std::size_t tensor) {
+        tensorOf[value] = tensor;
+        pending[tensor] += uses[value];
+    };
+    std::string activationOutput;
+    const auto lookup = [&](const std::string& value, std::size_t& tensor) {
+        if (value == activationOutput) {
+            error = "Softmax/Sigmoid is supported only as the output activation";
             return false;
         }
-        layer.relu = pendingRelu || fusedRelu;
-        if (!sawLayer && layer.relu) {
-            error = "a ReLU on the logits is not supported by the integer target";
+        const auto found = tensorOf.find(value);
+        if (found == tensorOf.end()) {
+            error = "value '" + value + "' is used before it is defined";
             return false;
         }
-        pendingRelu = false;
-        sawLayer = true;
-        reversed.push_back(std::move(layer));
+        tensor = found->second;
+        --pending[tensor];
         return true;
     };
-    while (current != graph.inputName) {
-        const IRInstruction* instruction = producerOf(graph, current);
-        if (instruction == nullptr || instruction->inputs.empty()) {
-            error = "value '" + current + "' has no producer";
-            return std::nullopt;
+    // The layer that may be changed in place for the value, or nullptr.
+    const auto modifiable = [&](std::size_t tensor) -> DenseLayer* {
+        if (tensor == 0 || pending[tensor] != 0 || read[tensor]) return nullptr;
+        return &network.layers[tensor - 1];
+    };
+    const auto addLayer = [&](DenseLayer layer, const std::string& value) {
+        layer.in = 0;
+        for (std::size_t s : layer.sources) {
+            layer.in += network.tensors[s].size();
+            read[s] = true;
         }
-        switch (instruction->operation) {
+        layer.out = layer.output.size();
+        network.tensors.push_back(layer.output);
+        pending.push_back(0);
+        read.push_back(false);
+        network.layers.push_back(std::move(layer));
+        alias(value, network.tensors.size() - 1);
+    };
+    // A depthwise convolution with fixed per-channel weights (pooling, or a
+    // batch normalisation that cannot be folded).
+    const auto depthwise = [&](const std::string& name, std::size_t source, std::size_t k, std::size_t stride,
+                               const std::vector<double>& weightPerChannel, const std::vector<double>& bias) {
+        const TensorShape x = asFeatureMap(network.tensors[source]);
+        DenseLayer layer;
+        layer.name = name;
+        layer.kind = LayerKind::Conv;
+        layer.sources = {source};
+        auto& g = layer.conv;
+        g.inC = g.outC = g.groups = x.c;
+        g.inH = x.h;
+        g.inW = x.w;
+        g.kH = g.kW = k;
+        g.stride = stride;
+        g.outH = (x.h - k) / stride + 1;
+        g.outW = (x.w - k) / stride + 1;
+        layer.output = {g.outC, g.outH, g.outW, true};
+        layer.weightsPerChannel = k * k;
+        for (std::size_t c = 0; c < x.c; ++c) layer.weight.insert(layer.weight.end(), k * k, weightPerChannel[c]);
+        layer.bias = bias;
+        return layer;
+    };
+    const auto constantData = [&](const std::string& name) -> const TensorInfo* { return constantOf(graph, name); };
+
+    std::string returned;
+    for (const auto& instruction : graph.instructions) {
+        const std::string& where = instruction.nodeName;
+        std::size_t x = 0;
+        switch (instruction.operation) {
+            case IROp::Input:
+                break;
+            case IROp::Return:
+                returned = instruction.inputs.empty() ? "" : instruction.inputs[0];
+                break;
             case IROp::Softmax:
             case IROp::Sigmoid:
-                if (sawLayer || pendingRelu || network.outputActivation != "none") {
-                    error = "Softmax/Sigmoid is supported only as the output activation";
-                    return std::nullopt;
-                }
-                network.outputActivation = instruction->operation == IROp::Softmax ? "softmax" : "sigmoid";
-                current = instruction->inputs[0];
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                activationOutput = instruction.output;  // may only be returned
+                network.outputActivation = instruction.operation == IROp::Softmax ? "softmax" : "sigmoid";
+                alias(instruction.output, x);
                 break;
             case IROp::Flatten:
-                current = instruction->inputs[0];
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                alias(instruction.output, x);
                 break;
-            case IROp::Relu:
-                if (!sawLayer) {
-                    error = "a ReLU on the logits is not supported by the integer target";
+            case IROp::Relu: {
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                DenseLayer* producer = modifiable(x);
+                if (producer == nullptr || producer->relu || producer->kind == LayerKind::MaxPool) {
+                    error = "ReLU '" + where + "' must directly follow a linear layer whose output has no other reader";
                     return std::nullopt;
                 }
-                if (pendingRelu) {
-                    error = "two consecutive ReLUs";
+                producer->relu = true;
+                alias(instruction.output, x);
+                break;
+            }
+            case IROp::BatchNorm: {
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                const TensorInfo* p[4];
+                for (int k = 0; k < 4; ++k) p[k] = constantData(instruction.inputs[1 + k]);
+                const std::size_t channels = network.tensors[x].c;
+                std::vector<double> a(channels), b(channels);
+                for (std::size_t c = 0; c < channels; ++c) {
+                    a[c] = static_cast<double>(p[0]->data[c]) /
+                           std::sqrt(static_cast<double>(p[3]->data[c]) + static_cast<double>(instruction.epsilon));
+                    b[c] = static_cast<double>(p[1]->data[c]) - static_cast<double>(p[2]->data[c]) * a[c];
+                }
+                DenseLayer* producer = modifiable(x);
+                if (producer != nullptr && producer->hasWeights() && !producer->relu && producer->channels() == channels) {
+                    // Fold: W' = a W, b' = a b + (beta - mean a), per output channel.
+                    for (std::size_t w = 0; w < producer->weight.size(); ++w) {
+                        producer->weight[w] *= a[producer->weightChannel(w)];
+                    }
+                    for (std::size_t c = 0; c < channels; ++c) producer->bias[c] = a[c] * producer->bias[c] + b[c];
+                    ++network.foldedBatchNorms;
+                    alias(instruction.output, x);
+                } else {
+                    addLayer(depthwise(where, x, 1, 1, a, b), instruction.output);
+                }
+                break;
+            }
+            case IROp::AveragePool:
+            case IROp::GlobalAveragePool: {
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                const TensorShape shape = network.tensors[x];
+                if (!shape.spatial) {
+                    error = "pooling '" + where + "' needs a feature map";
                     return std::nullopt;
                 }
-                pendingRelu = true;
-                current = instruction->inputs[0];
+                const bool global = instruction.operation == IROp::GlobalAveragePool;
+                if (global && shape.h != shape.w) {
+                    error = "GlobalAveragePool '" + where + "' needs a square feature map";
+                    return std::nullopt;
+                }
+                const std::size_t k = global ? shape.h : static_cast<std::size_t>(instruction.kernel);
+                const std::size_t stride = global ? 1 : static_cast<std::size_t>(instruction.stride);
+                addLayer(depthwise(where, x, k, stride, std::vector<double>(shape.c, 1.0 / static_cast<double>(k * k)),
+                                   std::vector<double>(shape.c, 0.0)),
+                         instruction.output);
+                ++network.loweredPools;
                 break;
-            case IROp::Conv: {
-                const TensorInfo* weight = constantOf(graph, instruction->inputs[1]);
-                const auto input = graph.values.find(instruction->inputs[0]);
-                if (weight == nullptr || weight->shape.size() != 4 || input == graph.values.end() ||
-                    input->second.shape.size() != 4) {
-                    error = "Conv '" + instruction->nodeName + "' needs NCHW input and a constant weight";
+            }
+            case IROp::MaxPool: {
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                const TensorShape shape = network.tensors[x];
+                if (!shape.spatial) {
+                    error = "MaxPool '" + where + "' needs a feature map";
                     return std::nullopt;
                 }
                 DenseLayer layer;
-                layer.name = instruction->nodeName;
-                layer.kind = LayerKind::Conv;
+                layer.name = where;
+                layer.kind = LayerKind::MaxPool;
+                layer.sources = {x};
                 auto& g = layer.conv;
-                g.inC = static_cast<std::size_t>(input->second.shape[1]);
-                g.inH = static_cast<std::size_t>(input->second.shape[2]);
-                g.inW = static_cast<std::size_t>(input->second.shape[3]);
+                g.inC = g.outC = g.groups = shape.c;
+                g.inH = shape.h;
+                g.inW = shape.w;
+                g.kH = g.kW = static_cast<std::size_t>(instruction.kernel);
+                g.stride = static_cast<std::size_t>(instruction.stride);
+                g.outH = (shape.h - g.kH) / g.stride + 1;
+                g.outW = (shape.w - g.kW) / g.stride + 1;
+                layer.output = {g.outC, g.outH, g.outW, true};
+                layer.weightsPerChannel = 1;
+                addLayer(std::move(layer), instruction.output);
+                break;
+            }
+            case IROp::Conv: {
+                const TensorInfo* weight = constantData(instruction.inputs[1]);
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
+                const TensorShape shape = network.tensors[x];
+                if (weight == nullptr || weight->shape.size() != 4 || !shape.spatial || instruction.shape.size() != 4) {
+                    error = "Conv '" + where + "' needs NCHW input and a constant weight";
+                    return std::nullopt;
+                }
+                DenseLayer layer;
+                layer.name = where;
+                layer.kind = LayerKind::Conv;
+                layer.sources = {x};
+                auto& g = layer.conv;
+                g.inC = shape.c;
+                g.inH = shape.h;
+                g.inW = shape.w;
                 g.outC = static_cast<std::size_t>(weight->shape[0]);
                 g.kH = static_cast<std::size_t>(weight->shape[2]);
                 g.kW = static_cast<std::size_t>(weight->shape[3]);
-                g.stride = static_cast<std::size_t>(instruction->stride);
-                g.pad = static_cast<std::size_t>(instruction->pad);
-                g.outH = static_cast<std::size_t>(instruction->shape[2]);
-                g.outW = static_cast<std::size_t>(instruction->shape[3]);
-                layer.in = g.inC * g.inH * g.inW;
-                layer.out = g.outC * g.outH * g.outW;
+                g.stride = static_cast<std::size_t>(instruction.stride);
+                g.pad = static_cast<std::size_t>(instruction.pad);
+                g.groups = static_cast<std::size_t>(instruction.group);
+                g.outH = static_cast<std::size_t>(instruction.shape[2]);
+                g.outW = static_cast<std::size_t>(instruction.shape[3]);
+                if (g.groups == 0 || g.inC % g.groups || g.outC % g.groups ||
+                    static_cast<std::size_t>(weight->shape[1]) * g.groups != g.inC) {
+                    error = "Conv '" + where + "' has inconsistent groups";
+                    return std::nullopt;
+                }
+                layer.output = {g.outC, g.outH, g.outW, true};
+                layer.weightsPerChannel = g.inC / g.groups * g.kH * g.kW;
                 layer.weight.assign(weight->data.begin(), weight->data.end());
                 layer.bias.assign(g.outC, 0.0);
-                if (instruction->inputs.size() == 3) {
-                    const TensorInfo* bias = constantOf(graph, instruction->inputs[2]);
+                if (instruction.inputs.size() == 3) {
+                    const TensorInfo* bias = constantData(instruction.inputs[2]);
                     if (bias == nullptr || !readBias(*bias, layer, error)) {
                         if (error.empty()) error = "Conv bias must be constant";
                         return std::nullopt;
                     }
                 }
-                if (!pushLayer(std::move(layer), false)) return std::nullopt;
-                current = instruction->inputs[0];
+                addLayer(std::move(layer), instruction.output);
                 break;
             }
             case IROp::Gemm:
-            case IROp::FusedGemmRelu: {
-                if (instruction->transA || instruction->inputs.size() < 2) {
-                    error = "unsupported Gemm form in '" + instruction->nodeName + "'";
+            case IROp::FusedGemmRelu:
+            case IROp::MatMul: {
+                const bool gemm = instruction.operation != IROp::MatMul;
+                if ((gemm && instruction.transA) || instruction.inputs.size() < 2) {
+                    error = "unsupported Gemm form in '" + where + "'";
                     return std::nullopt;
                 }
-                const TensorInfo* weight = constantOf(graph, instruction->inputs[1]);
+                const TensorInfo* weight = constantData(instruction.inputs[1]);
                 if (weight == nullptr) {
-                    error = "Gemm '" + instruction->nodeName + "' needs a constant weight";
+                    error = "'" + where + "' needs a constant weight";
                     return std::nullopt;
                 }
+                if (!lookup(instruction.inputs[0], x)) return std::nullopt;
                 DenseLayer layer;
-                layer.name = instruction->nodeName;
-                if (!readWeight(*weight, instruction->transB, layer, error)) return std::nullopt;
-                if (instruction->inputs.size() == 3) {
-                    const TensorInfo* bias = constantOf(graph, instruction->inputs[2]);
+                layer.name = where;
+                layer.sources = {x};
+                if (!readWeight(*weight, gemm && instruction.transB, layer, error)) return std::nullopt;
+                if (layer.in != network.tensors[x].size()) {
+                    error = "layer shapes do not chain at '" + where + "'";
+                    return std::nullopt;
+                }
+                layer.output = {layer.out, 1, 1, false};
+                layer.weightsPerChannel = layer.in;
+                if (gemm && instruction.inputs.size() == 3) {
+                    const TensorInfo* bias = constantData(instruction.inputs[2]);
                     if (bias == nullptr || !readBias(*bias, layer, error)) {
                         if (error.empty()) error = "Gemm bias must be constant";
                         return std::nullopt;
                     }
                 }
-                if (!pushLayer(std::move(layer), instruction->operation == IROp::FusedGemmRelu)) return std::nullopt;
-                current = instruction->inputs[0];
+                layer.relu = instruction.operation == IROp::FusedGemmRelu;
+                addLayer(std::move(layer), instruction.output);
                 break;
             }
             case IROp::Add: {
-                // MatMul followed by a constant Add is a dense layer with bias.
-                std::string other;
-                const TensorInfo* bias = nullptr;
-                for (const auto& name : instruction->inputs) {
-                    if (const auto* constant = constantOf(graph, name)) {
-                        bias = constant;
+                if (instruction.inputs.size() != 2) {
+                    error = "Add '" + where + "' needs two operands";
+                    return std::nullopt;
+                }
+                const TensorInfo* constant = nullptr;
+                std::vector<std::size_t> operands;
+                for (const auto& name : instruction.inputs) {
+                    if (const auto* c = constantData(name)) {
+                        constant = c;
                     } else {
-                        other = name;
+                        std::size_t t = 0;
+                        if (!lookup(name, t)) return std::nullopt;
+                        operands.push_back(t);
                     }
                 }
-                const IRInstruction* matmul = other.empty() ? nullptr : producerOf(graph, other);
-                if (bias == nullptr || matmul == nullptr || matmul->operation != IROp::MatMul ||
-                    matmul->inputs.size() != 2) {
-                    error = "Add is supported only as the bias of a MatMul";
+                if (constant != nullptr && operands.size() == 1) {
+                    // A constant added to a linear layer is its bias.
+                    DenseLayer* producer = modifiable(operands[0]);
+                    if (producer == nullptr || !producer->hasWeights() || producer->relu ||
+                        !readBias(*constant, *producer, error)) {
+                        if (error.empty()) error = "a constant Add must follow a linear layer ('" + where + "')";
+                        return std::nullopt;
+                    }
+                    alias(instruction.output, operands[0]);
+                    break;
+                }
+                if (operands.size() != 2 || network.tensors[operands[0]].size() != network.tensors[operands[1]].size()) {
+                    error = "Add '" + where + "' needs two tensors of the same shape";
                     return std::nullopt;
                 }
-                const TensorInfo* weight = constantOf(graph, matmul->inputs[1]);
-                if (weight == nullptr) {
-                    error = "MatMul '" + matmul->nodeName + "' needs a constant weight";
-                    return std::nullopt;
-                }
+                // Residual connection: y = a + b, one weight per source and channel.
                 DenseLayer layer;
-                layer.name = matmul->nodeName;
-                if (!readWeight(*weight, false, layer, error) || !readBias(*bias, layer, error)) {
-                    return std::nullopt;
-                }
-                if (!pushLayer(std::move(layer), false)) return std::nullopt;
-                current = matmul->inputs[0];
-                break;
-            }
-            case IROp::MatMul: {
-                const TensorInfo* weight = constantOf(graph, instruction->inputs[1]);
-                if (weight == nullptr || instruction->inputs.size() != 2) {
-                    error = "MatMul '" + instruction->nodeName + "' needs a constant weight";
-                    return std::nullopt;
-                }
-                DenseLayer layer;
-                layer.name = instruction->nodeName;
-                if (!readWeight(*weight, false, layer, error)) return std::nullopt;
-                if (!pushLayer(std::move(layer), false)) return std::nullopt;
-                current = instruction->inputs[0];
+                layer.name = where;
+                layer.kind = LayerKind::Add;
+                layer.sources = operands;
+                layer.output = network.tensors[operands[0]];
+                const std::size_t channels = layer.output.spatial ? layer.output.c : layer.output.size();
+                auto& g = layer.conv;
+                g.inC = g.outC = g.groups = channels;
+                g.inH = g.outH = layer.output.h;
+                g.inW = g.outW = layer.output.w;
+                g.kH = g.kW = 1;
+                layer.weightsPerChannel = 2;
+                layer.weight.assign(2 * channels, 1.0);
+                layer.bias.assign(channels, 0.0);
+                addLayer(std::move(layer), instruction.output);
                 break;
             }
             default:
-                error = "operator " + irOpName(instruction->operation) + " is not supported by the integer target";
+                error = "operator " + irOpName(instruction.operation) + " is not supported by the integer target";
                 return std::nullopt;
         }
     }
-    if (reversed.empty() || pendingRelu) {
-        error = reversed.empty() ? "the model has no dense layer" : "a ReLU directly on the input";
+    if (network.layers.empty()) {
+        error = "the model has no dense layer";
         return std::nullopt;
     }
-    network.layers.assign(reversed.rbegin(), reversed.rend());
-    for (std::size_t l = 1; l < network.layers.size(); ++l) {
-        const auto& previous = network.layers[l - 1];
-        const auto& layer = network.layers[l];
-        bool chains = layer.in == previous.out;
-        if (layer.kind == LayerKind::Conv) {
-            chains = chains && previous.kind == LayerKind::Conv && layer.conv.inC == previous.conv.outC &&
-                     layer.conv.inH == previous.conv.outH && layer.conv.inW == previous.conv.outW;
-        }
-        if (!chains) {
-            error = "layer shapes do not chain at '" + layer.name + "'";
-            return std::nullopt;
-        }
-    }
-    network.inputs = network.layers.front().in;
-    if (network.layers.front().kind == LayerKind::Conv) {
-        const auto& g = network.layers.front().conv;
-        network.inputShape = {g.inC, g.inH, g.inW};
-    } else {
-        network.inputShape = {network.inputs};
+    const auto found = tensorOf.find(returned);
+    if (found == tensorOf.end() || found->second != network.tensors.size() - 1) {
+        error = "the returned value must be the output of the last layer";
+        return std::nullopt;
     }
     auto& head = network.layers.back();
     if (head.kind != LayerKind::Dense) {
         error = "the last layer must be dense (Flatten + Gemm)";
+        return std::nullopt;
+    }
+    if (head.relu) {
+        error = "a ReLU on the logits is not supported by the integer target";
         return std::nullopt;
     }
     if (head.out == 1) {
@@ -442,25 +662,58 @@ std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::strin
         head.weight = std::move(weight);
         head.bias = {0.0, head.bias[0]};
         head.out = 2;
+        head.output = {2, 1, 1, false};
+        network.tensors.back() = head.output;
         network.singleLogitPadded = true;
     }
     network.classes = head.out;
-    for (auto& layer : network.layers) buildTaps(layer);
+    network.inputs = network.tensors[0].size();
+    const auto& in = network.tensors[0];
+    network.inputShape = in.spatial ? std::vector<std::size_t>{in.c, in.h, in.w} : std::vector<std::size_t>{in.c};
+    for (auto& layer : network.layers) buildTaps(layer, network.tensors);
     return network;
 }
 
-std::vector<double> referenceLogits(const DenseNetwork& network, const std::vector<double>& x) {
-    std::vector<double> current = x;
-    for (const auto& layer : network.layers) {
-        std::vector<double> next(layer.out);
+namespace {
+
+// Concatenation of a layer's source tensors (most layers have one source).
+template <typename T>
+const std::vector<T>& gather(const std::vector<std::vector<T>>& tensors, const std::vector<std::size_t>& sources,
+                             std::vector<T>& scratch) {
+    if (sources.size() == 1) return tensors[sources[0]];
+    scratch.clear();
+    for (std::size_t s : sources) scratch.insert(scratch.end(), tensors[s].begin(), tensors[s].end());
+    return scratch;
+}
+
+}  // namespace
+
+std::vector<std::vector<double>> referenceActivations(const DenseNetwork& network, const std::vector<double>& x) {
+    std::vector<std::vector<double>> tensors(network.layers.size() + 1);
+    tensors[0] = x;
+    std::vector<double> scratch;
+    for (std::size_t l = 0; l < network.layers.size(); ++l) {
+        const auto& layer = network.layers[l];
+        const auto& in = gather(tensors, layer.sources, scratch);
+        auto& next = tensors[l + 1];
+        next.assign(layer.out, 0.0);
         for (std::size_t o = 0; o < layer.out; ++o) {
+            if (layer.kind == LayerKind::MaxPool) {
+                double m = -std::numeric_limits<double>::infinity();
+                for (const auto& tap : layer.taps[o]) m = std::max(m, in[tap.input]);
+                next[o] = m;
+                continue;
+            }
             double sum = layer.bias[layer.channelOf(o)];
-            for (const auto& tap : layer.taps[o]) sum += layer.weight[tap.weight] * current[tap.input];
+            for (const auto& tap : layer.taps[o]) sum += layer.weight[tap.weight] * in[tap.input];
             next[o] = layer.relu ? std::max(0.0, sum) : sum;
         }
-        current = std::move(next);
     }
-    return current;
+    return tensors;
+}
+
+std::vector<double> referenceLogits(const DenseNetwork& network, const std::vector<double>& x) {
+    return referenceActivations(network, x).back();
 }
 
 int argmaxFirst(const std::vector<double>& values) {
@@ -532,11 +785,24 @@ std::int64_t roundShift(std::int64_t value, int shift) {
 
 IntegerRun runInteger(const QProgram& program, const std::vector<std::int64_t>& qInput) {
     IntegerRun run;
-    std::vector<std::int64_t> current = qInput;
-    for (const auto& layer : program.layers) {
+    std::vector<std::vector<std::int64_t>> tensors(program.layers.size() + 1);
+    tensors[0] = qInput;
+    std::vector<std::int64_t> scratch;
+    for (std::size_t l = 0; l < program.layers.size(); ++l) {
+        const auto& layer = program.layers[l];
+        const auto& current = gather(tensors, layer.sources, scratch);
+        auto& next = tensors[l + 1];
+        next.assign(layer.out, 0);
+        if (layer.kind == LayerKind::MaxPool) {
+            for (std::size_t o = 0; o < layer.out; ++o) {
+                std::int64_t m = current[layer.taps[o].front().input];
+                for (const auto& tap : layer.taps[o]) m = std::max(m, current[tap.input]);
+                next[o] = m;
+            }
+            continue;
+        }
         const std::int64_t accLimit = signedMax(layer.accBits);
         const std::int64_t mulLimit = signedMax(layer.mulBits);
-        std::vector<std::int64_t> next(layer.out);
         for (std::size_t o = 0; o < layer.out; ++o) {
             const std::size_t c = layer.channelOf(o);
             std::int64_t acc = layer.qBias[c];
@@ -557,10 +823,9 @@ IntegerRun runInteger(const QProgram& program, const std::vector<std::int64_t>& 
             }
             next[o] = q;
         }
-        current = std::move(next);
     }
-    run.logits = current;
-    run.decision = argmaxFirst(current);
+    run.logits = tensors.back();
+    run.decision = argmaxFirst(run.logits);
     return run;
 }
 
@@ -577,22 +842,74 @@ std::vector<double> dequantizedLogits(const QProgram& program, const IntegerRun&
 
 ProgramCost programCost(const QProgram& program) {
     ProgramCost cost;
-    std::size_t largestPair = program.inputs * static_cast<std::size_t>(program.inputBits <= 8 ? 1 : 2);
-    std::size_t previous = largestPair;
+    const auto bytes = [](int bits) { return static_cast<double>(bits <= 8 ? 1 : 2); };
+    // The caller's input array, the shared static buffers and the logits.
+    cost.ramBytes = static_cast<double>(program.inputs) * bytes(program.inputBits) +
+                    static_cast<double>(program.classes) * bytes(program.layers.back().outBits);
+    for (std::size_t b = 0; b < program.bufferSize.size(); ++b) {
+        for (const auto& layer : program.layers) {
+            if (layer.buffer == static_cast<int>(b)) {
+                cost.ramBytes += static_cast<double>(program.bufferSize[b]) * bytes(layer.outBits);
+                break;
+            }
+        }
+    }
     for (const auto& layer : program.layers) {
+        if (layer.kind == LayerKind::MaxPool) continue;
         const double count = static_cast<double>(layer.qWeight.size());
         const double perWeight = layer.weightBits <= 4 ? 0.5 : layer.weightBits <= 8 ? 1.0 : 2.0;
         cost.weightBytes += std::ceil(count * perWeight);
         cost.idealBits += count * layer.weightBits;
         // bias (accumulator type) + multiplier (4) + shift (1) per channel
         cost.flashBytes += static_cast<double>(layer.channels) * (layer.accBits / 8.0 + 4.0 + 1.0);
-        const std::size_t outBytes = layer.out * static_cast<std::size_t>(layer.outBits <= 8 ? 1 : 2);
-        largestPair = std::max(largestPair, previous + outBytes);
-        previous = outBytes;
     }
     cost.flashBytes += cost.weightBytes + 4.0 * static_cast<double>(program.inputs);  // + float input scales
-    cost.ramBytes = static_cast<double>(largestPair);
     return cost;
+}
+
+void planBuffers(QProgram& program) {
+    const std::size_t L = program.layers.size();
+    std::vector<std::size_t> last(L + 1, 0);
+    for (std::size_t t = 1; t <= L; ++t) last[t] = t - 1;
+    for (std::size_t l = 0; l < L; ++l) {
+        for (std::size_t s : program.layers[l].sources) last[s] = std::max(last[s], l);
+    }
+    struct Buffer {
+        std::string type;
+        std::size_t size = 0;
+        std::size_t occupant = 0;  // tensor currently held
+    };
+    std::vector<Buffer> buffers;
+    for (std::size_t l = 0; l < L; ++l) {
+        auto& layer = program.layers[l];
+        if (l + 1 == L) {
+            layer.buffer = -1;  // the logits go to a local array
+            break;
+        }
+        const std::string type = cType(layer.outBits, layer.outUnsigned);
+        // A buffer is free once no layer from l on reads its tensor.
+        int best = -1;
+        for (std::size_t b = 0; b < buffers.size(); ++b) {
+            if (buffers[b].type != type || last[buffers[b].occupant] >= l) continue;
+            const auto fits = [&](std::size_t k) { return buffers[k].size >= layer.out; };
+            if (best < 0 || (fits(b) && (!fits(static_cast<std::size_t>(best)) ||
+                                         buffers[b].size < buffers[static_cast<std::size_t>(best)].size)) ||
+                (!fits(b) && !fits(static_cast<std::size_t>(best)) &&
+                 buffers[b].size > buffers[static_cast<std::size_t>(best)].size)) {
+                best = static_cast<int>(b);
+            }
+        }
+        if (best < 0) {
+            buffers.push_back({type, 0, 0});
+            best = static_cast<int>(buffers.size() - 1);
+        }
+        auto& buffer = buffers[static_cast<std::size_t>(best)];
+        buffer.size = std::max(buffer.size, layer.out);
+        buffer.occupant = l + 1;
+        layer.buffer = best;
+    }
+    program.bufferSize.clear();
+    for (const auto& buffer : buffers) program.bufferSize.push_back(buffer.size);
 }
 
 double estimatedAvrCycles(const QProgram& program) {
@@ -605,18 +922,21 @@ double estimatedAvrCycles(const QProgram& program) {
     };
     constexpr double kRequantise = 605.0;  // 64-bit multiply and rounding shift, per neuron
     double cycles = 0.0;
-    int inputBits = program.inputBits;
     for (const auto& layer : program.layers) {
+        const int inputBits = layer.sources[0] == 0 ? program.inputBits : program.layers[layer.sources[0] - 1].outBits;
+        double taps = 0.0;
+        for (const auto& t : layer.taps) taps += static_cast<double>(t.size());
+        if (layer.kind == LayerKind::MaxPool) {
+            cycles += taps * (inputBits <= 8 ? 14.0 : 20.0);  // load, compare, branch
+            continue;
+        }
         const int w = layer.weightBits <= 4 ? 0 : layer.weightBits <= 8 ? 1 : 2;
         const int x = inputBits <= 8 ? 0 : 1;
         const int m = layer.mulBits == 16 ? 0 : 1;
         const int a = layer.accBits == 16 ? 0 : layer.accBits == 32 ? 1 : 2;
-        double taps = 0.0;
-        for (const auto& t : layer.taps) taps += static_cast<double>(t.size());
         // Convolutions pay for the bounds checks of the sliding window.
         const double perMac = mac[w][x][m][a] * (layer.kind == LayerKind::Conv ? 1.3 : 1.0);
         cycles += taps * perMac + static_cast<double>(layer.out) * kRequantise;
-        inputBits = layer.outBits;
     }
     return cycles;
 }
@@ -626,6 +946,7 @@ double float32Bytes(const DenseNetwork& network) { return 4.0 * static_cast<doub
 std::size_t multiplyAccumulates(const DenseNetwork& network) {
     std::size_t total = 0;
     for (const auto& layer : network.layers) {
+        if (!layer.hasWeights()) continue;
         for (const auto& taps : layer.taps) total += taps.size();
     }
     return total;
@@ -660,27 +981,26 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
 
     std::ofstream source(out / "model_q.c");
     source << "/* Integer-only inference code generated by ModelForge / ForgeCert.\n"
-           << " * MF-ARTIFACT v3. The arrays below are read verbatim by modelforge_certcheck;\n"
+           << " * MF-ARTIFACT v4. The arrays below are read verbatim by modelforge_certcheck;\n"
            << " * do not edit them by hand (the certificate would no longer apply). */\n"
            << "#include \"model_q.h\"\n\n"
            << "#ifndef MF_ROM\n#define MF_ROM /* e.g. -DMF_ROM=__flash on AVR keeps tables in flash */\n#endif\n\n";
     // MF_META: version, inputs, classes, input bits, input unsigned, layer count, then per layer
-    // kind, in, out, relu, weight bits, acc bits, modular, mul bits, out bits,
-    // out unsigned, inC, inH, inW, outC, outH, outW, kH, kW, stride, pad.
-    std::vector<std::int64_t> meta{3, static_cast<std::int64_t>(program.inputs),
+    // kind (0 dense, 1 conv, 2 add, 3 max-pool), in, out, relu, weight bits, acc bits, modular,
+    // mul bits, out bits, out unsigned, inC, inH, inW, outC, outH, outW, kH, kW, stride, pad,
+    // groups, first source tensor, second source tensor (-1: none), output buffer (-1: logits).
+    std::vector<std::int64_t> meta{4, static_cast<std::int64_t>(program.inputs),
                                    static_cast<std::int64_t>(program.classes), program.inputBits,
                                    program.inputUnsigned ? 1 : 0, static_cast<std::int64_t>(program.layers.size())};
     for (const auto& layer : program.layers) {
         const auto& g = layer.conv;
+        const auto i64 = [](std::size_t v) { return static_cast<std::int64_t>(v); };
         meta.insert(meta.end(),
-                    {layer.kind == LayerKind::Conv ? 1 : 0, static_cast<std::int64_t>(layer.in),
-                     static_cast<std::int64_t>(layer.out), layer.relu ? 1 : 0, layer.weightBits, layer.accBits,
-                     layer.modular ? 1 : 0, layer.mulBits, layer.outBits, layer.outUnsigned ? 1 : 0,
-                     static_cast<std::int64_t>(g.inC), static_cast<std::int64_t>(g.inH),
-                     static_cast<std::int64_t>(g.inW), static_cast<std::int64_t>(g.outC),
-                     static_cast<std::int64_t>(g.outH), static_cast<std::int64_t>(g.outW),
-                     static_cast<std::int64_t>(g.kH), static_cast<std::int64_t>(g.kW),
-                     static_cast<std::int64_t>(g.stride), static_cast<std::int64_t>(g.pad)});
+                    {static_cast<std::int64_t>(layer.kind), i64(layer.in), i64(layer.out), layer.relu ? 1 : 0,
+                     layer.weightBits, layer.accBits, layer.modular ? 1 : 0, layer.mulBits, layer.outBits,
+                     layer.outUnsigned ? 1 : 0, i64(g.inC), i64(g.inH), i64(g.inW), i64(g.outC), i64(g.outH),
+                     i64(g.outW), i64(g.kH), i64(g.kW), i64(g.stride), i64(g.pad), i64(g.groups),
+                     i64(layer.sources[0]), layer.sources.size() > 1 ? i64(layer.sources[1]) : -1, layer.buffer});
     }
     const auto writeScales = [&](const std::string& name, const std::vector<double>& values) {
         source << "static const double " << name << "[" << values.size() << "] = {";
@@ -713,7 +1033,8 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
     source << "static int64_t mf_round_shift(int64_t t, int s) {\n"
            << "    int64_t u = t + ((int64_t)1 << (s - 1));\n"
            << "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n\n";
-    if (std::any_of(program.layers.begin(), program.layers.end(), [](const QLayer& q) { return q.weightBits <= 4; })) {
+    if (std::any_of(program.layers.begin(), program.layers.end(),
+                    [](const QLayer& q) { return q.kind != LayerKind::MaxPool && q.weightBits <= 4; })) {
         source << "static int8_t mf_nibble(const MF_ROM uint8_t *packed, int k) {\n"
                << "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
                << "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n\n";
@@ -722,6 +1043,12 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
     for (std::size_t l = 0; l < program.layers.size(); ++l) {
         const auto& layer = program.layers[l];
         const std::string id = std::to_string(l);
+        static const char* const kKindName[] = {"dense", "conv", "add", "max-pool"};
+        if (layer.kind == LayerKind::MaxPool) {
+            source << "\n/* layer " << l << ": max-pool " << layer.conv.kH << "x" << layer.conv.kW << " stride "
+                   << layer.conv.stride << " on integer codes (exact) */\n" << layerFunction(program, l);
+            continue;
+        }
         if (layer.weightBits <= 4) {
             std::vector<std::int64_t> bytes((layer.qWeight.size() + 1) / 2, 0);
             for (std::size_t k = 0; k < layer.qWeight.size(); ++k) {
@@ -743,7 +1070,9 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
         }
         writeArray(source, "int32_t", "MF_M" + id, layer.multiplier);
         writeArray(source, "uint8_t", "MF_S" + id, layer.shift);
-        source << "\n/* layer " << l << ": " << (layer.kind == LayerKind::Conv ? "conv " : "dense ") << layer.in
+        source << "\n/* layer " << l << ": " << kKindName[static_cast<int>(layer.kind)]
+               << (layer.kind == LayerKind::Conv && layer.conv.groups > 1 ? " (groups " + std::to_string(layer.conv.groups) + ")" : "")
+               << " " << layer.in
                << " -> " << layer.out << (layer.relu ? ", ReLU" : "") << "; weights " << layer.weightBits << "-bit; "
                << layer.accBits << "-bit " << (layer.modular ? "modular " : "") << "accumulator; " << layer.mulBits
                << "-bit products (widths proved on the domain) */\n"
@@ -760,15 +1089,25 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
            << "        if (v < " << program.inputMin << ") v = " << program.inputMin << ";\n"
            << "        q[i] = (mf_input_t)v;\n    }\n}\n\n"
            << "int mf_infer_q(const mf_input_t *q, mf_logit_t *logits) {\n";
-    for (std::size_t l = 0; l + 1 < program.layers.size(); ++l) {
-        const auto& layer = program.layers[l];
-        source << "    static " << cType(layer.outBits, layer.outUnsigned) << " t" << l << "[" << layer.out << "];\n";
+    // Static buffers shared by tensors whose live ranges do not overlap.
+    for (std::size_t k = 0; k < program.bufferSize.size(); ++k) {
+        for (const auto& layer : program.layers) {
+            if (layer.buffer != static_cast<int>(k)) continue;
+            source << "    static " << cType(layer.outBits, layer.outUnsigned) << " mf_buf" << k << "["
+                   << program.bufferSize[k] << "];\n";
+            break;
+        }
     }
     source << "    mf_logit_t out[MF_CLASSES];\n";
+    const auto tensorName = [&](std::size_t t) {
+        if (t == 0) return std::string("q");
+        const int buffer = program.layers[t - 1].buffer;
+        return buffer < 0 ? std::string("out") : "mf_buf" + std::to_string(buffer);
+    };
     for (std::size_t l = 0; l < program.layers.size(); ++l) {
-        const std::string in = l == 0 ? "q" : "t" + std::to_string(l - 1);
-        const std::string dst = l + 1 == program.layers.size() ? "out" : "t" + std::to_string(l);
-        source << "    mf_layer" << l << "(" << in << ", " << dst << ");\n";
+        source << "    mf_layer" << l << "(";
+        for (std::size_t s : program.layers[l].sources) source << tensorName(s) << ", ";
+        source << tensorName(l + 1) << ");\n";
     }
     source << "    int best = 0;\n"
            << "    for (int c = 0; c < MF_CLASSES; ++c) {\n"
@@ -844,31 +1183,58 @@ bool emitFloatC(const DenseNetwork& network, const std::string& directory, std::
     };
     for (std::size_t l = 0; l < network.layers.size(); ++l) {
         const auto& layer = network.layers[l];
-        floats("F_W" + std::to_string(l), layer.weight);
-        floats("F_B" + std::to_string(l), layer.bias);
-        source << "static void f_layer" << l << "(const float *x, float *y) {\n";
-        if (layer.kind == LayerKind::Conv) {
-            const auto& g = layer.conv;
-            source << "    for (int c = 0; c < " << g.outC << "; ++c)\n"
+        const std::string id = std::to_string(l);
+        const std::string activation = layer.relu ? "s > 0.0f ? s : 0.0f" : "s";
+        if (layer.hasWeights()) {
+            floats("F_W" + id, layer.weight);
+            floats("F_B" + id, layer.bias);
+        }
+        const auto& g = layer.conv;
+        if (layer.kind == LayerKind::Add) {
+            const std::size_t hw = layer.out / layer.channels();
+            source << "static void f_layer" << l << "(const float *a, const float *b, float *y) {\n"
+                   << "    for (int c = 0; c < " << layer.channels() << "; ++c)\n"
+                   << "    for (int k = 0; k < " << hw << "; ++k) {\n"
+                   << "        float s = F_B" << l << "[c] + F_W" << l << "[c * 2] * a[c * " << hw << " + k] + F_W" << l
+                   << "[c * 2 + 1] * b[c * " << hw << " + k];\n"
+                   << "        y[c * " << hw << " + k] = " << activation << ";\n    }\n}\n";
+        } else if (layer.kind == LayerKind::MaxPool) {
+            source << "static void f_layer" << l << "(const float *x, float *y) {\n"
+                   << "    for (int c = 0; c < " << g.outC << "; ++c)\n"
+                   << "    for (int oy = 0; oy < " << g.outH << "; ++oy)\n"
+                   << "    for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
+                   << "        float m = x[(c * " << g.inH << " + oy * " << g.stride << ") * " << g.inW << " + ox * "
+                   << g.stride << "];\n"
+                   << "        for (int ky = 0; ky < " << g.kH << "; ++ky)\n"
+                   << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+                   << "            const float v = x[(c * " << g.inH << " + oy * " << g.stride << " + ky) * " << g.inW
+                   << " + ox * " << g.stride << " + kx];\n"
+                   << "            if (v > m) m = v;\n        }\n"
+                   << "        y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = m;\n    }\n}\n";
+        } else if (layer.kind == LayerKind::Conv) {
+            const std::size_t cpg = g.inC / g.groups, opg = g.outC / g.groups;
+            source << "static void f_layer" << l << "(const float *x, float *y) {\n"
+                   << "    for (int c = 0; c < " << g.outC << "; ++c)\n"
                    << "    for (int oy = 0; oy < " << g.outH << "; ++oy)\n"
                    << "    for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
                    << "        float s = F_B" << l << "[c];\n"
-                   << "        for (int ci = 0; ci < " << g.inC << "; ++ci)\n"
+                   << "        for (int ci = 0; ci < " << cpg << "; ++ci)\n"
                    << "        for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
                    << "            const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
                    << "            if (iy < 0 || iy >= " << g.inH << ") continue;\n"
                    << "            for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
                    << "                const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
                    << "                if (ix < 0 || ix >= " << g.inW << ") continue;\n"
-                   << "                s += F_W" << l << "[((c * " << g.inC << " + ci) * " << g.kH << " + ky) * " << g.kW
-                   << " + kx] * x[(ci * " << g.inH << " + iy) * " << g.inW << " + ix];\n"
+                   << "                s += F_W" << l << "[((c * " << cpg << " + ci) * " << g.kH << " + ky) * " << g.kW
+                   << " + kx] * x[((c / " << opg << " * " << cpg << " + ci) * " << g.inH << " + iy) * " << g.inW
+                   << " + ix];\n"
                    << "            }\n        }\n"
-                   << "        y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = "
-                   << (layer.relu ? "s > 0.0f ? s : 0.0f" : "s") << ";\n    }\n}\n";
+                   << "        y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = " << activation << ";\n    }\n}\n";
         } else {
-            source << "    for (int o = 0; o < " << layer.out << "; ++o) {\n        float s = F_B" << l << "[o];\n"
+            source << "static void f_layer" << l << "(const float *x, float *y) {\n"
+                   << "    for (int o = 0; o < " << layer.out << "; ++o) {\n        float s = F_B" << l << "[o];\n"
                    << "        for (int i = 0; i < " << layer.in << "; ++i) s += F_W" << l << "[o * " << layer.in
-                   << " + i] * x[i];\n        y[o] = " << (layer.relu ? "s > 0.0f ? s : 0.0f" : "s") << ";\n    }\n}\n";
+                   << " + i] * x[i];\n        y[o] = " << activation << ";\n    }\n}\n";
         }
     }
     source << "\nint mf_predict_f(const float *x, float *logits) {\n";
@@ -876,9 +1242,13 @@ bool emitFloatC(const DenseNetwork& network, const std::string& directory, std::
         source << "    static float t" << l << "[" << network.layers[l].out << "];\n";
     }
     source << "    float out[MF_F_CLASSES];\n";
+    const auto name = [&](std::size_t t) {
+        return t == 0 ? std::string("x") : t == network.layers.size() ? std::string("out") : "t" + std::to_string(t - 1);
+    };
     for (std::size_t l = 0; l < network.layers.size(); ++l) {
-        source << "    f_layer" << l << "(" << (l == 0 ? std::string("x") : "t" + std::to_string(l - 1)) << ", "
-               << (l + 1 == network.layers.size() ? std::string("out") : "t" + std::to_string(l)) << ");\n";
+        source << "    f_layer" << l << "(";
+        for (std::size_t s : network.layers[l].sources) source << name(s) << ", ";
+        source << name(l + 1) << ");\n";
     }
     source << "    int best = 0;\n    for (int c = 0; c < MF_F_CLASSES; ++c) {\n"
            << "        if (logits) logits[c] = out[c];\n        if (out[c] > out[best]) best = c;\n    }\n"

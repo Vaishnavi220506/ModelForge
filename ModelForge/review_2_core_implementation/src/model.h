@@ -40,8 +40,11 @@ struct Node {
     bool transB = false;
     float alpha = 1.0f;
     float beta = 1.0f;
-    int stride = 1;  // Conv
-    int pad = 0;     // Conv: zero padding on every side
+    int stride = 1;  // Conv, pooling
+    int pad = 0;     // Conv, pooling: zero padding on every side
+    int group = 1;   // Conv: 1 = dense convolution, C = depthwise
+    int kernel = 0;  // AveragePool / MaxPool window (square)
+    float epsilon = 1e-5f;  // BatchNormalization
     int sourceLine = 0;
 };
 

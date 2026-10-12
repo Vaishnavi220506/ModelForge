@@ -24,8 +24,12 @@ enum class IROp {
     Sigmoid,
     Softmax,
     FusedGemmRelu,
-    Conv,     // NCHW, batch 1, zero padding `pad`, stride `stride`
+    Conv,     // NCHW, batch 1, zero padding `pad`, stride `stride`, `group` groups
     Flatten,  // [1, ...] -> [1, n]; the data order is unchanged
+    BatchNorm,          // inputs x, scale, bias, mean, var (per channel)
+    AveragePool,        // `kernel` x `kernel` window, stride, no padding
+    GlobalAveragePool,  // [1,C,H,W] -> [1,C,1,1]
+    MaxPool,            // `kernel` x `kernel` window, stride, no padding
     Return
 };
 
@@ -42,8 +46,11 @@ struct IRInstruction {
     bool transB = false;
     // Parameter p of the test-only fault operators above.
     float testFaultParameter = 0.1f;
-    int stride = 1;  // Conv
-    int pad = 0;     // Conv
+    int stride = 1;  // Conv, pooling
+    int pad = 0;     // Conv, pooling
+    int group = 1;   // Conv
+    int kernel = 0;  // pooling window
+    float epsilon = 1e-5f;  // BatchNormalization
 };
 
 struct IRGraph {

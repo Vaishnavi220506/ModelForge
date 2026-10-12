@@ -95,9 +95,10 @@ Outcome summarise(const std::string& name, const DenseNetwork& network, const Tu
         o.accBits.push_back(layer.accBits);
         // Without range analysis a compiler must assume every input at the
         // extreme of its storage type.
-        const std::int64_t extreme = &layer == &r.program.layers.front()
-                                         ? r.program.inputMax
-                                         : r.program.layers[static_cast<std::size_t>(&layer - &r.program.layers.front()) - 1].outMax;
+        std::int64_t extreme = 0;
+        for (std::size_t source : layer.sources) {
+            extreme = std::max(extreme, source == 0 ? r.program.inputMax : r.program.layers[source - 1].outMax);
+        }
         o.worstAccBits.push_back(worstCaseAccumulatorBits(layer, extreme));
     }
     return o;
@@ -118,6 +119,7 @@ PrecisionConfig accuracyGuided(const DenseNetwork& network, const Box& domain, c
         const double cost = configCost(*current, CostModel::Bytes);
         std::vector<std::pair<double, PrecisionConfig>> options;
         for (std::size_t k = 0; k < 2 * L; ++k) {
+            if (k < L ? fixedSlot(network, 1, k) : fixedSlot(network, 0, k - L)) continue;
             PrecisionConfig trial = config;
             int& value = k < L ? trial.weightBits[k] : trial.activationBits[k - L];
             const auto& ladder = k < L ? wl : al;
@@ -279,19 +281,28 @@ int main(int argc, char** argv) {
         bool lite = false;  // CIFAR-10: baselines and the three tuner objectives only
     };
     std::vector<Case> cases;
-    if (suite != "image") {
+    if (suite == "all" || suite == "tabular") {
         for (const char* m : {"iris_mlp16", "iris_mlp32x16", "wine_mlp16", "wine_mlp32x16", "breast_cancer_mlp16",
                               "breast_cancer_mlp32x16", "digits_mlp16", "digits_mlp32x16"}) {
             const std::string name = m;
             cases.push_back({"real", name, name.substr(0, name.find("_mlp")), false, {0.05, 0.1, 0.2}});
         }
     }
-    if (suite != "tabular") {
+    if (suite == "all" || suite == "image") {
         for (const char* m : {"mnist_mlp", "mnist_cnn", "fashion_mlp", "fashion_cnn"}) {
             const std::string name = m;
             cases.push_back({"image", name, name.substr(0, name.find('_')), true, {0.01, 0.02}});
         }
         cases.push_back({"image", "cifar_cnn", "cifar", true, {1.0 / 255.0}, true});
+    }
+    if (suite == "all" || suite == "zoo") {
+        // Architectures beyond plain conv stacks: max/avg pooling, depthwise-
+        // separable blocks with batch norm, residual connections.
+        for (const char* d : {"mnist", "fashion"}) {
+            for (const char* a : {"lenet", "lenet_avg", "dscnn", "resnet"}) {
+                cases.push_back({"image", std::string(d) + "_" + a, d, true, {0.01}, true});
+            }
+        }
     }
     if (quick) {
         cases = {{"real", "iris_mlp16", "iris", false, {0.1}}, {"real", "wine_mlp16", "wine", false, {0.1}}};

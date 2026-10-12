@@ -79,7 +79,7 @@ bool generateCpp(const IRGraph& graph,
         return false;
     }
     for (const auto& instruction : graph.instructions) {
-        if (instruction.operation == IROp::Conv || instruction.operation == IROp::Flatten) {
+        if (instruction.operation >= IROp::Conv && instruction.operation != IROp::Return) {
             diagnostics.error("codegen",
                               "The float C++ backend does not support Conv/Flatten; use --certify "
                               "(integer-only C99 backend)");

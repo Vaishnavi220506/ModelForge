@@ -256,14 +256,26 @@ bool parseManifest(std::istream& file,
                 const std::string transBPrefix = "transB=";
                 const std::string alphaPrefix = "alpha=";
                 const std::string betaPrefix = "beta=";
-                if (iterator->rfind("strides=", 0) == 0 || iterator->rfind("pads=", 0) == 0) {
-                    const bool stride = iterator->rfind("strides=", 0) == 0;
+                const auto integerAttribute = [&](const std::string& name, int minimum, int& field) {
+                    if (iterator->rfind(name + "=", 0) != 0) return false;
                     try {
-                        const int value = std::stoi(iterator->substr(stride ? 8 : 5));
-                        if (value < (stride ? 1 : 0)) throw std::invalid_argument("range");
-                        (stride ? node.stride : node.pad) = value;
+                        const int value = std::stoi(iterator->substr(name.size() + 1));
+                        if (value < minimum) throw std::invalid_argument("range");
+                        field = value;
                     } catch (...) {
-                        diagnostics.error("loader", "Invalid Conv attribute '" + *iterator + "'", lineNumber);
+                        diagnostics.error("loader", "Invalid attribute '" + *iterator + "'", lineNumber);
+                    }
+                    return true;
+                };
+                if (integerAttribute("strides", 1, node.stride) || integerAttribute("pads", 0, node.pad) ||
+                    integerAttribute("group", 1, node.group) || integerAttribute("kernel", 1, node.kernel)) {
+                    continue;
+                }
+                if (iterator->rfind("epsilon=", 0) == 0) {
+                    try {
+                        node.epsilon = std::stof(iterator->substr(8));
+                    } catch (...) {
+                        diagnostics.error("loader", "Invalid epsilon '" + *iterator + "'", lineNumber);
                     }
                     continue;
                 }

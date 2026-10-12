@@ -26,12 +26,18 @@ struct Slot {
     std::size_t index = 0;
 };
 
-Slot slotOf(std::size_t source, std::size_t layers) {
-    if (source == 0) return {0, 0};
-    if (source <= layers) return {1, source - 1};
-    const std::size_t l = source - 1 - layers;
-    if (l + 1 < layers) return {0, l + 1};
-    return {};
+Slot slotOf(std::size_t source, const DenseNetwork& network) {
+    const std::size_t layers = network.layers.size();
+    Slot slot;
+    if (source == 0) {
+        slot = {0, 0};
+    } else if (source <= layers) {
+        slot = {1, source - 1};
+    } else if (source - layers < layers) {
+        slot = {0, source - layers};  // output rounding of layer l: activation slot l + 1
+    }
+    if (slot.kind >= 0 && fixedSlot(network, slot.kind, slot.index)) return {};
+    return slot;
 }
 
 int& slotValue(PrecisionConfig& config, const Slot& slot) {
@@ -551,7 +557,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         std::vector<std::size_t> bumpable;
         std::vector<double> delta(sources, 0.0);
         for (std::size_t s = 0; s < sources; ++s) {
-            const Slot slot = slotOf(s, L);
+            const Slot slot = slotOf(s, network);
             if (slot.kind < 0) continue;
             PrecisionConfig trial = config;
             const int next = nextRung(ladderFor(slot), slotValue(trial, slot), +1);
@@ -593,7 +599,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         }
         std::ostringstream raised;
         for (std::size_t s : chosen) {
-            const Slot slot = slotOf(s, L);
+            const Slot slot = slotOf(s, network);
             slotValue(config, slot) = nextRung(ladderFor(slot), slotValue(config, slot), +1);
             raised << (raised.tellp() > 0 ? ", " : "") << errorSourceName(s, L);
         }
@@ -618,7 +624,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             return value;
         };
         const auto apply = [&](PrecisionConfig& c, std::size_t source, int direction) {
-            const Slot slot = slotOf(source, L);
+            const Slot slot = slotOf(source, network);
             if (slot.kind < 0) return false;
             const int value = slotValue(c, slot);
             const int next = direction == 2    ? nextStorageClass(ladderFor(slot), value, slot.kind)

@@ -10,7 +10,8 @@ namespace modelforge {
 namespace {
 
 const std::unordered_set<std::string> kSupportedOperators = {
-    "Gemm", "MatMul", "Add", "Relu", "Sigmoid", "Softmax", "Conv", "Flatten"};
+    "Gemm", "MatMul", "Add", "Relu", "Sigmoid", "Softmax", "Conv", "Flatten",
+    "BatchNormalization", "AveragePool", "GlobalAveragePool", "MaxPool"};
 
 bool sameShape(const Shape& left, const Shape& right) {
     return left == right;
@@ -215,9 +216,11 @@ bool validate(ModelGraph& model,
             const TensorInfo* bias = getInput(2);
             if (node.inputs.size() < 2 || node.inputs.size() > 3 || first == nullptr || weight == nullptr ||
                 first->shape.size() != 4 || first->shape[0] != 1 || weight->shape.size() != 4 ||
-                !weight->isConstant || weight->shape[1] != first->shape[1]) {
+                !weight->isConstant || first->shape[1] % node.group != 0 || weight->shape[0] % node.group != 0 ||
+                weight->shape[1] * node.group != first->shape[1]) {
                 diagnostics.error("semantic",
-                                  "Conv expects x [1,C,H,W], a constant weight [M,C,kH,kW] and an optional bias",
+                                  "Conv expects x [1,C,H,W], a constant weight [M,C/group,kH,kW] (M and C "
+                                  "divisible by group) and an optional bias",
                                   node.sourceLine);
                 validNode = false;
             } else {
@@ -234,6 +237,40 @@ bool validate(ModelGraph& model,
                      elementCount(bias->shape) != static_cast<std::size_t>(weight->shape[0]))) {
                     diagnostics.error("semantic", "Conv bias must hold one value per output channel", node.sourceLine);
                     validNode = false;
+                }
+            }
+        } else if (node.op == "BatchNormalization") {
+            bool ok = node.inputs.size() == 5 && first != nullptr && first->shape.size() >= 2 && first->shape[0] == 1;
+            for (std::size_t k = 1; ok && k < 5; ++k) {
+                const TensorInfo* p = getInput(k);
+                ok = p != nullptr && p->isConstant && elementCount(p->shape) == static_cast<std::size_t>(first->shape[1]);
+            }
+            if (!ok) {
+                diagnostics.error("semantic",
+                                  "BatchNormalization expects x [1,C,...] and constant scale, bias, mean, var of size C",
+                                  node.sourceLine);
+                validNode = false;
+            } else {
+                outputShape = first->shape;
+            }
+        } else if (node.op == "AveragePool" || node.op == "MaxPool" || node.op == "GlobalAveragePool") {
+            const bool global = node.op == "GlobalAveragePool";
+            if (node.inputs.size() != 1 || first == nullptr || first->shape.size() != 4 || first->shape[0] != 1 ||
+                (!global && node.kernel < 1) || node.pad != 0) {
+                diagnostics.error("semantic",
+                                  node.op + " expects x [1,C,H,W]" + (global ? "" : ", kernel=k and no padding"),
+                                  node.sourceLine);
+                validNode = false;
+            } else if (global) {
+                outputShape = {1, first->shape[1], 1, 1};
+            } else {
+                const std::int64_t outH = (first->shape[2] - node.kernel) / node.stride + 1;
+                const std::int64_t outW = (first->shape[3] - node.kernel) / node.stride + 1;
+                if (outH < 1 || outW < 1) {
+                    diagnostics.error("semantic", node.op + " window is larger than the input", node.sourceLine);
+                    validNode = false;
+                } else {
+                    outputShape = {1, first->shape[1], outH, outW};
                 }
             }
         } else if (node.op == "Flatten") {

@@ -229,8 +229,10 @@ std::optional<std::vector<float>> executeIRTrace(
                     diagnostics.error("runtime", "Conv runtime tensor information is unavailable");
                     return std::nullopt;
                 }
-                const auto C = inInfo->second.shape[1], H = inInfo->second.shape[2], W = inInfo->second.shape[3];
+                const auto H = inInfo->second.shape[2], W = inInfo->second.shape[3];
                 const auto M = wInfo->second.shape[0], KH = wInfo->second.shape[2], KW = wInfo->second.shape[3];
+                const auto C = wInfo->second.shape[1];  // input channels per group
+                const auto groupOut = M / instruction.group;
                 const auto OH = instruction.shape[2], OW = instruction.shape[3];
                 result.assign(static_cast<std::size_t>(M * OH * OW), 0.0f);
                 for (std::int64_t m = 0; m < M; ++m) {
@@ -243,8 +245,9 @@ std::optional<std::vector<float>> executeIRTrace(
                                         const auto iy = oy * instruction.stride + ky - instruction.pad;
                                         const auto ix = ox * instruction.stride + kx - instruction.pad;
                                         if (iy < 0 || iy >= H || ix < 0 || ix >= W) continue;
+                                        const auto ci = (m / groupOut) * C + c;
                                         sum += (*weight)[static_cast<std::size_t>(((m * C + c) * KH + ky) * KW + kx)] *
-                                               (*first)[static_cast<std::size_t>((c * H + iy) * W + ix)];
+                                               (*first)[static_cast<std::size_t>((ci * H + iy) * W + ix)];
                                     }
                                 }
                             }
@@ -257,6 +260,50 @@ std::optional<std::vector<float>> executeIRTrace(
             case IROp::Flatten:
                 result = *first;
                 break;
+            case IROp::BatchNorm: {
+                const auto* scale = findValue(graph, values, instruction.inputs.at(1));
+                const auto* shift = findValue(graph, values, instruction.inputs.at(2));
+                const auto* mean = findValue(graph, values, instruction.inputs.at(3));
+                const auto* var = findValue(graph, values, instruction.inputs.at(4));
+                const auto channels = instruction.shape[1];
+                const auto per = static_cast<std::int64_t>(first->size()) / channels;
+                result.resize(first->size());
+                for (std::int64_t c = 0; c < channels; ++c) {
+                    const float k = (*scale)[c] / std::sqrt((*var)[c] + instruction.epsilon);
+                    for (std::int64_t i = 0; i < per; ++i) {
+                        const auto at = static_cast<std::size_t>(c * per + i);
+                        result[at] = ((*first)[at] - (*mean)[c]) * k + (*shift)[c];
+                    }
+                }
+                break;
+            }
+            case IROp::AveragePool:
+            case IROp::MaxPool:
+            case IROp::GlobalAveragePool: {
+                const auto inInfo = graph.values.find(instruction.inputs.at(0));
+                const auto C = inInfo->second.shape[1], H = inInfo->second.shape[2], W = inInfo->second.shape[3];
+                const bool global = instruction.operation == IROp::GlobalAveragePool;
+                const std::int64_t K = global ? H : instruction.kernel, KW = global ? W : instruction.kernel;
+                const std::int64_t S = global ? 1 : instruction.stride;
+                const auto OH = instruction.shape[2], OW = instruction.shape[3];
+                result.assign(static_cast<std::size_t>(C * OH * OW), 0.0f);
+                for (std::int64_t c = 0; c < C; ++c) {
+                    for (std::int64_t oy = 0; oy < OH; ++oy) {
+                        for (std::int64_t ox = 0; ox < OW; ++ox) {
+                            float acc = instruction.operation == IROp::MaxPool ? -INFINITY : 0.0f;
+                            for (std::int64_t ky = 0; ky < K; ++ky) {
+                                for (std::int64_t kx = 0; kx < KW; ++kx) {
+                                    const float v = (*first)[static_cast<std::size_t>((c * H + oy * S + ky) * W + ox * S + kx)];
+                                    acc = instruction.operation == IROp::MaxPool ? std::max(acc, v) : acc + v;
+                                }
+                            }
+                            if (instruction.operation != IROp::MaxPool) acc /= static_cast<float>(K * KW);
+                            result[static_cast<std::size_t>((c * OH + oy) * OW + ox)] = acc;
+                        }
+                    }
+                }
+                break;
+            }
             case IROp::Input:
             case IROp::Return:
                 break;

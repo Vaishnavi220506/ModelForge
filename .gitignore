@@ -8,3 +8,4 @@
 *.lib
 *.ilk
 .DS_Store
+__pycache__/

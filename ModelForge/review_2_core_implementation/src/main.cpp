@@ -556,7 +556,13 @@ int certifyModel(const CommandLineOptions& options) {
               << modelforge::estimatedAvrCycles(program) << "\n"
               << "      flash " << cost.flashBytes << " B (float32 model "
               << modelforge::float32Bytes(*network) << " B), RAM " << cost.ramBytes << " B, accumulators";
-    for (const auto& layer : program.layers) std::cout << " int" << layer.accBits;
+    for (const auto& layer : program.layers) {
+        if (layer.kind == modelforge::LayerKind::MaxPool) {
+            std::cout << " max";
+        } else {
+            std::cout << " int" << layer.accBits;
+        }
+    }
     std::cout << "\n      regions: " << result.proved << " proved, " << result.excluded
               << " excluded (float model itself not provably constant), " << result.unproved << " unproved";
     const auto withCounterexample = std::count_if(result.regions.begin(), result.regions.end(), [](const auto& r) {

@@ -8,10 +8,13 @@ import json
 import sys
 from collections import defaultdict
 
-IMAGE = ("mnist", "fashion")
+IMAGE = ("mnist", "fashion", "cifar")
+ZOO = ("lenet", "dscnn", "resnet")
 
 
 def suite_of(case):
+    if any(arch in case["model"] for arch in ZOO):
+        return "zoo"
     return "image" if case["model"].startswith(IMAGE) else "tabular"
 
 
@@ -76,7 +79,7 @@ def main(path):
     data = json.load(open(path))
     cases = data["cases"]
     print(f"{len(cases)} cases, {data['seconds']:.0f} s total")
-    for suite in ("tabular", "image"):
+    for suite in ("tabular", "image", "zoo"):
         table([c for c in cases if suite_of(c) == suite], suite)
     print("\nPaired comparisons (cases where both certify every region):")
     for a, b, key in [("forgecert", "uniform_int16", "cost"), ("forgecert", "accuracy_guided", "cost"),

@@ -164,6 +164,17 @@ std::vector<double> errorShares(const Neuron& n) {
     return share;
 }
 
+using Inputs = std::vector<const Neuron*>;
+
+// The neurons a layer reads: the concatenation of its source tensors.
+Inputs inputsOf(const std::vector<std::vector<Neuron>>& tensors, const std::vector<std::size_t>& sources) {
+    Inputs in;
+    for (std::size_t s : sources) {
+        for (const auto& n : tensors[s]) in.push_back(&n);
+    }
+    return in;
+}
+
 // Without provenance every source maps to component 0.
 class Engine {
 public:
@@ -189,7 +200,7 @@ public:
 
     // y = W x + b for the float model, y^ = W^ x^ + b^ for the integer program
     // (W^, b^: effective real weights of the emitted integers, per tap).
-    std::vector<Neuron> affine(const std::vector<Neuron>& in, const DenseLayer& layer,
+    std::vector<Neuron> affine(const Inputs& in, const DenseLayer& layer,
                                const std::vector<std::vector<double>>& tapWeight, const std::vector<double>& bhat,
                                std::size_t weightSource) const {
         std::vector<Neuron> out(layer.out);
@@ -201,12 +212,12 @@ public:
             n.e.assign(sources_, Form{});
             const std::size_t c = layer.channelOf(o);
             const auto& taps = layer.taps[o];
-            for (std::size_t k = 0; k < taps.size(); ++k) sum.add(layer.weight[taps[k].weight], in[taps[k].input].r);
+            for (std::size_t k = 0; k < taps.size(); ++k) sum.add(layer.weight[taps[k].weight], in[taps[k].input]->r);
             sum.addConstant(layer.bias[c]);
             n.r = sum.take();
             for (std::size_t s = 0; s < sources_; ++s) {
                 for (std::size_t k = 0; k < taps.size(); ++k) {
-                    const Neuron& x = in[taps[k].input];
+                    const Neuron& x = *in[taps[k].input];
                     const double wq = tapWeight[o][k];
                     if (s == ws) sum.add(wq - layer.weight[taps[k].weight], x.r);
                     if (!isZero(x.e[s])) sum.add(wq, x.e[s]);
@@ -215,6 +226,101 @@ public:
                 n.e[s] = sum.take();
             }
         }
+        return out;
+    }
+
+    // Max-pool on integer codes: the integer program takes the maximum of the
+    // codes (exactly the maximum of the represented values, since the window
+    // shares one scale), the float model the maximum of the real values.
+    // Candidates that can never be the maximum in either are dropped; a
+    // remaining unique maximum is copied exactly (also when the float model
+    // and the integer program pick different ones: E' = Q_k - R_j). Otherwise
+    // the maximum is an interval with a fresh symbol, and the error is the
+    // tighter of Q' - R' and the 1-Lipschitz bound [min E_k, max E_k].
+    std::vector<Neuron> maxpool(const Inputs& in, const DenseLayer& layer) {
+        std::vector<Neuron> out(layer.out);
+        for (std::size_t o = 0; o < layer.out; ++o) {
+            const auto& taps = layer.taps[o];
+            const std::size_t n = taps.size();
+            std::vector<Form> q(n);
+            std::vector<double> rl(n), ru(n), ql(n), qu(n);
+            double rFloor = -std::numeric_limits<double>::infinity(), qFloor = rFloor;
+            for (std::size_t k = 0; k < n; ++k) {
+                const Neuron& x = *in[taps[k].input];
+                q[k] = quantValue(x);
+                rl[k] = lower(x.r);
+                ru[k] = upper(x.r);
+                ql[k] = lower(q[k]);
+                qu[k] = upper(q[k]);
+                rFloor = std::max(rFloor, rl[k]);
+                qFloor = std::max(qFloor, ql[k]);
+            }
+            std::vector<std::size_t> rLive, qLive, live;
+            for (std::size_t k = 0; k < n; ++k) {
+                if (ru[k] >= rFloor) rLive.push_back(k);
+                if (qu[k] >= qFloor) qLive.push_back(k);
+                if (ru[k] >= rFloor || qu[k] >= qFloor) live.push_back(k);
+            }
+            // A unique candidate is the maximum only if it beats every other one.
+            const auto unique = [&](const std::vector<std::size_t>& set, const std::vector<double>& lo,
+                                    const std::vector<double>& hi) -> long {
+                if (set.size() == 1) return static_cast<long>(set[0]);
+                for (std::size_t a : set) {
+                    bool dominates = true;
+                    for (std::size_t b : set) dominates = dominates && (a == b || lo[a] >= hi[b]);
+                    if (dominates) return static_cast<long>(a);
+                }
+                return -1;
+            };
+            const long kr = unique(rLive, rl, ru), kq = unique(qLive, ql, qu);
+            Neuron& y = out[o];
+            y.e.assign(sources_, Form{});
+            std::vector<double> share(sources_, 0.0);
+            for (std::size_t k : live) {
+                const auto s = errorShares(*in[taps[k].input]);
+                for (std::size_t p = 0; p < sources_; ++p) share[p] += s[p] / static_cast<double>(live.size());
+            }
+            double rLo = rFloor, rHi = -std::numeric_limits<double>::infinity();
+            double qLo = qFloor, qHi = rHi, eLo = std::numeric_limits<double>::infinity(), eHi = rHi;
+            for (std::size_t k : live) {
+                rHi = std::max(rHi, ru[k]);
+                qHi = std::max(qHi, qu[k]);
+                const Form e = totalError(*in[taps[k].input]);
+                eLo = std::min(eLo, lower(e));
+                eHi = std::max(eHi, upper(e));
+            }
+            if (kr >= 0) {
+                y.r = in[taps[static_cast<std::size_t>(kr)].input]->r;
+            } else {
+                y.r.c = 0.5 * (rLo + rHi);
+                addSymbol(y.r, fresh(), 0.5 * (rHi - rLo));
+            }
+            if (kq >= 0 && kq == kr) {
+                y.e = in[taps[static_cast<std::size_t>(kq)].input]->e;  // the same element in both
+                continue;
+            }
+            Form qForm;  // the integer program's maximum
+            if (kq >= 0) {
+                qForm = q[static_cast<std::size_t>(kq)];
+            } else {
+                qForm.c = 0.5 * (qLo + qHi);
+                addSymbol(qForm, fresh(), 0.5 * (qHi - qLo));
+            }
+            Form difference = qForm;  // E' = Q' - R'
+            axpy(difference, -1.0, y.r);
+            const double width = upper(difference) - lower(difference);
+            if (affine_ && width <= (eHi - eLo) * (1.0 + 1e-9)) {
+                for (std::size_t p = 0; p < sources_; ++p) axpy(y.e[p], share[p], difference);
+            } else {
+                const std::size_t symbol = fresh();
+                for (std::size_t p = 0; p < sources_; ++p) {
+                    if (share[p] == 0.0) continue;
+                    y.e[p].c = share[p] * 0.5 * (eLo + eHi);
+                    addSymbol(y.e[p], symbol, share[p] * 0.5 * (eHi - eLo));
+                }
+            }
+        }
+        if (!affine_) collapse(out);
         return out;
     }
 
@@ -436,17 +542,11 @@ std::vector<std::vector<double>> calibrationRanges(const DenseNetwork& network,
     std::vector<std::vector<double>> range;
     for (const auto& layer : network.layers) range.emplace_back(layer.out, 0.0);
     for (const auto& row : rows) {
-        std::vector<double> current = row;
+        const auto tensors = referenceActivations(network, row);
         for (std::size_t l = 0; l < network.layers.size(); ++l) {
-            const auto& layer = network.layers[l];
-            std::vector<double> next(layer.out);
-            for (std::size_t o = 0; o < layer.out; ++o) {
-                double sum = layer.bias[layer.channelOf(o)];
-                for (const auto& tap : layer.taps[o]) sum += layer.weight[tap.weight] * current[tap.input];
-                next[o] = layer.relu ? std::max(0.0, sum) : sum;
-                range[l][o] = std::max(range[l][o], std::fabs(next[o]));
+            for (std::size_t o = 0; o < network.layers[l].out; ++o) {
+                range[l][o] = std::max(range[l][o], std::fabs(tensors[l + 1][o]));
             }
-            current = std::move(next);
         }
     }
     return range;
@@ -467,15 +567,27 @@ RegionAnalysis analyzeRegion(const DenseNetwork& network, const QProgram& progra
     const std::size_t L = program.layers.size();
     const Box box = clipToDomain(region, program.domain);
     Engine engine(errorSourceCount(L), options.affine, options.provenance);
-    auto values = engine.input(box, program.inputScale, inputQuantisationSlack(program.inputMax));
+    std::vector<std::vector<Neuron>> tensors(L + 1);
+    tensors[0] = engine.input(box, program.inputScale, inputQuantisationSlack(program.inputMax));
+    const auto lastUse = network.lastUse();
     for (std::size_t l = 0; l < L; ++l) {
-        std::vector<std::vector<double>> weight;
-        std::vector<double> bias;
-        effectiveWeights(program.layers[l], weight, bias);
-        values = engine.affine(values, network.layers[l], weight, bias, 1 + l);
-        engine.activate(values, network.layers[l].relu, program.layers[l].outScale, 1 + L + l,
-                        program.layers[l].outMax);
+        const DenseLayer& layer = network.layers[l];
+        const Inputs in = inputsOf(tensors, layer.sources);
+        if (layer.kind == LayerKind::MaxPool) {
+            tensors[l + 1] = engine.maxpool(in, layer);
+        } else {
+            std::vector<std::vector<double>> weight;
+            std::vector<double> bias;
+            effectiveWeights(program.layers[l], weight, bias);
+            tensors[l + 1] = engine.affine(in, layer, weight, bias, 1 + l);
+            engine.activate(tensors[l + 1], layer.relu, program.layers[l].outScale, 1 + L + l,
+                            program.layers[l].outMax);
+        }
+        for (std::size_t s : layer.sources) {
+            if (lastUse[s] == l) std::vector<Neuron>().swap(tensors[s]);  // no longer needed
+        }
     }
+    const auto& values = tensors[L];
 
     RegionAnalysis result;
     result.refClass = refClass >= 0 ? refClass : argmaxFirst(referenceLogits(network, box.center()));
@@ -546,6 +658,7 @@ RegionAnalysis analyzeRegion(const DenseNetwork& network, const QProgram& progra
 }
 
 int worstCaseAccumulatorBits(const QLayer& layer, std::int64_t inputMagnitude) {
+    if (layer.kind == LayerKind::MaxPool) return 0;
     std::int64_t worst = 0;
     for (std::size_t o = 0; o < layer.out; ++o) {
         std::int64_t bound = std::llabs(layer.qBias[layer.channelOf(o)]);
@@ -572,6 +685,7 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
     program.inputShape = network.inputShape;
     program.domain = domain;
     program.config = config;
+    program.tensors = network.tensors;
     program.inputBits = config.activationBits[0];
     program.inputUnsigned = std::all_of(domain.lo.begin(), domain.lo.end(), [](double v) { return v >= 0.0; });
     const std::int64_t inputQmax = program.inputUnsigned ? (std::int64_t{1} << program.inputBits) - 1
@@ -601,28 +715,97 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
     }
 
     Engine engine(errorSourceCount(L), options.affine, false);
-    auto values = engine.input(domain, program.inputScale, inputSlack);
-    std::vector<double> inScale = program.inputScale;
+    // Per tensor: forms, scales, proved integer ranges, and the neurons proved
+    // to be exactly 0 on the whole domain in the float model and in the
+    // integer program (dead ReLUs).
+    std::vector<std::vector<Neuron>> tensors(L + 1);
+    std::vector<std::vector<double>> tensorScale(L + 1);
+    std::vector<std::vector<std::int64_t>> tensorLo(L + 1), tensorHi(L + 1);
+    std::vector<std::vector<bool>> tensorDead(L + 1);
+    tensors[0] = engine.input(domain, program.inputScale, inputSlack);
+    tensorScale[0] = program.inputScale;
+    tensorLo[0] = qLo;
+    tensorHi[0] = qHi;
+    tensorDead[0].assign(network.inputs, false);
+    const auto lastUse = network.lastUse();
     const bool calibrated = options.calibration && !options.calibration->empty();
     program.calibrated = calibrated;
     const auto calibration = calibrated ? calibrationRanges(network, *options.calibration)
                                         : std::vector<std::vector<double>>{};
-    // Inputs proved to be exactly 0 on the whole domain, in the float model
-    // and in the integer program (dead ReLUs of the previous layer).
-    std::vector<bool> inputDead(network.inputs, false);
     for (std::size_t l = 0; l < L; ++l) {
         const DenseLayer& dense = network.layers[l];
+        const Inputs in = inputsOf(tensors, dense.sources);
+        std::vector<double> inScale;
+        std::vector<std::int64_t> qLo, qHi;
+        std::vector<bool> inputDead;
+        for (std::size_t s : dense.sources) {
+            inScale.insert(inScale.end(), tensorScale[s].begin(), tensorScale[s].end());
+            qLo.insert(qLo.end(), tensorLo[s].begin(), tensorLo[s].end());
+            qHi.insert(qHi.end(), tensorHi[s].begin(), tensorHi[s].end());
+            inputDead.insert(inputDead.end(), tensorDead[s].begin(), tensorDead[s].end());
+        }
         QLayer layer;
         layer.kind = dense.kind;
         layer.conv = dense.conv;
+        layer.sources = dense.sources;
+        layer.output = dense.output;
+        layer.weightsPerChannel = dense.weightsPerChannel;
         layer.in = dense.in;
         layer.out = dense.out;
         layer.channels = dense.channels();
         layer.relu = dense.relu;
         layer.taps = dense.taps;
         layer.inScale = inScale;
-        layer.weightBits = config.weightBits[l];
         const bool last = l + 1 == L;
+        const auto finish = [&](QLayer&& done, std::vector<Neuron>&& values) {
+            tensorDead[l + 1].assign(dense.out, false);
+            for (std::size_t o = 0; o < dense.out; ++o) {
+                bool zero = isZero(values[o].r);
+                for (const auto& part : values[o].e) zero = zero && isZero(part);
+                tensorDead[l + 1][o] = zero && (dense.relu || dense.kind == LayerKind::MaxPool);
+            }
+            tensorScale[l + 1] = done.outScale;
+            tensorLo[l + 1] = done.qOutLo;
+            tensorHi[l + 1] = done.qOutHi;
+            tensors[l + 1] = std::move(values);
+            for (std::size_t s : dense.sources) {
+                if (lastUse[s] == l) std::vector<Neuron>().swap(tensors[s]);
+            }
+            program.layers.push_back(std::move(done));
+        };
+        if (dense.kind == LayerKind::MaxPool) {
+            // Codes are compared and copied: the output keeps the input's type
+            // and scale (one scale per channel, so the window shares it).
+            const std::size_t source = dense.sources[0];
+            const bool fromInput = source == 0;
+            layer.weightBits = layer.accBits = layer.mulBits = 0;
+            layer.outBits = fromInput ? program.inputBits : program.layers[source - 1].outBits;
+            layer.outUnsigned = fromInput ? program.inputUnsigned : program.layers[source - 1].outUnsigned;
+            layer.outMax = fromInput ? program.inputMax : program.layers[source - 1].outMax;
+            layer.outMin = fromInput ? program.inputMin : program.layers[source - 1].outMin;
+            layer.outScale.assign(dense.out, 0.0);
+            layer.qOutLo.assign(dense.out, 0);
+            layer.qOutHi.assign(dense.out, 0);
+            for (std::size_t o = 0; o < dense.out; ++o) {
+                const auto& taps = dense.taps[o];
+                layer.outScale[o] = inScale[taps.front().input];
+                layer.qOutLo[o] = qLo[taps.front().input];
+                layer.qOutHi[o] = qHi[taps.front().input];
+                for (const auto& tap : taps) {
+                    if (inScale[tap.input] != layer.outScale[o]) {
+                        error = "max-pool window mixes scales at layer " + std::to_string(l);
+                        return std::nullopt;
+                    }
+                    layer.qOutLo[o] = std::max(layer.qOutLo[o], qLo[tap.input]);
+                    layer.qOutHi[o] = std::max(layer.qOutHi[o], qHi[tap.input]);
+                }
+            }
+            program.config.weightBits[l] = 0;
+            program.config.activationBits[l + 1] = layer.outBits;
+            finish(std::move(layer), engine.maxpool(in, dense));
+            continue;
+        }
+        layer.weightBits = config.weightBits[l];
         layer.outBits = last ? config.logitBits : config.activationBits[l + 1];
         layer.outUnsigned = !last && dense.relu;
         if (layer.weightBits < 2 || layer.weightBits > 16 || layer.outBits < 2 || layer.outBits > 16) {
@@ -632,44 +815,36 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
         layer.outMax = layer.outUnsigned ? (std::int64_t{1} << layer.outBits) - 1 : signedMaxBits(layer.outBits);
         layer.outMin = layer.outUnsigned ? 0 : -layer.outMax;
 
-        // Symmetric per-output-channel quantisation of W * inScale(input). For
-        // a convolution, every parameter of input channel ci meets inputs of
-        // that channel only, which share one scale.
-        const auto paramInScale = [&](std::size_t w) {
-            if (dense.kind == LayerKind::Conv) {
-                const auto& g = dense.conv;
-                const std::size_t ci = (w / (g.kH * g.kW)) % g.inC;
-                return inScale[ci * g.inH * g.inW];
-            }
-            return inScale[w % dense.in];
-        };
-        // A parameter that only ever multiplies proved-zero inputs cannot
-        // matter: it is left out of the scale and emitted as 0.
-        const auto paramDead = [&](std::size_t w) {
-            if (dense.kind == LayerKind::Conv) {
-                const auto& g = dense.conv;
-                const std::size_t ci = (w / (g.kH * g.kW)) % g.inC;
-                for (std::size_t k = ci * g.inH * g.inW; k < (ci + 1) * g.inH * g.inW; ++k) {
-                    if (!inputDead[k]) return false;
+        // Symmetric per-output-channel quantisation of W * inScale(input). All
+        // inputs a parameter meets share one scale (one channel of a feature
+        // map). A parameter that only ever multiplies proved-zero inputs
+        // cannot matter: it is left out of the scale and emitted as 0.
+        std::vector<double> paramScale(dense.weight.size(), 0.0);
+        std::vector<bool> dead(dense.weight.size(), true);
+        for (std::size_t o = 0; o < dense.out; ++o) {
+            for (const auto& tap : dense.taps[o]) {
+                if (inputDead[tap.input]) continue;
+                const double scale = inScale[tap.input];
+                if (!dead[tap.weight] && paramScale[tap.weight] != scale) {
+                    error = "a weight meets inputs of different scales at layer " + std::to_string(l);
+                    return std::nullopt;
                 }
-                return true;
+                dead[tap.weight] = false;
+                paramScale[tap.weight] = scale;
             }
-            return static_cast<bool>(inputDead[w % dense.in]);
-        };
+        }
         const std::int64_t wmax = signedMaxBits(layer.weightBits);
         layer.qWeight.assign(dense.weight.size(), 0);
         layer.weightScale.assign(layer.channels, 0.0);
-        std::vector<bool> dead(dense.weight.size(), false);
         for (std::size_t w = 0; w < dense.weight.size(); ++w) {
-            dead[w] = paramDead(w);
             if (dead[w]) continue;
             auto& scale = layer.weightScale[dense.weightChannel(w)];
-            scale = std::max(scale, std::fabs(dense.weight[w] * paramInScale(w)));
+            scale = std::max(scale, std::fabs(dense.weight[w] * paramScale[w]));
         }
         for (double& scale : layer.weightScale) scale = scale > 0.0 ? scale / static_cast<double>(wmax) : 1.0;
         for (std::size_t w = 0; w < dense.weight.size(); ++w) {
             if (dead[w]) continue;
-            const double q = std::round(dense.weight[w] * paramInScale(w) / layer.weightScale[dense.weightChannel(w)]);
+            const double q = std::round(dense.weight[w] * paramScale[w] / layer.weightScale[dense.weightChannel(w)]);
             layer.qWeight[w] = static_cast<std::int32_t>(std::max<double>(-wmax, std::min<double>(wmax, q)));
         }
         layer.qBias.assign(layer.channels, 0);
@@ -708,7 +883,7 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             }
             idealBias[o] = layer.weightScale[c] * static_cast<double>(layer.qBias[c]);
         }
-        const auto pre = engine.affine(values, dense, ideal, idealBias, 1 + l);
+        const auto pre = engine.affine(in, dense, ideal, idealBias, 1 + l);
         std::vector<double> range(dense.out, 0.0);
         layer.finalBound.assign(dense.out, 0);
         std::int64_t finalMax = 1;
@@ -749,6 +924,8 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             if (scale <= 0.0) scale = smallestScale > 0.0 ? smallestScale : 1.0;
         }
 
+        std::vector<std::size_t> representative(layer.channels, dense.out);
+        for (std::size_t o = dense.out; o-- > 0;) representative[layer.channelOf(o)] = o;
         int bitLength = 0;
         while ((std::int64_t{1} << bitLength) <= accMax) ++bitLength;
         const int multiplierBits = std::min(31, 62 - bitLength);
@@ -760,9 +937,7 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             layer.shift.assign(layer.channels, 1);
             for (std::size_t c = 0; c < layer.channels; ++c) {
                 // A channel's neurons share one output scale: use its first neuron.
-                const std::size_t representative =
-                    dense.kind == LayerKind::Conv ? c * dense.conv.outH * dense.conv.outW : c;
-                const double M = layer.weightScale[c] / layer.outScale[representative];
+                const double M = layer.weightScale[c] / layer.outScale[representative[c]];
                 int exponent = 0;
                 std::frexp(M, &exponent);  // M = f * 2^exponent, f in [0.5, 1)
                 int shift = multiplierBits - exponent;
@@ -784,7 +959,7 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             std::vector<double> bias;
             effectiveWeights(layer, weight, bias);
             Engine trial = engine;
-            next = trial.affine(values, dense, weight, bias, 1 + l);
+            next = trial.affine(in, dense, weight, bias, 1 + l);
             // Proved scales: no clamp model, so any saturation shows up as an
             // out-of-range bound and the scale grows. Calibrated: clamps modelled.
             bounds = trial.activate(next, dense.relu, layer.outScale, 1 + L + l, calibrated ? layer.outMax : 0);
@@ -815,18 +990,9 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             error = "could not place layer " + std::to_string(l) + " output range without saturation";
             return std::nullopt;
         }
-        values = std::move(next);
-        inputDead.assign(dense.out, false);
-        for (std::size_t o = 0; o < dense.out; ++o) {
-            bool zero = dense.relu && isZero(values[o].r);
-            for (const auto& part : values[o].e) zero = zero && isZero(part);
-            inputDead[o] = zero;
-        }
-        qLo = layer.qOutLo;
-        qHi = layer.qOutHi;
-        inScale = layer.outScale;
-        program.layers.push_back(std::move(layer));
+        finish(std::move(layer), std::move(next));
     }
+    planBuffers(program);
     return program;
 }
 

@@ -146,6 +146,20 @@ add_test(
     COMMAND modelforge_certcheck ${CMAKE_BINARY_DIR}/forgecert_mnist_cnn
             ${CMAKE_CURRENT_SOURCE_DIR}/models/image/mnist_cnn.mforge
 )
+add_test(
+    NAME forgecert_certify_graph_zoo
+    COMMAND modelforge ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/graph_zoo.mforge --certify
+            --data ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/graph_zoo_data.csv
+            --domain ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/graph_zoo_data.csv --domain-range 0,1
+            --eps 0.02 --out ${CMAKE_BINARY_DIR}/forgecert_graph_zoo
+)
+add_test(
+    NAME forgecert_independent_check_graph_zoo
+    COMMAND modelforge_certcheck ${CMAKE_BINARY_DIR}/forgecert_graph_zoo
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/graph_zoo.mforge
+)
+set_tests_properties(forgecert_certify_graph_zoo PROPERTIES FIXTURES_SETUP forgecert_graph)
+set_tests_properties(forgecert_independent_check_graph_zoo PROPERTIES FIXTURES_REQUIRED forgecert_graph)
 set_tests_properties(forgecert_certify_mnist_cnn PROPERTIES FIXTURES_SETUP forgecert_cnn)
 set_tests_properties(forgecert_independent_check_cnn PROPERTIES FIXTURES_REQUIRED forgecert_cnn)
 set_tests_properties(forgecert_certify_wine PROPERTIES FIXTURES_SETUP forgecert)

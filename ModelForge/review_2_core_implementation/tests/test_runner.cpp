@@ -642,6 +642,88 @@ void testForgeCertConvolution(const std::filesystem::path& fixtureDirectory) {
           "conv layers should be emitted as sliding-window loops over flash tables");
 }
 
+
+// A DAG with every operator of the integer target: folded batch norms, a
+// depthwise convolution, a residual Add, max-pooling, a batch norm that cannot
+// be folded, average pooling lowered to a depthwise convolution.
+void testForgeCertGraph(const std::filesystem::path& fixtureDirectory) {
+    using modelforge::LayerKind;
+    std::string error;
+    const auto graph = compileFile(fixtureDirectory / "graph_zoo.mforge");
+    const auto network = modelforge::extractDenseNetwork(graph, error);
+    check(network.has_value(), "graph zoo should extract: " + error);
+    if (!network) return;
+    const std::vector<LayerKind> kinds{LayerKind::Conv, LayerKind::Conv, LayerKind::Add, LayerKind::MaxPool,
+                                       LayerKind::Conv, LayerKind::Conv, LayerKind::Dense};
+    bool shape = network->layers.size() == kinds.size();
+    for (std::size_t l = 0; shape && l < kinds.size(); ++l) shape = network->layers[l].kind == kinds[l];
+    check(shape && network->foldedBatchNorms == 2 && network->loweredPools == 1 &&
+              network->layers[1].conv.groups == 4 && network->layers[2].sources == std::vector<std::size_t>({1, 2}) &&
+              network->layers[2].relu && network->layers[0].relu,
+          "graph zoo: conv, depthwise, residual add (ReLU), max-pool, BN as 1x1 depthwise, avg-pool, dense");
+    modelforge::Dataset data;
+    check(modelforge::loadDataset((fixtureDirectory / "graph_zoo_data.csv").string(), 64, data, error),
+          "graph zoo data should load");
+    modelforge::DiagnosticEngine diagnostics;
+    for (const auto& row : data.rows) {
+        const auto out = modelforge::executeIR(graph, row, diagnostics);
+        const auto logits = modelforge::referenceLogits(*network, std::vector<double>(row.begin(), row.end()));
+        // Softmax of the extracted network's logits equals the IR interpreter's output.
+        double norm = 0.0;
+        for (double v : logits) norm += std::exp(v - logits[0]);
+        bool same = out.has_value() && out->size() == logits.size();
+        for (std::size_t c = 0; same && c < logits.size(); ++c) {
+            same = std::fabs(std::exp(logits[c] - logits[0]) / norm - (*out)[c]) < 1e-4;
+        }
+        check(same, "extracted DAG (folded BN, lowered pools) should equal the IR interpreter");
+    }
+    modelforge::Box domain;
+    domain.lo.assign(64, 0.0);
+    domain.hi.assign(64, 1.0);
+    std::mt19937 rng(5);
+    std::size_t violations = 0, runs = 0;
+    for (const auto& config : {modelforge::uniformConfig(7, 8, 8), modelforge::uniformConfig(7, 4, 8),
+                               modelforge::uniformConfig(7, 16, 16)}) {
+        const auto program = modelforge::lowerToInteger(*network, domain, config, error);
+        check(program.has_value(), "graph zoo should lower: " + error);
+        if (!program) continue;
+        // Buffer plan: shared buffers never hold two live tensors.
+        const auto last = network->lastUse();
+        for (std::size_t a = 0; a < program->layers.size(); ++a) {
+            for (std::size_t b = a + 1; b < program->layers.size(); ++b) {
+                if (program->layers[a].buffer >= 0 && program->layers[a].buffer == program->layers[b].buffer) {
+                    check(last[a + 1] < b, "a buffer must not be reused while its tensor is live");
+                }
+            }
+        }
+        check(program->bufferSize.size() < program->layers.size() - 1, "tensors should share buffers");
+        const auto regions = modelforge::regionsAroundRows(*network, data.rows, 0.03, domain, 12);
+        for (const auto& region : regions) {
+            const auto analysis = modelforge::analyzeRegion(*network, *program, region.box, {}, region.refClass);
+            for (int k = 0; k < 200; ++k) {
+                std::vector<double> x(64);
+                for (std::size_t i = 0; i < 64; ++i) {
+                    const double u = std::uniform_real_distribution<double>(0, 1)(rng);
+                    x[i] = region.box.lo[i] + (k % 2 ? (u < 0.5 ? 0.0 : 1.0) : u) * (region.box.hi[i] - region.box.lo[i]);
+                }
+                const auto run = modelforge::runInteger(*program, x);
+                const auto logits = modelforge::dequantizedLogits(*program, run);
+                const auto ref = modelforge::referenceLogits(*network, x);
+                ++runs;
+                violations += run.accumulatorOverflow || run.productOverflow || run.saturated;
+                for (std::size_t c = 0; c < logits.size(); ++c) {
+                    if (logits[c] < analysis.logitLower[c] || logits[c] > analysis.logitUpper[c] ||
+                        std::fabs(logits[c] - ref[c]) > analysis.logitErrorBound[c]) {
+                        ++violations;
+                    }
+                }
+                if (analysis.quantCertified && run.decision != analysis.refClass) ++violations;
+            }
+        }
+    }
+    check(runs > 0 && violations == 0, "DAG analysis (max-pool, residual add) must bound every sampled execution");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -658,6 +740,7 @@ int main(int argc, char* argv[]) {
     testShrink(fixtureDirectory);
     testForgeCert(fixtureDirectory);
     testForgeCertConvolution(fixtureDirectory);
+    testForgeCertGraph(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

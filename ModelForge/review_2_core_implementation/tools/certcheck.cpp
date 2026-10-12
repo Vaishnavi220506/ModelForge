@@ -162,65 +162,105 @@ struct Tap {
     std::size_t input = 0, weight = 0;
 };
 
-struct Geometry {
-    long inC = 0, inH = 0, inW = 0, outC = 0, outH = 0, outW = 0, kH = 0, kW = 0, stride = 1, pad = 0;
+// Layer kinds, numbered as in MF_META.
+enum Kind { kDense = 0, kConv = 1, kAdd = 2, kMaxPool = 3 };
+
+struct Shape3 {
+    long c = 0, h = 1, w = 1;
+    bool spatial = false;
+    std::size_t size() const { return static_cast<std::size_t>(c * h * w); }
 };
 
-// A linear layer of the float model: dense or convolution, optional ReLU.
+struct Geometry {
+    long inC = 0, inH = 0, inW = 0, outC = 0, outH = 0, outW = 0, kH = 0, kW = 0, stride = 1, pad = 0, groups = 1;
+    bool operator==(const Geometry& o) const {
+        return inC == o.inC && inH == o.inH && inW == o.inW && outC == o.outC && outH == o.outH && outW == o.outW &&
+               kH == o.kH && kW == o.kW && stride == o.stride && pad == o.pad && groups == o.groups;
+    }
+};
+
+// A layer of the float model. Tensor 0 is the input, tensor l + 1 the output
+// of layer l; `src` are the tensors the layer reads.
 struct Layer {
-    bool conv = false;
-    std::size_t in = 0, out = 0;
-    std::vector<double> w;  // dense: out x in; conv: outC x inC x kH x kW
+    int kind = kDense;
+    std::vector<std::size_t> src;
+    Shape3 shape;  // output
+    std::size_t in = 0, out = 0, perChannel = 1;
+    std::vector<double> w;  // dense: out x in; conv: outC x inC/groups x kH x kW; add: C x 2
     std::vector<double> b;  // per output channel
     bool relu = false;
     Geometry g;
     std::vector<std::vector<Tap>> taps;
+    std::size_t channels() const { return shape.spatial ? static_cast<std::size_t>(shape.c) : out; }
     std::size_t channelOf(std::size_t o) const {
-        return conv ? o / static_cast<std::size_t>(g.outH * g.outW) : o;
+        return shape.spatial ? o / static_cast<std::size_t>(shape.h * shape.w) : o;
     }
 };
 
-void makeTaps(Layer& layer) {
+struct Net {
+    std::vector<Shape3> tensors;
+    std::vector<Layer> layers;
+};
+
+void makeTaps(Layer& layer, const std::vector<Shape3>& tensors) {
     layer.taps.assign(layer.out, {});
-    if (!layer.conv) {
+    if (layer.kind == kDense) {
         for (std::size_t o = 0; o < layer.out; ++o) {
             for (std::size_t i = 0; i < layer.in; ++i) layer.taps[o].push_back({i, o * layer.in + i});
         }
         return;
     }
+    if (layer.kind == kAdd) {
+        const std::size_t n = tensors[layer.src[0]].size();
+        for (std::size_t o = 0; o < layer.out; ++o) {
+            const std::size_t c = layer.channelOf(o);
+            layer.taps[o] = {{o, 2 * c}, {n + o, 2 * c + 1}};
+        }
+        return;
+    }
     const Geometry& g = layer.g;
+    const bool pool = layer.kind == kMaxPool;
+    const long cpg = pool ? 1 : g.inC / g.groups, opg = pool ? 1 : g.outC / g.groups;
     for (long c = 0; c < g.outC; ++c)
         for (long oy = 0; oy < g.outH; ++oy)
             for (long ox = 0; ox < g.outW; ++ox)
-                for (long ci = 0; ci < g.inC; ++ci)
+                for (long ci = 0; ci < cpg; ++ci)
                     for (long ky = 0; ky < g.kH; ++ky) {
                         const long iy = oy * g.stride + ky - g.pad;
                         if (iy < 0 || iy >= g.inH) continue;
                         for (long kx = 0; kx < g.kW; ++kx) {
                             const long ix = ox * g.stride + kx - g.pad;
                             if (ix < 0 || ix >= g.inW) continue;
+                            const long channel = c / opg * cpg + ci;
                             layer.taps[static_cast<std::size_t>((c * g.outH + oy) * g.outW + ox)].push_back(
-                                {static_cast<std::size_t>((ci * g.inH + iy) * g.inW + ix),
-                                 static_cast<std::size_t>(((c * g.inC + ci) * g.kH + ky) * g.kW + kx)});
+                                {static_cast<std::size_t>((channel * g.inH + iy) * g.inW + ix),
+                                 pool ? 0 : static_cast<std::size_t>(((c * cpg + ci) * g.kH + ky) * g.kW + kx)});
                         }
                     }
 }
 
-bool loadReference(const std::string& path, std::vector<Layer>& layers, std::string& error) {
+// Reads the .mforge text and rebuilds the layer DAG on its own: biases and
+// batch normalisations are folded into the preceding linear layer when no
+// other node reads it, average pools become depthwise convolutions with
+// weights 1/k^2, a batch normalisation that cannot be folded a 1x1 depthwise
+// convolution, a tensor Add a residual layer, Flatten and the output
+// activation disappear.
+bool loadReference(const std::string& path, Net& net, std::string& error) {
     std::ifstream in(path);
     if (!in) {
         error = "cannot open " + path;
         return false;
     }
     struct Node {
-        std::string op;
+        std::string op, output;
         std::vector<std::string> inputs;
         bool transB = false;
         bool unit = true;  // alpha = beta = 1
-        long stride = 1, pad = 0;
+        long stride = 1, pad = 0, group = 1, kernel = 0;
+        float epsilon = 1e-5f;
     };
-    std::map<std::string, std::pair<std::vector<long long>, std::vector<double>>> tensors;
-    std::map<std::string, Node> producer;
+    std::map<std::string, std::pair<std::vector<long long>, std::vector<double>>> constants;
+    std::vector<Node> nodes;
     std::string inputName, outputName, line;
     std::vector<long long> inputShape;
     while (std::getline(in, line)) {
@@ -246,180 +286,262 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
             std::stringstream list(t[4].substr(t[4].find('=') + 1));
             std::string d;
             while (std::getline(list, d, ',')) values.push_back(static_cast<double>(std::strtof(d.c_str(), nullptr)));
-            tensors[t[1]] = {dims(t[3]), values};
+            constants[t[1]] = {dims(t[3]), values};
         }
         if (t[0] == "node") {
             const auto arrow = std::find(t.begin(), t.end(), "->");
             if (arrow == t.end() || arrow + 1 == t.end() || t.size() < 4) continue;
             Node node;
             node.op = t[2];
+            node.output = *(arrow + 1);
             node.inputs.assign(t.begin() + 3, arrow);
             for (auto it = arrow + 2; it != t.end(); ++it) {
+                const auto value = [&](const char* key, long& field) {
+                    const std::string k = std::string(key) + "=";
+                    if (it->rfind(k, 0) == 0) field = std::atol(it->c_str() + k.size());
+                };
                 if (*it == "transB=1") node.transB = true;
-                if (it->rfind("strides=", 0) == 0) node.stride = std::atol(it->c_str() + 8);
-                if (it->rfind("pads=", 0) == 0) node.pad = std::atol(it->c_str() + 5);
+                value("strides", node.stride);
+                value("pads", node.pad);
+                value("group", node.group);
+                value("kernel", node.kernel);
+                if (it->rfind("epsilon=", 0) == 0) node.epsilon = std::strtof(it->c_str() + 8, nullptr);
                 if ((it->rfind("alpha=", 0) == 0 || it->rfind("beta=", 0) == 0) &&
                     std::strtod(it->c_str() + it->find('=') + 1, nullptr) != 1.0) {
                     node.unit = false;
                 }
             }
-            producer[*(arrow + 1)] = node;
+            nodes.push_back(node);
         }
     }
-    // Walk back from the output, collecting layers.
-    struct Pending {
-        Layer layer;
-        std::string inputValue;
+    Shape3 input;
+    if (inputShape.size() == 4) {
+        input = {static_cast<long>(inputShape[1]), static_cast<long>(inputShape[2]), static_cast<long>(inputShape[3]), true};
+    } else {
+        long n = 1;
+        for (std::size_t k = inputShape.empty() ? 0 : 1; k < inputShape.size(); ++k) n *= static_cast<long>(inputShape[k]);
+        input = {n, 1, 1, false};
+    }
+    net = Net{};
+    net.tensors.push_back(input);
+    std::map<std::string, std::size_t> uses, tensorOf{{inputName, 0}};
+    for (const auto& node : nodes) {
+        for (const auto& name : node.inputs) ++uses[name];
+    }
+    std::vector<std::size_t> pending{uses[inputName]};
+    std::vector<bool> read{false};
+    std::string activation;
+    const auto alias = [&](const std::string& value, std::size_t t) {
+        tensorOf[value] = t;
+        pending[t] += uses[value];
     };
-    std::vector<Pending> reversed;
-    std::string current = outputName;
-    bool pendingRelu = false;
-    bool head = true;
-    const auto weightFrom = [&](const std::string& name, bool transposed, Layer& layer) {
-        const auto it = tensors.find(name);
-        if (it == tensors.end() || it->second.first.size() != 2) return false;
+    const auto take = [&](const std::string& value, std::size_t& t) {
+        const auto found = tensorOf.find(value);
+        if (value == activation || found == tensorOf.end()) return false;
+        t = found->second;
+        --pending[t];
+        return true;
+    };
+    const auto changeable = [&](std::size_t t) -> Layer* {
+        return t == 0 || pending[t] != 0 || read[t] ? nullptr : &net.layers[t - 1];
+    };
+    const auto push = [&](Layer layer, const std::string& value) {
+        layer.in = 0;
+        for (std::size_t s : layer.src) {
+            layer.in += net.tensors[s].size();
+            read[s] = true;
+        }
+        layer.out = layer.shape.size();
+        net.tensors.push_back(layer.shape);
+        pending.push_back(0);
+        read.push_back(false);
+        net.layers.push_back(layer);
+        alias(value, net.tensors.size() - 1);
+    };
+    const auto depthwise = [&](std::size_t s, long k, long stride, const std::vector<double>& weight,
+                               const std::vector<double>& bias) {
+        const Shape3 x = net.tensors[s];
+        Layer layer;
+        layer.kind = kConv;
+        layer.src = {s};
+        layer.g = {x.c, x.h, x.w, x.c, (x.h - k) / stride + 1, (x.w - k) / stride + 1, k, k, stride, 0, x.c};
+        layer.shape = {x.c, layer.g.outH, layer.g.outW, true};
+        layer.perChannel = static_cast<std::size_t>(k * k);
+        for (long c = 0; c < x.c; ++c) layer.w.insert(layer.w.end(), static_cast<std::size_t>(k * k), weight[c]);
+        layer.b = bias;
+        return layer;
+    };
+    const auto matrix = [&](const std::string& name, bool transposed, Layer& layer) {
+        const auto it = constants.find(name);
+        if (it == constants.end() || it->second.first.size() != 2) return false;
         const auto rows = static_cast<std::size_t>(it->second.first[0]);
         const auto cols = static_cast<std::size_t>(it->second.first[1]);
-        layer.in = transposed ? cols : rows;
-        layer.out = transposed ? rows : cols;
-        layer.w.assign(layer.in * layer.out, 0.0);
+        const std::size_t in = transposed ? cols : rows, out = transposed ? rows : cols;
+        layer.w.assign(in * out, 0.0);
         for (std::size_t r = 0; r < rows; ++r) {
             for (std::size_t c = 0; c < cols; ++c) {
                 const std::size_t o = transposed ? r : c, i = transposed ? c : r;
-                layer.w[o * layer.in + i] = it->second.second[r * cols + c];
+                layer.w[o * in + i] = it->second.second[r * cols + c];
             }
         }
-        layer.b.assign(layer.out, 0.0);
+        layer.shape = {static_cast<long>(out), 1, 1, false};
+        layer.perChannel = in;
+        layer.b.assign(out, 0.0);
         return true;
     };
-    const auto biasFrom = [&](const std::string& name, Layer& layer) {
-        const auto it = tensors.find(name);
-        if (it == tensors.end() || it->second.second.size() != layer.b.size()) return false;
+    const auto addBias = [&](const std::string& name, Layer& layer) {
+        const auto it = constants.find(name);
+        if (it == constants.end() || it->second.second.size() != layer.b.size()) return false;
         for (std::size_t o = 0; o < layer.b.size(); ++o) layer.b[o] += it->second.second[o];
         return true;
     };
-    const auto take = [&](Layer layer, const std::string& input) {
-        layer.relu = pendingRelu;
-        pendingRelu = false;
-        head = false;
-        reversed.push_back({layer, input});
-    };
-    while (current != inputName) {
-        const auto found = producer.find(current);
-        if (found == producer.end() || found->second.inputs.empty()) {
-            error = "value '" + current + "' has no producer";
+    for (const auto& node : nodes) {
+        std::size_t x = 0;
+        const auto fail = [&](const std::string& what) {
+            error = what + " at " + node.op + " -> " + node.output;
             return false;
-        }
-        const Node& node = found->second;
-        if ((node.op == "Softmax" || node.op == "Sigmoid") && head && reversed.empty() && !pendingRelu) {
-            head = false;
-            current = node.inputs[0];
+        };
+        if (node.op == "Softmax" || node.op == "Sigmoid") {
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            activation = node.output;
+            alias(node.output, x);
         } else if (node.op == "Flatten") {
-            current = node.inputs[0];
-        } else if (node.op == "Relu" && !reversed.empty() && !pendingRelu) {
-            pendingRelu = true;
-            current = node.inputs[0];
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            alias(node.output, x);
+        } else if (node.op == "Relu") {
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            Layer* p = changeable(x);
+            if (!p || p->relu || p->kind == kMaxPool) return fail("unsupported ReLU");
+            p->relu = true;
+            alias(node.output, x);
+        } else if (node.op == "BatchNormalization" && node.inputs.size() == 5) {
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            const long channels = net.tensors[x].c;
+            std::vector<double> a(static_cast<std::size_t>(channels)), b(a.size());
+            for (std::size_t k = 1; k < 5; ++k) {
+                const auto it = constants.find(node.inputs[k]);
+                if (it == constants.end() || it->second.second.size() != a.size()) return fail("bad batch norm");
+            }
+            const auto& gamma = constants[node.inputs[1]].second;
+            const auto& beta = constants[node.inputs[2]].second;
+            const auto& mean = constants[node.inputs[3]].second;
+            const auto& var = constants[node.inputs[4]].second;
+            for (std::size_t c = 0; c < a.size(); ++c) {
+                a[c] = gamma[c] / std::sqrt(var[c] + static_cast<double>(node.epsilon));
+                b[c] = beta[c] - mean[c] * a[c];
+            }
+            Layer* p = changeable(x);
+            if (p && p->kind != kMaxPool && !p->relu && p->channels() == a.size()) {
+                for (std::size_t k = 0; k < p->w.size(); ++k) p->w[k] *= a[k / p->perChannel];
+                for (std::size_t c = 0; c < a.size(); ++c) p->b[c] = a[c] * p->b[c] + b[c];
+                alias(node.output, x);
+            } else {
+                push(depthwise(x, 1, 1, a, b), node.output);  // a vector is read as C x 1 x 1
+            }
+        } else if (node.op == "AveragePool" || node.op == "GlobalAveragePool") {
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            const Shape3 s = net.tensors[x];
+            const bool global = node.op == "GlobalAveragePool";
+            if (!s.spatial || node.pad != 0 || (global && s.h != s.w) || (!global && node.kernel < 1)) {
+                return fail("unsupported pooling");
+            }
+            const long k = global ? s.h : node.kernel;
+            push(depthwise(x, k, global ? 1 : node.stride, std::vector<double>(static_cast<std::size_t>(s.c), 1.0 / static_cast<double>(k * k)),
+                           std::vector<double>(static_cast<std::size_t>(s.c), 0.0)),
+                 node.output);
+        } else if (node.op == "MaxPool") {
+            if (!take(node.inputs[0], x)) return fail("bad operand");
+            const Shape3 s = net.tensors[x];
+            if (!s.spatial || node.pad != 0 || node.kernel < 1 || node.kernel > s.h || node.kernel > s.w) {
+                return fail("unsupported max-pool");
+            }
+            Layer layer;
+            layer.kind = kMaxPool;
+            layer.src = {x};
+            layer.g = {s.c, s.h, s.w, s.c, (s.h - node.kernel) / node.stride + 1, (s.w - node.kernel) / node.stride + 1,
+                       node.kernel, node.kernel, node.stride, 0, s.c};
+            layer.shape = {s.c, layer.g.outH, layer.g.outW, true};
+            push(layer, node.output);
         } else if (node.op == "Conv" && node.inputs.size() >= 2) {
-            const auto weight = tensors.find(node.inputs[1]);
-            if (weight == tensors.end() || weight->second.first.size() != 4) {
-                error = "bad Conv weight";
-                return false;
+            const auto weight = constants.find(node.inputs[1]);
+            if (!take(node.inputs[0], x) || weight == constants.end() || weight->second.first.size() != 4) {
+                return fail("bad Conv operands");
             }
-            Layer layer;
-            layer.conv = true;
+            const Shape3 s = net.tensors[x];
             const auto& shape = weight->second.first;
-            layer.g.outC = shape[0];
-            layer.g.inC = shape[1];
-            layer.g.kH = shape[2];
-            layer.g.kW = shape[3];
-            layer.g.stride = node.stride;
-            layer.g.pad = node.pad;
+            Layer layer;
+            layer.kind = kConv;
+            layer.src = {x};
+            Geometry& g = layer.g;
+            g = {s.c, s.h, s.w, static_cast<long>(shape[0]), 0, 0, static_cast<long>(shape[2]), static_cast<long>(shape[3]),
+                 node.stride, node.pad, node.group};
+            if (!s.spatial || g.groups < 1 || g.inC % g.groups || g.outC % g.groups || shape[1] * g.groups != g.inC ||
+                g.stride < 1 || g.pad < 0) {
+                return fail("bad Conv shape");
+            }
+            g.outH = (g.inH + 2 * g.pad - g.kH) / g.stride + 1;
+            g.outW = (g.inW + 2 * g.pad - g.kW) / g.stride + 1;
+            layer.shape = {g.outC, g.outH, g.outW, true};
+            layer.perChannel = static_cast<std::size_t>(shape[1] * shape[2] * shape[3]);
             layer.w = weight->second.second;
-            layer.b.assign(static_cast<std::size_t>(shape[0]), 0.0);
-            if (node.inputs.size() == 3 && !biasFrom(node.inputs[2], layer)) {
-                error = "bad Conv bias";
-                return false;
-            }
-            take(layer, node.inputs[0]);
-            current = node.inputs[0];
-        } else if (node.op == "Gemm" && node.unit && node.inputs.size() >= 2) {
+            layer.b.assign(static_cast<std::size_t>(g.outC), 0.0);
+            if (node.inputs.size() == 3 && !addBias(node.inputs[2], layer)) return fail("bad Conv bias");
+            push(layer, node.output);
+        } else if ((node.op == "Gemm" && node.unit) || node.op == "MatMul") {
             Layer layer;
-            if (!weightFrom(node.inputs[1], node.transB, layer) ||
-                (node.inputs.size() == 3 && !biasFrom(node.inputs[2], layer))) {
-                error = "bad Gemm operands";
-                return false;
+            const bool gemm = node.op == "Gemm";
+            if (node.inputs.size() < 2 || !take(node.inputs[0], x) || !matrix(node.inputs[1], gemm && node.transB, layer) ||
+                layer.perChannel != net.tensors[x].size() ||
+                (gemm && node.inputs.size() == 3 && !addBias(node.inputs[2], layer))) {
+                return fail("bad Gemm/MatMul operands");
             }
-            take(layer, node.inputs[0]);
-            current = node.inputs[0];
+            layer.src = {x};
+            push(layer, node.output);
         } else if (node.op == "Add" && node.inputs.size() == 2) {
-            const bool firstConst = tensors.count(node.inputs[0]) > 0;
-            const std::string other = node.inputs[firstConst ? 1 : 0];
-            const auto mm = producer.find(other);
-            if (mm == producer.end() || mm->second.op != "MatMul" || mm->second.inputs.size() != 2) {
-                error = "unsupported Add";
-                return false;
+            const bool c0 = constants.count(node.inputs[0]) > 0, c1 = constants.count(node.inputs[1]) > 0;
+            if (c0 != c1) {
+                if (!take(node.inputs[c0 ? 1 : 0], x)) return fail("bad operand");
+                Layer* p = changeable(x);
+                if (!p || p->kind == kMaxPool || p->relu || !addBias(node.inputs[c0 ? 0 : 1], *p)) return fail("unsupported bias Add");
+                alias(node.output, x);
+            } else {
+                std::size_t y = 0;
+                if (c0 || !take(node.inputs[0], x) || !take(node.inputs[1], y) ||
+                    net.tensors[x].size() != net.tensors[y].size()) {
+                    return fail("unsupported Add");
+                }
+                Layer layer;
+                layer.kind = kAdd;
+                layer.src = {x, y};
+                layer.shape = net.tensors[x];
+                const long channels = layer.shape.spatial ? layer.shape.c : static_cast<long>(layer.shape.size());
+                layer.g = {channels, layer.shape.h, layer.shape.w, channels, layer.shape.h, layer.shape.w, 1, 1, 1, 0, channels};
+                layer.perChannel = 2;
+                layer.w.assign(static_cast<std::size_t>(2 * channels), 1.0);
+                layer.b.assign(static_cast<std::size_t>(channels), 0.0);
+                push(layer, node.output);
             }
-            Layer layer;
-            if (!weightFrom(mm->second.inputs[1], false, layer) || !biasFrom(node.inputs[firstConst ? 0 : 1], layer)) {
-                error = "bad MatMul/Add operands";
-                return false;
-            }
-            take(layer, mm->second.inputs[0]);
-            current = mm->second.inputs[0];
-        } else if (node.op == "MatMul" && node.inputs.size() == 2) {
-            Layer layer;
-            if (!weightFrom(node.inputs[1], false, layer)) {
-                error = "bad MatMul operands";
-                return false;
-            }
-            take(layer, node.inputs[0]);
-            current = node.inputs[0];
         } else {
-            error = "unsupported operator " + node.op;
-            return false;
+            return fail("unsupported operator");
         }
     }
-    if (reversed.empty() || pendingRelu || reversed.front().layer.relu || reversed.front().layer.conv) {
-        error = "unsupported network shape";
+    const auto out = tensorOf.find(outputName);
+    if (net.layers.empty() || out == tensorOf.end() || out->second != net.layers.size() ||
+        net.layers.back().kind != kDense || net.layers.back().relu) {
+        error = "unsupported network shape (the output must be a dense layer without ReLU)";
         return false;
     }
-    layers.clear();
-    for (auto it = reversed.rbegin(); it != reversed.rend(); ++it) layers.push_back(it->layer);
-    // Propagate spatial shapes forward from the declared NCHW input.
-    long c = inputShape.size() == 4 ? inputShape[1] : 0, h = inputShape.size() == 4 ? inputShape[2] : 0,
-         w = inputShape.size() == 4 ? inputShape[3] : 0;
-    std::size_t width = 1;
-    for (std::size_t k = 1; k < inputShape.size(); ++k) width *= static_cast<std::size_t>(inputShape[k]);
-    for (auto& layer : layers) {
-        if (layer.conv) {
-            if (layer.g.inC != c || h == 0) {
-                error = "Conv input shape mismatch";
-                return false;
-            }
-            layer.g.inH = h;
-            layer.g.inW = w;
-            layer.g.outH = (h + 2 * layer.g.pad - layer.g.kH) / layer.g.stride + 1;
-            layer.g.outW = (w + 2 * layer.g.pad - layer.g.kW) / layer.g.stride + 1;
-            layer.in = static_cast<std::size_t>(c * h * w);
-            layer.out = static_cast<std::size_t>(layer.g.outC * layer.g.outH * layer.g.outW);
-            c = layer.g.outC;
-            h = layer.g.outH;
-            w = layer.g.outW;
-        } else if (layer.in != width) {
-            error = "dense input width mismatch";
-            return false;
-        }
-        width = layer.out;
-    }
-    Layer& last = layers.back();
+    Layer& last = net.layers.back();
     if (last.out == 1) {  // a single logit z decides z > 0
         std::vector<double> wide(2 * last.in, 0.0);
         std::copy(last.w.begin(), last.w.end(), wide.begin() + static_cast<long>(last.in));
         last.w = wide;
         last.b = {0.0, last.b[0]};
         last.out = 2;
+        last.shape = {2, 1, 1, false};
+        net.tensors.back() = last.shape;
     }
-    for (auto& layer : layers) makeTaps(layer);
+    for (auto& layer : net.layers) makeTaps(layer, net.tensors);
     return true;
 }
 
@@ -484,18 +606,18 @@ bool fitsType(const std::string& type, double v) {
 }
 
 struct QLayer {
-    bool conv = false;
+    int kind = kDense;
     Geometry g;
+    std::vector<std::size_t> src;
     std::size_t in = 0, out = 0, channels = 0;
     bool relu = false, outUnsigned = false, modular = false;
-    int wbits = 8, accBits = 32, mulBits = 32, outBits = 8;
+    int wbits = 8, accBits = 32, mulBits = 32, outBits = 8, buffer = -1;
     std::vector<long long> w, b, m;  // b: the exact bias (decoded modulo 2^accBits if modular)
     std::vector<int> s;
     std::vector<double> outScale;  // per output neuron
     long long outMax = 0, outMin = 0;
-    std::size_t channelOf(std::size_t o) const {
-        return conv ? o / static_cast<std::size_t>(g.outH * g.outW) : o;
-    }
+    std::size_t hw() const { return out / channels; }
+    std::size_t channelOf(std::size_t o) const { return o / hw(); }
 };
 
 struct Program {
@@ -505,76 +627,121 @@ struct Program {
     long long inMax = 0, inMin = 0;
     std::vector<float> inv;  // input inverse scales as the C code uses them
     std::vector<QLayer> layers;
+    std::string type(std::size_t tensor) const {
+        if (tensor == 0) return cType(inputBits, inputUnsigned);
+        return cType(layers[tensor - 1].outBits, layers[tensor - 1].outUnsigned);
+    }
+    // Last layer reading each tensor (a tensor nobody reads dies at once).
+    std::vector<std::size_t> lastUse() const {
+        std::vector<std::size_t> last(layers.size() + 1, 0);
+        for (std::size_t t = 1; t <= layers.size(); ++t) last[t] = t - 1;
+        for (std::size_t l = 0; l < layers.size(); ++l) {
+            for (std::size_t s : layers[l].src) last[s] = std::max(last[s], l);
+        }
+        return last;
+    }
+    std::size_t buffers() const {
+        int count = 0;
+        for (const auto& q : layers) count = std::max(count, q.buffer + 1);
+        return static_cast<std::size_t>(count);
+    }
 };
 
-// The code template, as the checker expects it to be emitted.
+// The code templates, as the checker expects them to be emitted.
 std::string expectedLayer(const Program& p, std::size_t l) {
     const QLayer& q = p.layers[l];
-    const char* inT = l == 0 ? cType(p.inputBits, p.inputUnsigned)
-                             : cType(p.layers[l - 1].outBits, p.layers[l - 1].outUnsigned);
+    const std::string inT = p.type(q.src[0]);
     const char* outT = cType(q.outBits, q.outUnsigned);
+    const std::string id = std::to_string(l);
+    std::ostringstream t;
+    if (q.kind == kMaxPool) {
+        const Geometry& g = q.g;
+        const std::string s = std::to_string(g.stride);
+        t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n"
+          << "    for (int c = 0; c < " << g.outC << "; ++c) {\n"
+          << "        for (int oy = 0; oy < " << g.outH << "; ++oy) {\n"
+          << "            for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
+          << "                " << outT << " m = x[(c * " << g.inH << " + oy * " << s << ") * " << g.inW << " + ox * " << s
+          << "];\n"
+          << "                for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
+          << "                    for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+          << "                        const " << outT << " v = x[(c * " << g.inH << " + oy * " << s << " + ky) * " << g.inW
+          << " + ox * " << s << " + kx];\n"
+          << "                        if (v > m) m = v;\n"
+          << "                    }\n                }\n"
+          << "                y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = m;\n"
+          << "            }\n        }\n    }\n}\n";
+        return t.str();
+    }
     const char* accT = cType(q.accBits, false);
     const char* uaccT = cType(q.accBits, true);
     const char* mulT = q.mulBits == 16 ? "int16_t" : "int32_t";
-    const std::string id = std::to_string(l);
-    const std::string bias = q.conv ? "MF_B" + id + "[c]" : "MF_B" + id + "[o]";
-    const std::string ind = q.conv ? "                " : "        ";
     const auto weightAt = [&](const std::string& index) {
         return q.wbits <= 4 ? "mf_nibble(MF_W" + id + ", " + index + ")" : "MF_W" + id + "[" + index + "]";
     };
-    const auto step = [&](const std::string& in, const std::string& wi, const std::string& xi) {
-        const std::string product = "(" + std::string(mulT) + ")" + weightAt(wi) + " * (" + mulT + ")x[" + xi + "]";
+    const auto step = [&](const std::string& in, const std::string& wi, const std::string& x) {
+        const std::string product = "(" + std::string(mulT) + ")" + weightAt(wi) + " * (" + mulT + ")" + x;
         return q.modular ? in + "u = (" + uaccT + ")(u + (" + uaccT + ")(" + product + "));\n"
                          : in + "acc = (" + accT + ")(acc + (" + accT + ")(" + product + "));\n";
     };
-    std::ostringstream t;
+    const auto init = [&](const std::string& in, const std::string& ch) {
+        return q.modular ? in + uaccT + " u = MF_B" + id + "[" + ch + "];\n"
+                         : in + accT + " acc = (" + accT + ")MF_B" + id + "[" + ch + "];\n";
+    };
+    const auto tail = [&](const std::string& in, const std::string& ch) {
+        std::ostringstream r;
+        if (q.modular) {
+            r << in << "int64_t acc = u >= " << (q.accBits == 16 ? "0x8000u" : "0x80000000u") << " ? (int64_t)u - "
+              << (q.accBits == 16 ? "65536" : "4294967296LL") << " : (int64_t)u;\n";
+        }
+        if (q.relu) r << in << "if (acc < 0) acc = 0;\n";
+        r << in << "int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[" << ch << "], MF_S" << l << "[" << ch
+          << "]);\n"
+          << in << "if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturate (modelled by the certificate) */\n"
+          << in << "if (q < " << q.outMin << ") q = " << q.outMin << ";\n";
+        return r.str();
+    };
+    if (q.kind == kAdd) {
+        const std::string in = "            ", at = "[c * " + std::to_string(q.hw()) + " + k]";
+        t << "static void mf_layer" << l << "(const " << inT << " *a, const " << p.type(q.src[1]) << " *b, " << outT
+          << " *y) {\n"
+          << "    for (int c = 0; c < " << q.channels << "; ++c) {\n"
+          << "        for (int k = 0; k < " << q.hw() << "; ++k) {\n"
+          << init(in, "c") << step(in, "c * 2", "a" + at) << step(in, "c * 2 + 1", "b" + at) << tail(in, "c") << in
+          << "y" << at << " = (" << outT << ")q;\n"
+          << "        }\n    }\n}\n";
+        return t.str();
+    }
     t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n";
-    if (q.conv) {
-        t << "    for (int c = 0; c < " << q.g.outC << "; ++c) {\n"
-          << "        for (int oy = 0; oy < " << q.g.outH << "; ++oy) {\n"
-          << "            for (int ox = 0; ox < " << q.g.outW << "; ++ox) {\n";
-    } else {
-        t << "    for (int o = 0; o < " << q.out << "; ++o) {\n";
-    }
-    if (q.modular) {
-        t << ind << uaccT << " u = " << bias << ";\n";
-    } else {
-        t << ind << accT << " acc = (" << accT << ")" << bias << ";\n";
-    }
-    if (q.conv) {
+    if (q.kind == kConv) {
         const Geometry& g = q.g;
-        t << ind << "for (int ci = 0; ci < " << g.inC << "; ++ci) {\n"
-          << ind << "    for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
-          << ind << "        const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
-          << ind << "        if (iy < 0 || iy >= " << g.inH << ") continue;\n"
-          << ind << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
-          << ind << "            const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
-          << ind << "            if (ix < 0 || ix >= " << g.inW << ") continue;\n"
-          << step(ind + "            ",
-                  "((c * " + std::to_string(g.inC) + " + ci) * " + std::to_string(g.kH) + " + ky) * " +
+        const long cpg = g.inC / g.groups, opg = g.outC / g.groups;
+        const std::string in = "                ";
+        const std::string ch = g.groups == 1 ? "ci" : "(c / " + std::to_string(opg) + " * " + std::to_string(cpg) + " + ci)";
+        t << "    for (int c = 0; c < " << g.outC << "; ++c) {\n"
+          << "        for (int oy = 0; oy < " << g.outH << "; ++oy) {\n"
+          << "            for (int ox = 0; ox < " << g.outW << "; ++ox) {\n"
+          << init(in, "c") << in << "for (int ci = 0; ci < " << cpg << "; ++ci) {\n"
+          << in << "    for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
+          << in << "        const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
+          << in << "        if (iy < 0 || iy >= " << g.inH << ") continue;\n"
+          << in << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+          << in << "            const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
+          << in << "            if (ix < 0 || ix >= " << g.inW << ") continue;\n"
+          << step(in + "            ",
+                  "((c * " + std::to_string(cpg) + " + ci) * " + std::to_string(g.kH) + " + ky) * " +
                       std::to_string(g.kW) + " + kx",
-                  "(ci * " + std::to_string(g.inH) + " + iy) * " + std::to_string(g.inW) + " + ix")
-          << ind << "        }\n" << ind << "    }\n" << ind << "}\n";
-    } else {
-        t << ind << "for (int i = 0; i < " << q.in << "; ++i) {\n"
-          << step(ind + "    ", "o * " + std::to_string(q.in) + " + i", "i") << ind << "}\n";
-    }
-    if (q.modular) {
-        t << ind << "int64_t acc = u >= " << (q.accBits == 16 ? "0x8000u" : "0x80000000u") << " ? (int64_t)u - "
-          << (q.accBits == 16 ? "65536" : "4294967296LL") << " : (int64_t)u;\n";
-    }
-    if (q.relu) t << ind << "if (acc < 0) acc = 0;\n";
-    const std::string ch = q.conv ? "c" : "o";
-    t << ind << "int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[" << ch << "], MF_S" << l << "[" << ch
-      << "]);\n"
-      << ind << "if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturate (modelled by the certificate) */\n"
-      << ind << "if (q < " << q.outMin << ") q = " << q.outMin << ";\n";
-    if (q.conv) {
-        t << ind << "y[(c * " << q.g.outH << " + oy) * " << q.g.outW << " + ox] = (" << outT << ")q;\n"
+                  "x[(" + ch + " * " + std::to_string(g.inH) + " + iy) * " + std::to_string(g.inW) + " + ix]")
+          << in << "        }\n" << in << "    }\n" << in << "}\n"
+          << tail(in, "c") << in << "y[(c * " << g.outH << " + oy) * " << g.outW << " + ox] = (" << outT << ")q;\n"
           << "            }\n        }\n    }\n}\n";
-    } else {
-        t << ind << "y[o] = (" << outT << ")q;\n    }\n}\n";
+        return t.str();
     }
+    const std::string in = "        ";
+    t << "    for (int o = 0; o < " << q.out << "; ++o) {\n"
+      << init(in, "o") << in << "for (int i = 0; i < " << q.in << "; ++i) {\n"
+      << step(in + "    ", "o * " + std::to_string(q.in) + " + i", "x[i]") << in << "}\n"
+      << tail(in, "o") << in << "y[o] = (" << outT << ")q;\n    }\n}\n";
     return t.str();
 }
 
@@ -583,7 +750,7 @@ std::vector<std::string> expectedFragments(const Program& p) {
         "static int64_t mf_round_shift(int64_t t, int s) {\n"
         "    int64_t u = t + ((int64_t)1 << (s - 1));\n"
         "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n"};
-    if (std::any_of(p.layers.begin(), p.layers.end(), [](const QLayer& q) { return q.wbits <= 4; })) {
+    if (std::any_of(p.layers.begin(), p.layers.end(), [](const QLayer& q) { return q.kind != kMaxPool && q.wbits <= 4; })) {
         parts.push_back("static int8_t mf_nibble(const MF_ROM uint8_t *packed, int k) {\n"
                         "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
                         "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n");
@@ -600,22 +767,58 @@ std::vector<std::string> expectedFragments(const Program& p) {
           << "        if (v < " << p.inMin << ") v = " << p.inMin << ";\n"
           << "        q[i] = (mf_input_t)v;\n    }\n}\n";
     parts.push_back(quant.str());
+    // Buffers: one declaration each, sized for the largest tensor it holds.
     std::ostringstream infer;
     infer << "int mf_infer_q(const mf_input_t *q, mf_logit_t *logits) {\n";
-    for (std::size_t l = 0; l + 1 < p.layers.size(); ++l) {
-        infer << "    static " << cType(p.layers[l].outBits, p.layers[l].outUnsigned) << " t" << l << "["
-              << p.layers[l].out << "];\n";
+    for (std::size_t k = 0; k < p.buffers(); ++k) {
+        std::size_t size = 0;
+        std::string type;
+        for (const auto& q : p.layers) {
+            if (q.buffer != static_cast<int>(k)) continue;
+            size = std::max(size, q.out);
+            if (type.empty()) type = cType(q.outBits, q.outUnsigned);
+        }
+        infer << "    static " << type << " mf_buf" << k << "[" << size << "];\n";
     }
     infer << "    mf_logit_t out[MF_CLASSES];\n";
+    const auto name = [&](std::size_t t) {
+        if (t == 0) return std::string("q");
+        const int b = p.layers[t - 1].buffer;
+        return b < 0 ? std::string("out") : "mf_buf" + std::to_string(b);
+    };
     for (std::size_t l = 0; l < p.layers.size(); ++l) {
-        infer << "    mf_layer" << l << "(" << (l == 0 ? std::string("q") : "t" + std::to_string(l - 1)) << ", "
-              << (l + 1 == p.layers.size() ? std::string("out") : "t" + std::to_string(l)) << ");\n";
+        infer << "    mf_layer" << l << "(";
+        for (std::size_t s : p.layers[l].src) infer << name(s) << ", ";
+        infer << name(l + 1) << ");\n";
     }
     infer << "    int best = 0;\n    for (int c = 0; c < MF_CLASSES; ++c) {\n"
           << "        if (logits) logits[c] = out[c];\n        if (out[c] > out[best]) best = c;\n    }\n"
           << "    return best;\n}\n";
     parts.push_back(infer.str());
     return parts;
+}
+
+// Buffer safety: a buffer holds tensors of one C type, and a tensor is never
+// overwritten (or written by a layer that reads the same buffer) before its
+// last reader has run.
+std::string checkBuffers(const Program& p) {
+    const auto last = p.lastUse();
+    for (std::size_t a = 0; a < p.layers.size(); ++a) {
+        const QLayer& qa = p.layers[a];
+        if ((a + 1 == p.layers.size()) != (qa.buffer < 0)) return "only the logits may bypass the buffers";
+        for (std::size_t b = a + 1; b < p.layers.size(); ++b) {
+            const QLayer& qb = p.layers[b];
+            if (qa.buffer < 0 || qb.buffer != qa.buffer) continue;
+            if (std::string(cType(qa.outBits, qa.outUnsigned)) != cType(qb.outBits, qb.outUnsigned)) {
+                return "buffer " + std::to_string(qa.buffer) + " holds tensors of different types";
+            }
+            if (last[a + 1] >= b) {
+                return "layer " + std::to_string(b) + " overwrites the output of layer " + std::to_string(a) +
+                       " before its last reader";
+            }
+        }
+    }
+    return "";
 }
 
 std::string loadProgram(const std::string& source, Program& p) {
@@ -625,8 +828,8 @@ std::string loadProgram(const std::string& source, Program& p) {
         return it == arrays.end() ? nullptr : &it->second;
     };
     const Array* meta = get("MF_META");
-    constexpr std::size_t kPerLayer = 20;
-    if (!meta || meta->values.size() < 6 || meta->values[0] != 3) return "missing or unknown MF_META (need v3)";
+    constexpr std::size_t kPerLayer = 24;
+    if (!meta || meta->values.size() < 6 || meta->values[0] != 4) return "missing or unknown MF_META (need v4)";
     p.inputs = static_cast<std::size_t>(meta->values[1]);
     p.classes = static_cast<std::size_t>(meta->values[2]);
     p.inputBits = static_cast<int>(meta->values[3]);
@@ -635,18 +838,17 @@ std::string loadProgram(const std::string& source, Program& p) {
     p.inMax = p.inputUnsigned ? (1LL << p.inputBits) - 1 : (1LL << (p.inputBits - 1)) - 1;
     p.inMin = p.inputUnsigned ? 0 : -p.inMax;
     const auto L = static_cast<std::size_t>(meta->values[5]);
-    if (meta->values.size() != 6 + kPerLayer * L) return "MF_META has the wrong length";
+    if (L == 0 || meta->values.size() != 6 + kPerLayer * L) return "MF_META has the wrong length";
     const Array* inv = get("MF_INPUT_INV_SCALE");
     if (!inv || inv->values.size() != p.inputs || inv->type != "float") return "bad MF_INPUT_INV_SCALE";
     for (double v : inv->values) {
         if (!(v > 0)) return "input scales must be positive";
         p.inv.push_back(static_cast<float>(v));
     }
-    std::size_t width = p.inputs;
     for (std::size_t l = 0; l < L; ++l) {
         const double* m = &meta->values[6 + kPerLayer * l];
         QLayer q;
-        q.conv = m[0] != 0;
+        q.kind = static_cast<int>(m[0]);
         q.in = static_cast<std::size_t>(m[1]);
         q.out = static_cast<std::size_t>(m[2]);
         q.relu = m[3] != 0;
@@ -658,21 +860,37 @@ std::string loadProgram(const std::string& source, Program& p) {
         q.outUnsigned = m[9] != 0;
         q.g = {static_cast<long>(m[10]), static_cast<long>(m[11]), static_cast<long>(m[12]), static_cast<long>(m[13]),
                static_cast<long>(m[14]), static_cast<long>(m[15]), static_cast<long>(m[16]), static_cast<long>(m[17]),
-               static_cast<long>(m[18]), static_cast<long>(m[19])};
-        q.channels = q.conv ? static_cast<std::size_t>(q.g.outC) : q.out;
-        if (q.in != width || (q.accBits != 16 && q.accBits != 32 && q.accBits != 64) ||
-            (q.modular && q.accBits == 64) || (q.mulBits != 16 && q.mulBits != 32) || q.wbits < 2 || q.wbits > 16 ||
-            q.outBits < 2 || q.outBits > 16 || (l + 1 == L && (q.relu || q.outUnsigned || q.conv))) {
+               static_cast<long>(m[18]), static_cast<long>(m[19]), static_cast<long>(m[20])};
+        for (int k = 21; k <= 22; ++k) {
+            if (m[k] < 0) continue;
+            if (m[k] > static_cast<double>(l)) return "layer " + std::to_string(l) + " reads a later tensor";
+            q.src.push_back(static_cast<std::size_t>(m[k]));
+        }
+        q.buffer = static_cast<int>(m[23]);
+        if (q.src.empty() || q.kind < kDense || q.kind > kMaxPool || q.out == 0) return "inconsistent layer metadata";
+        q.channels = q.kind == kDense ? q.out : static_cast<std::size_t>(q.g.outC);
+        if (q.channels == 0 || q.out % q.channels) return "inconsistent layer metadata";
+        if (q.kind == kMaxPool) {
+            // The output keeps the input's codes, type and scale.
+            const bool fromInput = q.src[0] == 0;
+            const QLayer* producer = fromInput ? nullptr : &p.layers[q.src[0] - 1];
+            if (q.outBits != (fromInput ? p.inputBits : producer->outBits) ||
+                q.outUnsigned != (fromInput ? p.inputUnsigned : producer->outUnsigned) || q.relu || l + 1 == L) {
+                return "max-pool must keep its input type";
+            }
+            q.outMax = fromInput ? p.inMax : producer->outMax;
+            q.outMin = fromInput ? p.inMin : producer->outMin;
+            const Array* sc = get("MF_SCALE_" + std::to_string(l));
+            if (!sc || sc->values.size() != q.out) return "missing scales for layer " + std::to_string(l);
+            q.outScale = sc->values;
+            p.layers.push_back(q);
+            continue;
+        }
+        if ((q.accBits != 16 && q.accBits != 32 && q.accBits != 64) || (q.modular && q.accBits == 64) ||
+            (q.mulBits != 16 && q.mulBits != 32) || q.wbits < 2 || q.wbits > 16 || q.outBits < 2 || q.outBits > 16 ||
+            (l + 1 == L && (q.relu || q.outUnsigned || q.kind != kDense)) || (q.kind == kAdd) != (q.src.size() == 2)) {
             return "inconsistent layer metadata";
         }
-        if (q.conv && (q.g.stride < 1 || q.g.pad < 0 ||
-                       static_cast<std::size_t>(q.g.inC * q.g.inH * q.g.inW) != q.in ||
-                       static_cast<std::size_t>(q.g.outC * q.g.outH * q.g.outW) != q.out ||
-                       q.g.outH != (q.g.inH + 2 * q.g.pad - q.g.kH) / q.g.stride + 1 ||
-                       q.g.outW != (q.g.inW + 2 * q.g.pad - q.g.kW) / q.g.stride + 1)) {
-            return "inconsistent convolution geometry";
-        }
-        width = q.out;
         q.outMax = q.outUnsigned ? (1LL << q.outBits) - 1 : (1LL << (q.outBits - 1)) - 1;
         q.outMin = q.outUnsigned ? 0 : -q.outMax;
         const std::string id = std::to_string(l);
@@ -682,7 +900,9 @@ std::string loadProgram(const std::string& source, Program& p) {
         const Array* s = get("MF_S" + id);
         const Array* sc = get("MF_SCALE_" + id);
         if (!w || !b || !mm || !s || !sc) return "missing arrays for layer " + id;
-        const std::size_t params = q.conv ? static_cast<std::size_t>(q.g.outC * q.g.inC * q.g.kH * q.g.kW) : q.in * q.out;
+        const std::size_t params = q.kind == kConv  ? static_cast<std::size_t>(q.g.outC * (q.g.inC / std::max(1L, q.g.groups)) * q.g.kH * q.g.kW)
+                                   : q.kind == kAdd ? 2 * q.channels
+                                                    : q.in * q.out;
         const long long wmax = (1LL << (q.wbits - 1)) - 1;
         if (q.wbits <= 4) {
             if (w->type != "uint8_t" || w->values.size() != (params + 1) / 2) return "bad packed MF_W" + id;
@@ -723,11 +943,11 @@ std::string loadProgram(const std::string& source, Program& p) {
         }
         p.layers.push_back(q);
     }
-    if (width != p.classes) return "class count does not match the last layer";
+    if (p.layers.back().out != p.classes) return "class count does not match the last layer";
     for (double v : p.layers.back().outScale) {
         if (v != p.layers.back().outScale[0]) return "logits must share one scale";
     }
-    return "";
+    return checkBuffers(p);
 }
 
 // ------------------------------------------------- affine forms (checker)
@@ -824,175 +1044,278 @@ struct Analysis {
 // Same mathematics as the compiler, written independently: affine forms for
 // the float model (DeepZ ReLU) and for the integer program's error, with
 // effective real weights rebuilt from the parsed integers.
-Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vector<double>& blo,
-                 const std::vector<double>& bhi) {
+Analysis analyse(const Net& net, const Program& p, const std::vector<double>& blo, const std::vector<double>& bhi) {
     Analysis out;
     std::size_t symbols = 0;
-    std::vector<Pair> v(p.inputs);
-    std::vector<long long> qlo(p.inputs), qhi(p.inputs);
-    std::vector<double> inScale(p.inputs);
+    const std::size_t L = p.layers.size();
+    // Per tensor: forms, scales and the proved range of the integer codes.
+    std::vector<std::vector<Pair>> value(L + 1);
+    std::vector<std::vector<long long>> qlo(L + 1), qhi(L + 1);
+    std::vector<std::vector<double>> scale(L + 1);
+    value[0].resize(p.inputs);
     for (std::size_t i = 0; i < p.inputs; ++i) {
-        v[i].r.c = 0.5 * (blo[i] + bhi[i]);
-        if (bhi[i] > blo[i]) sym(v[i].r, symbols, 0.5 * (bhi[i] - blo[i]));
+        value[0][i].r.c = 0.5 * (blo[i] + bhi[i]);
+        if (bhi[i] > blo[i]) sym(value[0][i].r, symbols, 0.5 * (bhi[i] - blo[i]));
         ++symbols;
     }
     for (std::size_t i = 0; i < p.inputs; ++i) {
         const double inv = static_cast<double>(p.inv[i]);
         const double T = std::max(std::fabs(blo[i]), std::fabs(bhi[i])) * inv;
         const double delta = 0.5 + 2.0 * (T + 1.0) * std::ldexp(1.0, -24);  // float32 multiply and +-0.5
-        inScale[i] = 1.0 / inv;
-        sym(v[i].e, symbols++, delta / inv);
-        qlo[i] = static_cast<long long>(std::ceil(blo[i] * inv - delta));
-        qhi[i] = static_cast<long long>(std::floor(bhi[i] * inv + delta));
-        if (qlo[i] < p.inMin || qhi[i] > p.inMax) out.failure = "input quantiser may clamp";
+        scale[0].push_back(1.0 / inv);
+        sym(value[0][i].e, symbols++, delta / inv);
+        qlo[0].push_back(static_cast<long long>(std::ceil(blo[i] * inv - delta)));
+        qhi[0].push_back(static_cast<long long>(std::floor(bhi[i] * inv + delta)));
+        if (qlo[0][i] < p.inMin || qhi[0][i] > p.inMax) out.failure = "input quantiser may clamp";
     }
-    for (std::size_t l = 0; l < p.layers.size(); ++l) {
+    const auto last = p.lastUse();
+    const auto relax = [&](const F& x, double a, double b) {
+        F y;
+        if (b <= 0) return y;
+        if (a >= 0) return x;
+        const double lambda = b / (b - a), mu = -lambda * a / 2;
+        add(y, lambda, x);
+        y.c += mu;
+        sym(y, symbols++, mu);
+        return y;
+    };
+    for (std::size_t l = 0; l < L; ++l) {
         const QLayer& q = p.layers[l];
-        const Layer& f = net[l];
-        const long long accMax = (1LL << (q.accBits - 1)) - 1;
-        const long long mulMax = (1LL << (q.mulBits - 1)) - 1;
+        const Layer& f = net.layers[l];
+        // The layer reads the concatenation of its sources.
+        std::vector<const Pair*> v;
+        std::vector<long long> lo_, hi_;
+        std::vector<double> inScale;
+        for (std::size_t s : q.src) {
+            for (const auto& n : value[s]) v.push_back(&n);
+            lo_.insert(lo_.end(), qlo[s].begin(), qlo[s].end());
+            hi_.insert(hi_.end(), qhi[s].begin(), qhi[s].end());
+            inScale.insert(inScale.end(), scale[s].begin(), scale[s].end());
+        }
         std::vector<Pair> next(q.out);
-        std::vector<double> factor(q.out);
-        Sum sum;
-        for (std::size_t o = 0; o < q.out; ++o) {
-            const std::size_t c = q.channelOf(o);
-            // Products and (classical) partial sums.
-            double bound = std::fabs(static_cast<double>(q.b[c]));
-            for (const auto& tap : f.taps[o]) {
-                const double product = std::fabs(static_cast<double>(q.w[tap.weight])) *
-                                       std::max(std::fabs(static_cast<double>(qlo[tap.input])),
-                                                std::fabs(static_cast<double>(qhi[tap.input])));
-                if (product > static_cast<double>(mulMax)) out.failure = "product may overflow in layer " + std::to_string(l);
-                bound += product;
-            }
-            if (!q.modular && bound > static_cast<double>(accMax)) {
-                out.failure = "accumulator may overflow in layer " + std::to_string(l);
-            }
-            const double k = q.outScale[o] * std::ldexp(static_cast<double>(q.m[c]), -q.s[c]);
-            factor[o] = k;
-            Pair& n = next[o];
-            double rc = f.b[c], ec = k * static_cast<double>(q.b[c]) - f.b[c];
-            for (const auto& tap : f.taps[o]) sum.add(f.w[tap.weight], v[tap.input].r, rc);
-            n.r = sum.take(rc);
-            for (const auto& tap : f.taps[o]) {
-                const double wf = f.w[tap.weight];
-                const double wq = k * static_cast<double>(q.w[tap.weight]) / inScale[tap.input];
-                sum.add(wq - wf, v[tap.input].r, ec);
-                sum.add(wq, v[tap.input].e, ec);
-            }
-            n.e = sum.take(ec);
-        }
         std::vector<long long> nlo(q.out), nhi(q.out);
-        for (std::size_t o = 0; o < q.out; ++o) {
-            const std::size_t c = q.channelOf(o);
-            Pair& n = next[o];
-            F qv = n.r;
-            add(qv, 1, n.e);
-            double ql = lo(qv), qu = hi(qv);
-            // The final sum is exactly (pre-ReLU value) / factor.
-            const double finalSum = std::max(std::fabs(ql), std::fabs(qu)) / factor[o];
-            if (q.modular && finalSum > static_cast<double>(accMax)) {
-                out.failure = "modular accumulator: final sum may not fit in layer " + std::to_string(l);
-            }
-            if (finalSum * static_cast<double>(q.m[c]) + std::ldexp(1.0, q.s[c] - 1) >= std::ldexp(1.0, 63)) {
-                out.failure = "64-bit requantisation product may overflow in layer " + std::to_string(l);
-            }
-            if (q.relu) {
-                const double l0 = lo(n.r), u0 = hi(n.r);
-                const auto relax = [&](const F& x, double a, double b) {
-                    F y;
-                    if (b <= 0) return y;
-                    if (a >= 0) return x;
-                    const double lambda = b / (b - a), mu = -lambda * a / 2;
-                    add(y, lambda, x);
-                    y.c += mu;
-                    sym(y, symbols++, mu);
-                    return y;
+        if (q.kind == kMaxPool) {
+            // Codes are compared and copied, so a window must share one scale.
+            // A candidate that can never be the maximum is dropped; a unique
+            // maximum is copied; otherwise the maximum is an interval and the
+            // error is the tighter of Q' - R' and [min E_k, max E_k].
+            for (std::size_t o = 0; o < q.out; ++o) {
+                const auto& taps = f.taps[o];
+                const std::size_t n = taps.size();
+                std::vector<F> qv(n);
+                std::vector<double> rl(n), ru(n), ql(n), qu(n);
+                double rFloor = -INFINITY, qFloor = -INFINITY;
+                nlo[o] = lo_[taps[0].input];
+                nhi[o] = hi_[taps[0].input];
+                for (std::size_t k = 0; k < n; ++k) {
+                    const Pair& x = *v[taps[k].input];
+                    if (inScale[taps[k].input] != q.outScale[o]) out.failure = "max-pool window mixes scales";
+                    qv[k] = x.r;
+                    add(qv[k], 1, x.e);
+                    rl[k] = lo(x.r);
+                    ru[k] = hi(x.r);
+                    ql[k] = lo(qv[k]);
+                    qu[k] = hi(qv[k]);
+                    rFloor = std::max(rFloor, rl[k]);
+                    qFloor = std::max(qFloor, ql[k]);
+                    nlo[o] = std::max(nlo[o], lo_[taps[k].input]);
+                    nhi[o] = std::max(nhi[o], hi_[taps[k].input]);
+                }
+                std::vector<std::size_t> rs, qs, live;
+                for (std::size_t k = 0; k < n; ++k) {
+                    if (ru[k] >= rFloor) rs.push_back(k);
+                    if (qu[k] >= qFloor) qs.push_back(k);
+                    if (ru[k] >= rFloor || qu[k] >= qFloor) live.push_back(k);
+                }
+                const auto unique = [](const std::vector<std::size_t>& set, const std::vector<double>& a,
+                                       const std::vector<double>& b) -> long {
+                    for (std::size_t i : set) {
+                        bool all = true;
+                        for (std::size_t j : set) all = all && (i == j || a[i] >= b[j]);
+                        if (all) return static_cast<long>(i);
+                    }
+                    return -1;
                 };
-                const F rr = relax(n.r, l0, u0);
-                const F rq = relax(qv, ql, qu);
-                F affine = rq;  // ReLU~(q) - ReLU~(r)
-                add(affine, -1, rr);
-                const double el = lo(n.e), eu = hi(n.e);
-                double a = std::min(0.0, el), b = std::max(0.0, eu);
-                if (l0 >= 0) { a = std::max(a, std::max(el, -u0)); b = std::min(b, std::max(eu, -l0)); }
-                if (u0 <= 0) { a = std::max(a, std::max(0.0, ql)); b = std::min(b, std::max(0.0, qu)); }
-                if (qu <= 0) { a = std::max(a, -std::max(0.0, u0)); b = std::min(b, -std::max(0.0, l0)); }
-                if (ql >= 0) { a = std::max(a, el + std::min(l0, 0.0)); b = std::min(b, eu + std::min(u0, 0.0)); }
-                if (b < a) a = b = 0.5 * (a + b);
-                if (u0 <= 0 && qu <= 0) {
-                    n.e = F{};  // both stay zero
-                } else if (l0 >= 0 && ql >= 0) {
-                    // both pass through: the error is unchanged
-                } else if (hi(affine) - lo(affine) <= (b - a) * (1 + 1e-9)) {
-                    n.e = affine;
+                const long kr = unique(rs, rl, ru), kq = unique(qs, ql, qu);
+                Pair& y = next[o];
+                double rHi = -INFINITY, qHi = -INFINITY, eLo = INFINITY, eHi = -INFINITY;
+                for (std::size_t k : live) {
+                    rHi = std::max(rHi, ru[k]);
+                    qHi = std::max(qHi, qu[k]);
+                    eLo = std::min(eLo, lo(v[taps[k].input]->e));
+                    eHi = std::max(eHi, hi(v[taps[k].input]->e));
+                }
+                if (kr >= 0) {
+                    y.r = v[taps[static_cast<std::size_t>(kr)].input]->r;
                 } else {
-                    n.e = F{};
-                    n.e.c = 0.5 * (a + b);
-                    sym(n.e, symbols++, 0.5 * (b - a));
+                    y.r.c = 0.5 * (rFloor + rHi);
+                    sym(y.r, symbols++, 0.5 * (rHi - rFloor));
                 }
-                n.r = rr;
-                ql = std::max(0.0, ql);
-                qu = std::max(0.0, qu);
-            }
-            bool exact = q.relu && qu <= 0;  // exactly 0
-            // Clamp to the type range: clamp(Y) - Y relaxed like a ReLU.
-            const double U = static_cast<double>(q.outMax) * q.outScale[o];
-            const auto clampPart = [&](double sign, double a, double b) {
-                if (b <= 0) return;
-                out.saturates = true;
-                F y = n.r;
-                add(y, 1, n.e);
-                if (a >= 0) {  // always at the limit
-                    add(n.e, -1, y);
-                    n.e.c += sign * U;
-                    exact = true;
-                    return;
+                if (kr >= 0 && kq == kr) {
+                    y.e = v[taps[static_cast<std::size_t>(kq)].input]->e;
+                    continue;
                 }
-                const double lambda = b / (b - a), mu = -lambda * a / 2;
-                add(n.e, -lambda, y);
-                n.e.c += lambda * sign * U - sign * mu;
-                sym(n.e, symbols++, mu);
-            };
-            clampPart(1, ql - U, qu - U);
-            ql = std::min(ql, U);
-            qu = std::min(qu, U);
-            if (!q.relu) {
-                clampPart(-1, -U - qu, -U - ql);
-                ql = std::max(ql, -U);
-                qu = std::max(qu, -U);
+                F qm;
+                if (kq >= 0) {
+                    qm = qv[static_cast<std::size_t>(kq)];
+                } else {
+                    qm.c = 0.5 * (qFloor + qHi);
+                    sym(qm, symbols++, 0.5 * (qHi - qFloor));
+                }
+                F d = qm;
+                add(d, -1, y.r);
+                if (hi(d) - lo(d) <= (eHi - eLo) * (1 + 1e-9)) {
+                    y.e = d;
+                } else {
+                    y.e.c = 0.5 * (eLo + eHi);
+                    sym(y.e, symbols++, 0.5 * (eHi - eLo));
+                }
             }
-            nlo[o] = std::max(q.outMin, static_cast<long long>(std::floor(ql / q.outScale[o] + 0.5)));
-            nhi[o] = std::min(q.outMax, static_cast<long long>(std::floor(qu / q.outScale[o] + 0.5)));
-            if (!exact) sym(n.e, symbols++, 0.5 * q.outScale[o] * (1 + 1e-12));
+        } else {
+            const long long accMax = (1LL << (q.accBits - 1)) - 1;
+            const long long mulMax = (1LL << (q.mulBits - 1)) - 1;
+            std::vector<double> factor(q.out);
+            Sum sum;
+            for (std::size_t o = 0; o < q.out; ++o) {
+                const std::size_t c = q.channelOf(o);
+                // Products and (classical) partial sums.
+                double bound = std::fabs(static_cast<double>(q.b[c]));
+                for (const auto& tap : f.taps[o]) {
+                    const double product = std::fabs(static_cast<double>(q.w[tap.weight])) *
+                                           std::max(std::fabs(static_cast<double>(lo_[tap.input])),
+                                                    std::fabs(static_cast<double>(hi_[tap.input])));
+                    if (product > static_cast<double>(mulMax)) out.failure = "product may overflow in layer " + std::to_string(l);
+                    bound += product;
+                }
+                if (!q.modular && bound > static_cast<double>(accMax)) {
+                    out.failure = "accumulator may overflow in layer " + std::to_string(l);
+                }
+                const double k = q.outScale[o] * std::ldexp(static_cast<double>(q.m[c]), -q.s[c]);
+                factor[o] = k;
+                Pair& n = next[o];
+                double rc = f.b[c], ec = k * static_cast<double>(q.b[c]) - f.b[c];
+                for (const auto& tap : f.taps[o]) sum.add(f.w[tap.weight], v[tap.input]->r, rc);
+                n.r = sum.take(rc);
+                for (const auto& tap : f.taps[o]) {
+                    const double wf = f.w[tap.weight];
+                    const double wq = k * static_cast<double>(q.w[tap.weight]) / inScale[tap.input];
+                    sum.add(wq - wf, v[tap.input]->r, ec);
+                    sum.add(wq, v[tap.input]->e, ec);
+                }
+                n.e = sum.take(ec);
+            }
+            for (std::size_t o = 0; o < q.out; ++o) {
+                const std::size_t c = q.channelOf(o);
+                Pair& n = next[o];
+                F qv = n.r;
+                add(qv, 1, n.e);
+                double ql = lo(qv), qu = hi(qv);
+                // The final sum is exactly (pre-ReLU value) / factor.
+                const double finalSum = std::max(std::fabs(ql), std::fabs(qu)) / factor[o];
+                if (q.modular && finalSum > static_cast<double>(accMax)) {
+                    out.failure = "modular accumulator: final sum may not fit in layer " + std::to_string(l);
+                }
+                if (finalSum * static_cast<double>(q.m[c]) + std::ldexp(1.0, q.s[c] - 1) >= std::ldexp(1.0, 63)) {
+                    out.failure = "64-bit requantisation product may overflow in layer " + std::to_string(l);
+                }
+                if (q.relu) {
+                    const double l0 = lo(n.r), u0 = hi(n.r);
+                    const F rr = relax(n.r, l0, u0);
+                    const F rq = relax(qv, ql, qu);
+                    F affine = rq;  // ReLU~(q) - ReLU~(r)
+                    add(affine, -1, rr);
+                    const double el = lo(n.e), eu = hi(n.e);
+                    double a = std::min(0.0, el), b = std::max(0.0, eu);
+                    if (l0 >= 0) { a = std::max(a, std::max(el, -u0)); b = std::min(b, std::max(eu, -l0)); }
+                    if (u0 <= 0) { a = std::max(a, std::max(0.0, ql)); b = std::min(b, std::max(0.0, qu)); }
+                    if (qu <= 0) { a = std::max(a, -std::max(0.0, u0)); b = std::min(b, -std::max(0.0, l0)); }
+                    if (ql >= 0) { a = std::max(a, el + std::min(l0, 0.0)); b = std::min(b, eu + std::min(u0, 0.0)); }
+                    if (b < a) a = b = 0.5 * (a + b);
+                    if (u0 <= 0 && qu <= 0) {
+                        n.e = F{};  // both stay zero
+                    } else if (l0 >= 0 && ql >= 0) {
+                        // both pass through: the error is unchanged
+                    } else if (hi(affine) - lo(affine) <= (b - a) * (1 + 1e-9)) {
+                        n.e = affine;
+                    } else {
+                        n.e = F{};
+                        n.e.c = 0.5 * (a + b);
+                        sym(n.e, symbols++, 0.5 * (b - a));
+                    }
+                    n.r = rr;
+                    ql = std::max(0.0, ql);
+                    qu = std::max(0.0, qu);
+                }
+                bool exact = q.relu && qu <= 0;  // exactly 0
+                // Clamp to the type range: clamp(Y) - Y relaxed like a ReLU.
+                const double U = static_cast<double>(q.outMax) * q.outScale[o];
+                const auto clampPart = [&](double sign, double a, double b) {
+                    if (b <= 0) return;
+                    out.saturates = true;
+                    F y = n.r;
+                    add(y, 1, n.e);
+                    if (a >= 0) {  // always at the limit
+                        add(n.e, -1, y);
+                        n.e.c += sign * U;
+                        exact = true;
+                        return;
+                    }
+                    const double lambda = b / (b - a), mu = -lambda * a / 2;
+                    add(n.e, -lambda, y);
+                    n.e.c += lambda * sign * U - sign * mu;
+                    sym(n.e, symbols++, mu);
+                };
+                clampPart(1, ql - U, qu - U);
+                ql = std::min(ql, U);
+                qu = std::min(qu, U);
+                if (!q.relu) {
+                    clampPart(-1, -U - qu, -U - ql);
+                    ql = std::max(ql, -U);
+                    qu = std::max(qu, -U);
+                }
+                nlo[o] = std::max(q.outMin, static_cast<long long>(std::floor(ql / q.outScale[o] + 0.5)));
+                nhi[o] = std::min(q.outMax, static_cast<long long>(std::floor(qu / q.outScale[o] + 0.5)));
+                if (!exact) sym(n.e, symbols++, 0.5 * q.outScale[o] * (1 + 1e-12));
+            }
         }
-        v = std::move(next);
-        qlo = nlo;
-        qhi = nhi;
-        inScale = q.outScale;
+        value[l + 1] = std::move(next);
+        qlo[l + 1] = nlo;
+        qhi[l + 1] = nhi;
+        scale[l + 1] = q.outScale;
+        for (std::size_t s : q.src) {
+            if (last[s] == l) std::vector<Pair>().swap(value[s]);
+        }
     }
-    out.logits = v;
+    out.logits = value[L];
     return out;
 }
 
 // The integer program, exactly as the C code computes it (modular
 // accumulators wrap; classical ones are exact when no overflow is possible).
-std::vector<long long> runProgram(const std::vector<Layer>& net, const Program& p, const std::vector<float>& x) {
-    std::vector<long long> cur(p.inputs);
+std::vector<long long> runProgram(const Net& net, const Program& p, const std::vector<float>& x) {
+    std::vector<std::vector<long long>> t(p.layers.size() + 1);
     for (std::size_t i = 0; i < p.inputs; ++i) {
-        const float t = x[i] * p.inv[i];
-        float r = t >= 0.0f ? t + 0.5f : t - 0.5f;
+        const float s = x[i] * p.inv[i];
+        float r = s >= 0.0f ? s + 0.5f : s - 0.5f;
         r = std::max(-1.0e9f, std::min(1.0e9f, r));
         long long v = static_cast<long long>(r);
-        cur[i] = std::max(p.inMin, std::min(p.inMax, v));
+        t[0].push_back(std::max(p.inMin, std::min(p.inMax, v)));
     }
     for (std::size_t l = 0; l < p.layers.size(); ++l) {
         const QLayer& q = p.layers[l];
+        std::vector<long long> cur;
+        for (std::size_t s : q.src) cur.insert(cur.end(), t[s].begin(), t[s].end());
         std::vector<long long> next(q.out);
         for (std::size_t o = 0; o < q.out; ++o) {
+            if (q.kind == kMaxPool) {
+                long long m = cur[net.layers[l].taps[o][0].input];
+                for (const auto& tap : net.layers[l].taps[o]) m = std::max(m, cur[tap.input]);
+                next[o] = m;
+                continue;
+            }
             const std::size_t c = q.channelOf(o);
             long long acc = q.b[c];
-            for (const auto& tap : net[l].taps[o]) acc += q.w[tap.weight] * cur[tap.input];
+            for (const auto& tap : net.layers[l].taps[o]) acc += q.w[tap.weight] * cur[tap.input];
             if (q.modular) {
                 const unsigned long long mask = (1ULL << q.accBits) - 1;
                 const unsigned long long u = static_cast<unsigned long long>(acc) & mask;
@@ -1000,14 +1323,14 @@ std::vector<long long> runProgram(const std::vector<Layer>& net, const Program& 
                                                       : static_cast<long long>(u);
             }
             if (q.relu && acc < 0) acc = 0;
-            const long long t = acc * q.m[c];
-            const long long u = t + (1LL << (q.s[c] - 1));
+            const long long product = acc * q.m[c];
+            const long long u = product + (1LL << (q.s[c] - 1));
             long long r = u >= 0 ? (u >> q.s[c]) : -((-u + ((1LL << q.s[c]) - 1)) >> q.s[c]);
             next[o] = std::max(q.outMin, std::min(q.outMax, r));
         }
-        cur = next;
+        t[l + 1] = next;
     }
-    return cur;
+    return t.back();
 }
 
 int verdicts = 0, failures = 0;
@@ -1027,7 +1350,7 @@ int main(int argc, char** argv) {
     const std::string dir = argv[1];
     std::cout << "ForgeCert independent checker (by Vaishnavi)\n  artifact: " << dir << "/model_q.c\n  model:    "
               << argv[2] << "\n";
-    std::vector<Layer> net;
+    Net net;
     std::string error;
     if (!loadReference(argv[2], net, error)) {
         std::cout << "  [FAIL] source model: " << error << "\n";
@@ -1057,13 +1380,12 @@ int main(int argc, char** argv) {
     report(templateOk, "C code matches the checker's template for the metadata");
 
     // Shapes of the source model.
-    bool shapes = net.size() == program.layers.size();
-    for (std::size_t l = 0; shapes && l < net.size(); ++l) {
-        const auto& f = net[l];
+    bool shapes = net.layers.size() == program.layers.size() && net.tensors[0].size() == program.inputs;
+    for (std::size_t l = 0; shapes && l < net.layers.size(); ++l) {
+        const auto& f = net.layers[l];
         const auto& q = program.layers[l];
-        shapes = f.in == q.in && f.out == q.out && f.relu == q.relu && f.conv == q.conv &&
-                 (!f.conv || (f.g.inC == q.g.inC && f.g.inH == q.g.inH && f.g.inW == q.g.inW && f.g.outC == q.g.outC &&
-                              f.g.kH == q.g.kH && f.g.kW == q.g.kW && f.g.stride == q.g.stride && f.g.pad == q.g.pad));
+        shapes = f.kind == q.kind && f.src == q.src && f.in == q.in && f.out == q.out && f.relu == q.relu &&
+                 f.channels() == q.channels && (f.kind == kDense || f.g == q.g);
     }
     report(shapes, "integer program has the source model's layer structure");
     if (!shapes || !templateOk) return 1;

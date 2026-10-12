@@ -32,6 +32,14 @@ std::string irOpName(IROp operation) {
             return "CONV";
         case IROp::Flatten:
             return "FLATTEN";
+        case IROp::BatchNorm:
+            return "BATCH_NORM";
+        case IROp::AveragePool:
+            return "AVERAGE_POOL";
+        case IROp::GlobalAveragePool:
+            return "GLOBAL_AVERAGE_POOL";
+        case IROp::MaxPool:
+            return "MAX_POOL";
         case IROp::Return:
             return "RETURN";
     }
@@ -57,6 +65,14 @@ bool convertOp(const std::string& operation, IROp& result) {
         result = IROp::Conv;
     } else if (operation == "Flatten") {
         result = IROp::Flatten;
+    } else if (operation == "BatchNormalization") {
+        result = IROp::BatchNorm;
+    } else if (operation == "AveragePool") {
+        result = IROp::AveragePool;
+    } else if (operation == "GlobalAveragePool") {
+        result = IROp::GlobalAveragePool;
+    } else if (operation == "MaxPool") {
+        result = IROp::MaxPool;
     } else {
         return false;
     }
@@ -114,6 +130,9 @@ std::optional<IRGraph> buildIR(const ModelGraph& model,
                                       node.transB});
         graph.instructions.back().stride = node.stride;
         graph.instructions.back().pad = node.pad;
+        graph.instructions.back().group = node.group;
+        graph.instructions.back().kernel = node.kernel;
+        graph.instructions.back().epsilon = node.epsilon;
     }
 
     const auto outputIterator = model.tensors.find(model.outputName);
