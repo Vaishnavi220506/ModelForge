@@ -40,6 +40,8 @@ struct CommandLineOptions {
     std::size_t maxRegions = 200;
     std::string precision;
     std::string cost = "bytes";
+    std::string domainRange;  // "lo,hi": the same range for every input
+    std::string scales = "proved";  // or "calibrated"
 };
 
 void printUsage() {
@@ -61,6 +63,10 @@ void printUsage() {
               << "                     makes the float model's decision on every region (needs --data)\n"
               << "  --eps <r>          Region radius around each --data row (default 0.1)\n"
               << "  --domain <csv>     Rows that define the input domain (default: --data)\n"
+              << "  --domain-range a,b Every input lies in [a, b] (e.g. 0,1 for image pixels)\n"
+              << "  --scales <s>       proved (no value can saturate on the domain, default) or\n"
+              << "                     calibrated (scales from the --domain/--data rows; saturation\n"
+              << "                     is possible and modelled exactly by the proofs)\n"
               << "  --max-regions <n>  Certify at most n rows (default 200)\n"
               << "  --precision <p>    Fixed precision instead of tuning: int8, int4 (4-bit weights,\n"
               << "                     8-bit activations) or w4,8:a8,16 (per layer)\n"
@@ -120,7 +126,8 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
             continue;
         }
         if (argument == "--eps" || argument == "--domain" || argument == "--max-regions" ||
-            argument == "--precision" || argument == "--cost") {
+            argument == "--precision" || argument == "--cost" || argument == "--domain-range" ||
+            argument == "--scales") {
             if (index + 1 >= argc) {
                 std::cerr << argument << " requires a value\n";
                 return std::nullopt;
@@ -136,6 +143,8 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
             if (argument == "--domain") options.domainPath = value;
             if (argument == "--precision") options.precision = value;
             if (argument == "--cost") options.cost = value;
+            if (argument == "--domain-range") options.domainRange = value;
+            if (argument == "--scales") options.scales = value;
             continue;
         }
         if (argument == "--compare") {
@@ -471,6 +480,7 @@ int certifyModel(const CommandLineOptions& options) {
         std::cout << "      " << std::left << std::setw(20) << decision.passName
                   << (decision.accepted ? "accepted" : "ROLLED BACK") << "\n";
     }
+    if (guardian.decisions.empty()) std::cout << "      (convolutional graph: no graph pass applies)\n";
     std::string error;
     const auto network = modelforge::extractDenseNetwork(*graph, error);
     if (!network) {
@@ -488,13 +498,34 @@ int certifyModel(const CommandLineOptions& options) {
         std::cerr << error << "\n";
         return 1;
     }
-    const auto domain = modelforge::domainFromData(options.domainPath.empty() ? anchors.rows : domainRows.rows);
+    auto domain = modelforge::domainFromData(options.domainPath.empty() ? anchors.rows : domainRows.rows);
+    if (!options.domainRange.empty()) {
+        const auto comma = options.domainRange.find(',');
+        const double lo = std::atof(options.domainRange.substr(0, comma).c_str());
+        const double hi = comma == std::string::npos ? lo : std::atof(options.domainRange.substr(comma + 1).c_str());
+        if (comma == std::string::npos || !(hi > lo)) {
+            std::cerr << "--domain-range needs lo,hi with lo < hi\n";
+            return 1;
+        }
+        domain.lo.assign(network->inputs, lo);
+        domain.hi.assign(network->inputs, hi);
+    }
     const auto regions = modelforge::regionsAroundRows(*network, anchors.rows, options.eps, domain, options.maxRegions);
     std::cout << "[3/6] Specification: " << regions.size() << " regions (L-inf radius " << options.eps
               << ") inside a " << network->inputs << "-dimensional input domain\n";
 
     modelforge::TunerOptions tuner;
     tuner.cost = options.cost == "bits" ? modelforge::CostModel::Bits : modelforge::CostModel::Bytes;
+    if (options.scales == "calibrated") {
+        auto rows = std::make_shared<std::vector<std::vector<double>>>();
+        for (const auto& row : (options.domainPath.empty() ? anchors.rows : domainRows.rows)) {
+            rows->emplace_back(row.begin(), row.end());
+        }
+        tuner.proof.analysis.calibration = rows;
+    } else if (options.scales != "proved") {
+        std::cerr << "--scales must be proved or calibrated\n";
+        return 1;
+    }
     const auto robust = modelforge::referenceRobustRegions(*network, domain, regions, tuner.proof);
     modelforge::TunerResult result;
     if (!options.precision.empty()) {

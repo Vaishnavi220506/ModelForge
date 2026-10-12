@@ -40,6 +40,8 @@ struct Node {
     bool transB = false;
     float alpha = 1.0f;
     float beta = 1.0f;
+    int stride = 1;  // Conv
+    int pad = 0;     // Conv: zero padding on every side
     int sourceLine = 0;
 };
 

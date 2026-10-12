@@ -11,8 +11,10 @@
 //
 // Checked claims
 //   1. the C code is exactly the expected template for the metadata
-//   2. the input quantiser never clamps and no accumulator partial sum leaves
-//      its declared type, anywhere in the input domain
+//   2. the input quantiser never clamps, no product leaves its multiply type
+//      and no accumulator leaves its type anywhere in the input domain: for a
+//      classical accumulator every partial sum must fit, for a modular
+//      (wrap-around) accumulator the final sum must fit
 //   3. no requantised value saturates, anywhere in the input domain
 //   4. the claimed bound on |integer logit - float logit| holds on the domain
 //   5. for every region in the certificate, following its split tree, the
@@ -156,12 +158,53 @@ std::string readFile(const std::string& path) {
 }
 
 // -------------------------------------------------- source model (.mforge)
-struct Layer {
-    std::size_t in = 0, out = 0;
-    std::vector<double> w;  // out x in
-    std::vector<double> b;
-    bool relu = false;
+struct Tap {
+    std::size_t input = 0, weight = 0;
 };
+
+struct Geometry {
+    long inC = 0, inH = 0, inW = 0, outC = 0, outH = 0, outW = 0, kH = 0, kW = 0, stride = 1, pad = 0;
+};
+
+// A linear layer of the float model: dense or convolution, optional ReLU.
+struct Layer {
+    bool conv = false;
+    std::size_t in = 0, out = 0;
+    std::vector<double> w;  // dense: out x in; conv: outC x inC x kH x kW
+    std::vector<double> b;  // per output channel
+    bool relu = false;
+    Geometry g;
+    std::vector<std::vector<Tap>> taps;
+    std::size_t channelOf(std::size_t o) const {
+        return conv ? o / static_cast<std::size_t>(g.outH * g.outW) : o;
+    }
+};
+
+void makeTaps(Layer& layer) {
+    layer.taps.assign(layer.out, {});
+    if (!layer.conv) {
+        for (std::size_t o = 0; o < layer.out; ++o) {
+            for (std::size_t i = 0; i < layer.in; ++i) layer.taps[o].push_back({i, o * layer.in + i});
+        }
+        return;
+    }
+    const Geometry& g = layer.g;
+    for (long c = 0; c < g.outC; ++c)
+        for (long oy = 0; oy < g.outH; ++oy)
+            for (long ox = 0; ox < g.outW; ++ox)
+                for (long ci = 0; ci < g.inC; ++ci)
+                    for (long ky = 0; ky < g.kH; ++ky) {
+                        const long iy = oy * g.stride + ky - g.pad;
+                        if (iy < 0 || iy >= g.inH) continue;
+                        for (long kx = 0; kx < g.kW; ++kx) {
+                            const long ix = ox * g.stride + kx - g.pad;
+                            if (ix < 0 || ix >= g.inW) continue;
+                            layer.taps[static_cast<std::size_t>((c * g.outH + oy) * g.outW + ox)].push_back(
+                                {static_cast<std::size_t>((ci * g.inH + iy) * g.inW + ix),
+                                 static_cast<std::size_t>(((c * g.inC + ci) * g.kH + ky) * g.kW + kx)});
+                        }
+                    }
+}
 
 bool loadReference(const std::string& path, std::vector<Layer>& layers, std::string& error) {
     std::ifstream in(path);
@@ -174,27 +217,36 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
         std::vector<std::string> inputs;
         bool transB = false;
         bool unit = true;  // alpha = beta = 1
+        long stride = 1, pad = 0;
     };
     std::map<std::string, std::pair<std::vector<long long>, std::vector<double>>> tensors;
     std::map<std::string, Node> producer;
     std::string inputName, outputName, line;
+    std::vector<long long> inputShape;
     while (std::getline(in, line)) {
         std::istringstream words(line);
         std::vector<std::string> t;
         std::string word;
         while (words >> word) t.push_back(word);
         if (t.empty() || t[0][0] == '#') continue;
-        if (t[0] == "input" && t.size() > 1) inputName = t[1];
+        const auto dims = [](const std::string& text) {
+            std::vector<long long> shape;
+            std::stringstream list(text);
+            std::string d;
+            while (std::getline(list, d, ',')) shape.push_back(std::atoll(d.c_str()));
+            return shape;
+        };
+        if (t[0] == "input" && t.size() > 3) {
+            inputName = t[1];
+            inputShape = dims(t[3]);
+        }
         if (t[0] == "output" && t.size() > 1) outputName = t[1];
         if (t[0] == "tensor" && t.size() >= 5) {
-            std::vector<long long> shape;
-            std::stringstream dims(t[3]);
-            std::string d;
-            while (std::getline(dims, d, ',')) shape.push_back(std::atoll(d.c_str()));
             std::vector<double> values;
             std::stringstream list(t[4].substr(t[4].find('=') + 1));
+            std::string d;
             while (std::getline(list, d, ',')) values.push_back(static_cast<double>(std::strtof(d.c_str(), nullptr)));
-            tensors[t[1]] = {shape, values};
+            tensors[t[1]] = {dims(t[3]), values};
         }
         if (t[0] == "node") {
             const auto arrow = std::find(t.begin(), t.end(), "->");
@@ -204,6 +256,8 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
             node.inputs.assign(t.begin() + 3, arrow);
             for (auto it = arrow + 2; it != t.end(); ++it) {
                 if (*it == "transB=1") node.transB = true;
+                if (it->rfind("strides=", 0) == 0) node.stride = std::atol(it->c_str() + 8);
+                if (it->rfind("pads=", 0) == 0) node.pad = std::atol(it->c_str() + 5);
                 if ((it->rfind("alpha=", 0) == 0 || it->rfind("beta=", 0) == 0) &&
                     std::strtod(it->c_str() + it->find('=') + 1, nullptr) != 1.0) {
                     node.unit = false;
@@ -212,7 +266,12 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
             producer[*(arrow + 1)] = node;
         }
     }
-    std::vector<Layer> reversed;
+    // Walk back from the output, collecting layers.
+    struct Pending {
+        Layer layer;
+        std::string inputValue;
+    };
+    std::vector<Pending> reversed;
     std::string current = outputName;
     bool pendingRelu = false;
     bool head = true;
@@ -235,9 +294,15 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
     };
     const auto biasFrom = [&](const std::string& name, Layer& layer) {
         const auto it = tensors.find(name);
-        if (it == tensors.end() || it->second.second.size() != layer.out) return false;
-        for (std::size_t o = 0; o < layer.out; ++o) layer.b[o] += it->second.second[o];
+        if (it == tensors.end() || it->second.second.size() != layer.b.size()) return false;
+        for (std::size_t o = 0; o < layer.b.size(); ++o) layer.b[o] += it->second.second[o];
         return true;
+    };
+    const auto take = [&](Layer layer, const std::string& input) {
+        layer.relu = pendingRelu;
+        pendingRelu = false;
+        head = false;
+        reversed.push_back({layer, input});
     };
     while (current != inputName) {
         const auto found = producer.find(current);
@@ -249,8 +314,33 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
         if ((node.op == "Softmax" || node.op == "Sigmoid") && head && reversed.empty() && !pendingRelu) {
             head = false;
             current = node.inputs[0];
+        } else if (node.op == "Flatten") {
+            current = node.inputs[0];
         } else if (node.op == "Relu" && !reversed.empty() && !pendingRelu) {
             pendingRelu = true;
+            current = node.inputs[0];
+        } else if (node.op == "Conv" && node.inputs.size() >= 2) {
+            const auto weight = tensors.find(node.inputs[1]);
+            if (weight == tensors.end() || weight->second.first.size() != 4) {
+                error = "bad Conv weight";
+                return false;
+            }
+            Layer layer;
+            layer.conv = true;
+            const auto& shape = weight->second.first;
+            layer.g.outC = shape[0];
+            layer.g.inC = shape[1];
+            layer.g.kH = shape[2];
+            layer.g.kW = shape[3];
+            layer.g.stride = node.stride;
+            layer.g.pad = node.pad;
+            layer.w = weight->second.second;
+            layer.b.assign(static_cast<std::size_t>(shape[0]), 0.0);
+            if (node.inputs.size() == 3 && !biasFrom(node.inputs[2], layer)) {
+                error = "bad Conv bias";
+                return false;
+            }
+            take(layer, node.inputs[0]);
             current = node.inputs[0];
         } else if (node.op == "Gemm" && node.unit && node.inputs.size() >= 2) {
             Layer layer;
@@ -259,10 +349,7 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
                 error = "bad Gemm operands";
                 return false;
             }
-            layer.relu = pendingRelu;
-            pendingRelu = false;
-            head = false;
-            reversed.push_back(layer);
+            take(layer, node.inputs[0]);
             current = node.inputs[0];
         } else if (node.op == "Add" && node.inputs.size() == 2) {
             const bool firstConst = tensors.count(node.inputs[0]) > 0;
@@ -277,10 +364,7 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
                 error = "bad MatMul/Add operands";
                 return false;
             }
-            layer.relu = pendingRelu;
-            pendingRelu = false;
-            head = false;
-            reversed.push_back(layer);
+            take(layer, mm->second.inputs[0]);
             current = mm->second.inputs[0];
         } else if (node.op == "MatMul" && node.inputs.size() == 2) {
             Layer layer;
@@ -288,29 +372,54 @@ bool loadReference(const std::string& path, std::vector<Layer>& layers, std::str
                 error = "bad MatMul operands";
                 return false;
             }
-            layer.relu = pendingRelu;
-            pendingRelu = false;
-            head = false;
-            reversed.push_back(layer);
+            take(layer, node.inputs[0]);
             current = node.inputs[0];
         } else {
             error = "unsupported operator " + node.op;
             return false;
         }
     }
-    if (reversed.empty() || pendingRelu || reversed.front().relu) {
+    if (reversed.empty() || pendingRelu || reversed.front().layer.relu || reversed.front().layer.conv) {
         error = "unsupported network shape";
         return false;
     }
-    layers.assign(reversed.rbegin(), reversed.rend());
+    layers.clear();
+    for (auto it = reversed.rbegin(); it != reversed.rend(); ++it) layers.push_back(it->layer);
+    // Propagate spatial shapes forward from the declared NCHW input.
+    long c = inputShape.size() == 4 ? inputShape[1] : 0, h = inputShape.size() == 4 ? inputShape[2] : 0,
+         w = inputShape.size() == 4 ? inputShape[3] : 0;
+    std::size_t width = 1;
+    for (std::size_t k = 1; k < inputShape.size(); ++k) width *= static_cast<std::size_t>(inputShape[k]);
+    for (auto& layer : layers) {
+        if (layer.conv) {
+            if (layer.g.inC != c || h == 0) {
+                error = "Conv input shape mismatch";
+                return false;
+            }
+            layer.g.inH = h;
+            layer.g.inW = w;
+            layer.g.outH = (h + 2 * layer.g.pad - layer.g.kH) / layer.g.stride + 1;
+            layer.g.outW = (w + 2 * layer.g.pad - layer.g.kW) / layer.g.stride + 1;
+            layer.in = static_cast<std::size_t>(c * h * w);
+            layer.out = static_cast<std::size_t>(layer.g.outC * layer.g.outH * layer.g.outW);
+            c = layer.g.outC;
+            h = layer.g.outH;
+            w = layer.g.outW;
+        } else if (layer.in != width) {
+            error = "dense input width mismatch";
+            return false;
+        }
+        width = layer.out;
+    }
     Layer& last = layers.back();
     if (last.out == 1) {  // a single logit z decides z > 0
-        std::vector<double> w(2 * last.in, 0.0);
-        std::copy(last.w.begin(), last.w.end(), w.begin() + static_cast<long>(last.in));
-        last.w = w;
+        std::vector<double> wide(2 * last.in, 0.0);
+        std::copy(last.w.begin(), last.w.end(), wide.begin() + static_cast<long>(last.in));
+        last.w = wide;
         last.b = {0.0, last.b[0]};
         last.out = 2;
     }
+    for (auto& layer : layers) makeTaps(layer);
     return true;
 }
 
@@ -373,19 +482,25 @@ bool fitsType(const std::string& type, double v) {
 }
 
 struct QLayer {
-    std::size_t in = 0, out = 0;
-    bool relu = false, outUnsigned = false;
-    int wbits = 8, accBits = 32, outBits = 8;
-    std::vector<long long> w, b, m;
+    bool conv = false;
+    Geometry g;
+    std::size_t in = 0, out = 0, channels = 0;
+    bool relu = false, outUnsigned = false, modular = false;
+    int wbits = 8, accBits = 32, mulBits = 32, outBits = 8;
+    std::vector<long long> w, b, m;  // b: the exact bias (decoded modulo 2^accBits if modular)
     std::vector<int> s;
-    std::vector<double> outScale;
+    std::vector<double> outScale;  // per output neuron
     long long outMax = 0, outMin = 0;
+    std::size_t channelOf(std::size_t o) const {
+        return conv ? o / static_cast<std::size_t>(g.outH * g.outW) : o;
+    }
 };
 
 struct Program {
     std::size_t inputs = 0, classes = 0;
     int inputBits = 8;
-    long long inMax = 0;
+    bool inputUnsigned = false;
+    long long inMax = 0, inMin = 0;
     std::vector<float> inv;  // input inverse scales as the C code uses them
     std::vector<QLayer> layers;
 };
@@ -393,27 +508,71 @@ struct Program {
 // The code template, as the checker expects it to be emitted.
 std::string expectedLayer(const Program& p, std::size_t l) {
     const QLayer& q = p.layers[l];
-    const char* inT = l == 0 ? cType(p.inputBits, false) : cType(p.layers[l - 1].outBits, p.layers[l - 1].outUnsigned);
+    const char* inT = l == 0 ? cType(p.inputBits, p.inputUnsigned)
+                             : cType(p.layers[l - 1].outBits, p.layers[l - 1].outUnsigned);
     const char* outT = cType(q.outBits, q.outUnsigned);
     const char* accT = cType(q.accBits, false);
+    const char* uaccT = cType(q.accBits, true);
+    const char* mulT = q.mulBits == 16 ? "int16_t" : "int32_t";
+    const std::string id = std::to_string(l);
+    const std::string bias = q.conv ? "MF_B" + id + "[c]" : "MF_B" + id + "[o]";
+    const std::string ind = q.conv ? "                " : "        ";
+    const auto weightAt = [&](const std::string& index) {
+        return q.wbits <= 4 ? "mf_nibble(MF_W" + id + ", " + index + ")" : "MF_W" + id + "[" + index + "]";
+    };
+    const auto step = [&](const std::string& in, const std::string& wi, const std::string& xi) {
+        const std::string product = "(" + std::string(mulT) + ")" + weightAt(wi) + " * (" + mulT + ")x[" + xi + "]";
+        return q.modular ? in + "u = (" + uaccT + ")(u + (" + uaccT + ")(" + product + "));\n"
+                         : in + "acc = (" + accT + ")(acc + (" + accT + ")(" + product + "));\n";
+    };
     std::ostringstream t;
-    t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n"
-      << "    for (int o = 0; o < " << q.out << "; ++o) {\n"
-      << "        " << accT << " acc = (" << accT << ")MF_B" << l << "[o];\n"
-      << "        for (int i = 0; i < " << q.in << "; ++i) {\n";
-    if (q.wbits <= 4) {
-        t << "            acc = (" << accT << ")(acc + (" << accT << ")mf_nibble(MF_W" << l << ", o * " << q.in
-          << " + i) * (" << accT << ")x[i]);\n";
+    t << "static void mf_layer" << l << "(const " << inT << " *x, " << outT << " *y) {\n";
+    if (q.conv) {
+        t << "    for (int c = 0; c < " << q.g.outC << "; ++c) {\n"
+          << "        for (int oy = 0; oy < " << q.g.outH << "; ++oy) {\n"
+          << "            for (int ox = 0; ox < " << q.g.outW << "; ++ox) {\n";
     } else {
-        t << "            acc = (" << accT << ")(acc + (" << accT << ")MF_W" << l << "[o * " << q.in << " + i] * ("
-          << accT << ")x[i]);\n";
+        t << "    for (int o = 0; o < " << q.out << "; ++o) {\n";
     }
-    t << "        }\n";
-    if (q.relu) t << "        if (acc < 0) acc = 0;\n";
-    t << "        int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[o], MF_S" << l << "[o]);\n"
-      << "        if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturation: proved unreachable on the domain */\n"
-      << "        if (q < " << q.outMin << ") q = " << q.outMin << ";\n"
-      << "        y[o] = (" << outT << ")q;\n    }\n}\n";
+    if (q.modular) {
+        t << ind << uaccT << " u = " << bias << ";\n";
+    } else {
+        t << ind << accT << " acc = (" << accT << ")" << bias << ";\n";
+    }
+    if (q.conv) {
+        const Geometry& g = q.g;
+        t << ind << "for (int ci = 0; ci < " << g.inC << "; ++ci) {\n"
+          << ind << "    for (int ky = 0; ky < " << g.kH << "; ++ky) {\n"
+          << ind << "        const int iy = oy * " << g.stride << " + ky - " << g.pad << ";\n"
+          << ind << "        if (iy < 0 || iy >= " << g.inH << ") continue;\n"
+          << ind << "        for (int kx = 0; kx < " << g.kW << "; ++kx) {\n"
+          << ind << "            const int ix = ox * " << g.stride << " + kx - " << g.pad << ";\n"
+          << ind << "            if (ix < 0 || ix >= " << g.inW << ") continue;\n"
+          << step(ind + "            ",
+                  "((c * " + std::to_string(g.inC) + " + ci) * " + std::to_string(g.kH) + " + ky) * " +
+                      std::to_string(g.kW) + " + kx",
+                  "(ci * " + std::to_string(g.inH) + " + iy) * " + std::to_string(g.inW) + " + ix")
+          << ind << "        }\n" << ind << "    }\n" << ind << "}\n";
+    } else {
+        t << ind << "for (int i = 0; i < " << q.in << "; ++i) {\n"
+          << step(ind + "    ", "o * " + std::to_string(q.in) + " + i", "i") << ind << "}\n";
+    }
+    if (q.modular) {
+        t << ind << "int64_t acc = u >= " << (q.accBits == 16 ? "0x8000u" : "0x80000000u") << " ? (int64_t)u - "
+          << (q.accBits == 16 ? "65536" : "4294967296LL") << " : (int64_t)u;\n";
+    }
+    if (q.relu) t << ind << "if (acc < 0) acc = 0;\n";
+    const std::string ch = q.conv ? "c" : "o";
+    t << ind << "int64_t q = mf_round_shift((int64_t)acc * MF_M" << l << "[" << ch << "], MF_S" << l << "[" << ch
+      << "]);\n"
+      << ind << "if (q > " << q.outMax << ") q = " << q.outMax << ";  /* saturate (modelled by the certificate) */\n"
+      << ind << "if (q < " << q.outMin << ") q = " << q.outMin << ";\n";
+    if (q.conv) {
+        t << ind << "y[(c * " << q.g.outH << " + oy) * " << q.g.outW << " + ox] = (" << outT << ")q;\n"
+          << "            }\n        }\n    }\n}\n";
+    } else {
+        t << ind << "y[o] = (" << outT << ")q;\n    }\n}\n";
+    }
     return t.str();
 }
 
@@ -436,13 +595,13 @@ std::vector<std::string> expectedFragments(const Program& p) {
           << "        if (r > 1.0e9f) r = 1.0e9f;\n        if (r < -1.0e9f) r = -1.0e9f;\n"
           << "        long long v = (long long)r;\n"
           << "        if (v > " << p.inMax << ") v = " << p.inMax << ";\n"
-          << "        if (v < " << -p.inMax << ") v = " << -p.inMax << ";\n"
+          << "        if (v < " << p.inMin << ") v = " << p.inMin << ";\n"
           << "        q[i] = (mf_input_t)v;\n    }\n}\n";
     parts.push_back(quant.str());
     std::ostringstream infer;
     infer << "int mf_infer_q(const mf_input_t *q, mf_logit_t *logits) {\n";
     for (std::size_t l = 0; l + 1 < p.layers.size(); ++l) {
-        infer << "    " << cType(p.layers[l].outBits, p.layers[l].outUnsigned) << " t" << l << "["
+        infer << "    static " << cType(p.layers[l].outBits, p.layers[l].outUnsigned) << " t" << l << "["
               << p.layers[l].out << "];\n";
     }
     infer << "    mf_logit_t out[MF_CLASSES];\n";
@@ -464,13 +623,17 @@ std::string loadProgram(const std::string& source, Program& p) {
         return it == arrays.end() ? nullptr : &it->second;
     };
     const Array* meta = get("MF_META");
-    if (!meta || meta->values.size() < 5 || meta->values[0] != 1) return "missing or unknown MF_META";
+    constexpr std::size_t kPerLayer = 20;
+    if (!meta || meta->values.size() < 6 || meta->values[0] != 3) return "missing or unknown MF_META (need v3)";
     p.inputs = static_cast<std::size_t>(meta->values[1]);
     p.classes = static_cast<std::size_t>(meta->values[2]);
     p.inputBits = static_cast<int>(meta->values[3]);
-    p.inMax = (1LL << (p.inputBits - 1)) - 1;
-    const auto L = static_cast<std::size_t>(meta->values[4]);
-    if (meta->values.size() != 5 + 7 * L) return "MF_META has the wrong length";
+    p.inputUnsigned = meta->values[4] != 0;
+    if (p.inputBits < 2 || p.inputBits > 16) return "bad input bit width";
+    p.inMax = p.inputUnsigned ? (1LL << p.inputBits) - 1 : (1LL << (p.inputBits - 1)) - 1;
+    p.inMin = p.inputUnsigned ? 0 : -p.inMax;
+    const auto L = static_cast<std::size_t>(meta->values[5]);
+    if (meta->values.size() != 6 + kPerLayer * L) return "MF_META has the wrong length";
     const Array* inv = get("MF_INPUT_INV_SCALE");
     if (!inv || inv->values.size() != p.inputs || inv->type != "float") return "bad MF_INPUT_INV_SCALE";
     for (double v : inv->values) {
@@ -479,18 +642,33 @@ std::string loadProgram(const std::string& source, Program& p) {
     }
     std::size_t width = p.inputs;
     for (std::size_t l = 0; l < L; ++l) {
-        const double* m = &meta->values[5 + 7 * l];
+        const double* m = &meta->values[6 + kPerLayer * l];
         QLayer q;
-        q.in = static_cast<std::size_t>(m[0]);
-        q.out = static_cast<std::size_t>(m[1]);
-        q.relu = m[2] != 0;
-        q.wbits = static_cast<int>(m[3]);
-        q.accBits = static_cast<int>(m[4]);
-        q.outBits = static_cast<int>(m[5]);
-        q.outUnsigned = m[6] != 0;
-        if (q.in != width || (q.accBits != 16 && q.accBits != 32 && q.accBits != 64) || q.wbits < 2 ||
-            q.wbits > 16 || q.outBits < 2 || q.outBits > 16 || (l + 1 == L && (q.relu || q.outUnsigned))) {
+        q.conv = m[0] != 0;
+        q.in = static_cast<std::size_t>(m[1]);
+        q.out = static_cast<std::size_t>(m[2]);
+        q.relu = m[3] != 0;
+        q.wbits = static_cast<int>(m[4]);
+        q.accBits = static_cast<int>(m[5]);
+        q.modular = m[6] != 0;
+        q.mulBits = static_cast<int>(m[7]);
+        q.outBits = static_cast<int>(m[8]);
+        q.outUnsigned = m[9] != 0;
+        q.g = {static_cast<long>(m[10]), static_cast<long>(m[11]), static_cast<long>(m[12]), static_cast<long>(m[13]),
+               static_cast<long>(m[14]), static_cast<long>(m[15]), static_cast<long>(m[16]), static_cast<long>(m[17]),
+               static_cast<long>(m[18]), static_cast<long>(m[19])};
+        q.channels = q.conv ? static_cast<std::size_t>(q.g.outC) : q.out;
+        if (q.in != width || (q.accBits != 16 && q.accBits != 32 && q.accBits != 64) ||
+            (q.modular && q.accBits == 64) || (q.mulBits != 16 && q.mulBits != 32) || q.wbits < 2 || q.wbits > 16 ||
+            q.outBits < 2 || q.outBits > 16 || (l + 1 == L && (q.relu || q.outUnsigned || q.conv))) {
             return "inconsistent layer metadata";
+        }
+        if (q.conv && (q.g.stride < 1 || q.g.pad < 0 ||
+                       static_cast<std::size_t>(q.g.inC * q.g.inH * q.g.inW) != q.in ||
+                       static_cast<std::size_t>(q.g.outC * q.g.outH * q.g.outW) != q.out ||
+                       q.g.outH != (q.g.inH + 2 * q.g.pad - q.g.kH) / q.g.stride + 1 ||
+                       q.g.outW != (q.g.inW + 2 * q.g.pad - q.g.kW) / q.g.stride + 1)) {
+            return "inconsistent convolution geometry";
         }
         width = q.out;
         q.outMax = q.outUnsigned ? (1LL << q.outBits) - 1 : (1LL << (q.outBits - 1)) - 1;
@@ -502,37 +680,43 @@ std::string loadProgram(const std::string& source, Program& p) {
         const Array* s = get("MF_S" + id);
         const Array* sc = get("MF_SCALE_" + id);
         if (!w || !b || !mm || !s || !sc) return "missing arrays for layer " + id;
+        const std::size_t params = q.conv ? static_cast<std::size_t>(q.g.outC * q.g.inC * q.g.kH * q.g.kW) : q.in * q.out;
         const long long wmax = (1LL << (q.wbits - 1)) - 1;
         if (q.wbits <= 4) {
-            if (w->type != "uint8_t" || w->values.size() != (q.in * q.out + 1) / 2) return "bad packed MF_W" + id;
-            for (std::size_t k = 0; k < q.in * q.out; ++k) {
+            if (w->type != "uint8_t" || w->values.size() != (params + 1) / 2) return "bad packed MF_W" + id;
+            for (std::size_t k = 0; k < params; ++k) {
                 const int byte = static_cast<int>(w->values[k / 2]);
                 const int v = (k % 2) ? (byte >> 4) : (byte & 15);
                 q.w.push_back(v >= 8 ? v - 16 : v);
             }
         } else {
-            if (w->type != cType(q.wbits, false) || w->values.size() != q.in * q.out) return "bad MF_W" + id;
+            if (w->type != cType(q.wbits, false) || w->values.size() != params) return "bad MF_W" + id;
             for (double v : w->values) q.w.push_back(static_cast<long long>(v));
         }
-        for (std::size_t k = 0; k < w->values.size(); ++k) {
-            if (!fitsType(w->type, w->values[k])) return "MF_W" + id + " value does not fit its type";
+        for (double v : w->values) {
+            if (!fitsType(w->type, v)) return "MF_W" + id + " value does not fit its type";
         }
         for (long long v : q.w) {
             if (std::llabs(v) > wmax) return "MF_W" + id + " exceeds its bit width";
         }
-        if (b->values.size() != q.out || mm->values.size() != q.out || s->values.size() != q.out ||
+        if (b->values.size() != q.channels || mm->values.size() != q.channels || s->values.size() != q.channels ||
             sc->values.size() != q.out || mm->type != "int32_t" || s->type != "uint8_t" ||
-            b->type != cType(q.accBits, false)) {
+            b->type != cType(q.accBits, q.modular)) {
             return "bad bias/multiplier/shift/scale arrays for layer " + id;
         }
-        for (std::size_t o = 0; o < q.out; ++o) {
-            if (!fitsType(b->type, b->values[o]) || !fitsType("int32_t", mm->values[o]) || mm->values[o] < 0 ||
-                s->values[o] < 1 || s->values[o] > 62 || !(sc->values[o] > 0)) {
+        for (std::size_t c = 0; c < q.channels; ++c) {
+            if (!fitsType(b->type, b->values[c]) || !fitsType("int32_t", mm->values[c]) || mm->values[c] < 0 ||
+                s->values[c] < 1 || s->values[c] > 62) {
                 return "out-of-range constant in layer " + id;
             }
-            q.b.push_back(static_cast<long long>(b->values[o]));
-            q.m.push_back(static_cast<long long>(mm->values[o]));
-            q.s.push_back(static_cast<int>(s->values[o]));
+            long long bias = static_cast<long long>(b->values[c]);
+            if (q.modular && bias >= (1LL << (q.accBits - 1))) bias -= 1LL << q.accBits;  // two's complement view
+            q.b.push_back(bias);
+            q.m.push_back(static_cast<long long>(mm->values[c]));
+            q.s.push_back(static_cast<int>(s->values[c]));
+        }
+        for (std::size_t o = 0; o < q.out; ++o) {
+            if (!(sc->values[o] > 0)) return "scales must be positive";
             q.outScale.push_back(sc->values[o]);
         }
         p.layers.push_back(q);
@@ -579,12 +763,13 @@ struct Pair {
 
 struct Analysis {
     std::vector<Pair> logits;
-    std::vector<std::vector<long long>> qLo, qHi;  // per layer input ranges (layer 0 = input)
-    std::string failure;
+    std::string failure;     // overflow or clamp of the input quantiser: never allowed
+    bool saturates = false;  // a requantisation clamp can trigger (modelled, allowed if not claimed otherwise)
 };
 
 // Same mathematics as the compiler, written independently: affine forms for
-// the float model (DeepZ ReLU) and for the integer program's error.
+// the float model (DeepZ ReLU) and for the integer program's error, with
+// effective real weights rebuilt from the parsed integers.
 Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vector<double>& blo,
                  const std::vector<double>& bhi) {
     Analysis out;
@@ -594,7 +779,8 @@ Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vec
     std::vector<double> inScale(p.inputs);
     for (std::size_t i = 0; i < p.inputs; ++i) {
         v[i].r.c = 0.5 * (blo[i] + bhi[i]);
-        sym(v[i].r, symbols++, 0.5 * (bhi[i] - blo[i]));
+        if (bhi[i] > blo[i]) sym(v[i].r, symbols, 0.5 * (bhi[i] - blo[i]));
+        ++symbols;
     }
     for (std::size_t i = 0; i < p.inputs; ++i) {
         const double inv = static_cast<double>(p.inv[i]);
@@ -604,46 +790,57 @@ Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vec
         sym(v[i].e, symbols++, delta / inv);
         qlo[i] = static_cast<long long>(std::ceil(blo[i] * inv - delta));
         qhi[i] = static_cast<long long>(std::floor(bhi[i] * inv + delta));
-        if (qlo[i] < -p.inMax || qhi[i] > p.inMax) out.failure = "input quantiser may clamp";
+        if (qlo[i] < p.inMin || qhi[i] > p.inMax) out.failure = "input quantiser may clamp";
     }
-    out.qLo.push_back(qlo);
-    out.qHi.push_back(qhi);
     for (std::size_t l = 0; l < p.layers.size(); ++l) {
         const QLayer& q = p.layers[l];
         const Layer& f = net[l];
-        // Overflow: every partial sum, starting from the bias.
         const long long accMax = (1LL << (q.accBits - 1)) - 1;
-        for (std::size_t o = 0; o < q.out; ++o) {
-            double bound = std::fabs(static_cast<double>(q.b[o]));
-            for (std::size_t i = 0; i < q.in; ++i) {
-                bound += std::fabs(static_cast<double>(q.w[o * q.in + i])) *
-                         std::max(std::fabs(static_cast<double>(qlo[i])), std::fabs(static_cast<double>(qhi[i])));
-            }
-            if (bound > static_cast<double>(accMax)) out.failure = "accumulator may overflow in layer " + std::to_string(l);
-            if (bound * static_cast<double>(q.m[o]) + std::ldexp(1.0, q.s[o] - 1) >= std::ldexp(1.0, 63)) {
-                out.failure = "64-bit requantisation product may overflow in layer " + std::to_string(l);
-            }
-        }
+        const long long mulMax = (1LL << (q.mulBits - 1)) - 1;
         std::vector<Pair> next(q.out);
+        std::vector<double> factor(q.out);
         for (std::size_t o = 0; o < q.out; ++o) {
-            const double k = q.outScale[o] * std::ldexp(static_cast<double>(q.m[o]), -q.s[o]);
+            const std::size_t c = q.channelOf(o);
+            // Products and (classical) partial sums.
+            double bound = std::fabs(static_cast<double>(q.b[c]));
+            for (const auto& tap : f.taps[o]) {
+                const double product = std::fabs(static_cast<double>(q.w[tap.weight])) *
+                                       std::max(std::fabs(static_cast<double>(qlo[tap.input])),
+                                                std::fabs(static_cast<double>(qhi[tap.input])));
+                if (product > static_cast<double>(mulMax)) out.failure = "product may overflow in layer " + std::to_string(l);
+                bound += product;
+            }
+            if (!q.modular && bound > static_cast<double>(accMax)) {
+                out.failure = "accumulator may overflow in layer " + std::to_string(l);
+            }
+            const double k = q.outScale[o] * std::ldexp(static_cast<double>(q.m[c]), -q.s[c]);
+            factor[o] = k;
             Pair& n = next[o];
-            n.r.c = f.b[o];
-            n.e.c = k * static_cast<double>(q.b[o]) - f.b[o];
-            for (std::size_t i = 0; i < q.in; ++i) {
-                const double wf = f.w[o * q.in + i];
-                const double wq = k * static_cast<double>(q.w[o * q.in + i]) / inScale[i];
-                add(n.r, wf, v[i].r);
-                add(n.e, wq - wf, v[i].r);
-                add(n.e, wq, v[i].e);
+            n.r.c = f.b[c];
+            n.e.c = k * static_cast<double>(q.b[c]) - f.b[c];
+            for (const auto& tap : f.taps[o]) {
+                const double wf = f.w[tap.weight];
+                const double wq = k * static_cast<double>(q.w[tap.weight]) / inScale[tap.input];
+                add(n.r, wf, v[tap.input].r);
+                add(n.e, wq - wf, v[tap.input].r);
+                add(n.e, wq, v[tap.input].e);
             }
         }
         std::vector<long long> nlo(q.out), nhi(q.out);
         for (std::size_t o = 0; o < q.out; ++o) {
+            const std::size_t c = q.channelOf(o);
             Pair& n = next[o];
             F qv = n.r;
             add(qv, 1, n.e);
             double ql = lo(qv), qu = hi(qv);
+            // The final sum is exactly (pre-ReLU value) / factor.
+            const double finalSum = std::max(std::fabs(ql), std::fabs(qu)) / factor[o];
+            if (q.modular && finalSum > static_cast<double>(accMax)) {
+                out.failure = "modular accumulator: final sum may not fit in layer " + std::to_string(l);
+            }
+            if (finalSum * static_cast<double>(q.m[c]) + std::ldexp(1.0, q.s[c] - 1) >= std::ldexp(1.0, 63)) {
+                out.failure = "64-bit requantisation product may overflow in layer " + std::to_string(l);
+            }
             if (q.relu) {
                 const double l0 = lo(n.r), u0 = hi(n.r);
                 const auto relax = [&](const F& x, double a, double b) {
@@ -682,42 +879,74 @@ Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vec
                 ql = std::max(0.0, ql);
                 qu = std::max(0.0, qu);
             }
-            const double tl = ql / q.outScale[o], tu = qu / q.outScale[o];
-            nlo[o] = static_cast<long long>(std::floor(tl + 0.5));
-            nhi[o] = static_cast<long long>(std::floor(tu + 0.5));
-            if (nhi[o] > q.outMax || nlo[o] < q.outMin) out.failure = "saturation possible in layer " + std::to_string(l);
-            sym(n.e, symbols++, 0.5 * q.outScale[o] * (1 + 1e-12));
+            bool exact = q.relu && qu <= 0;  // exactly 0
+            // Clamp to the type range: clamp(Y) - Y relaxed like a ReLU.
+            const double U = static_cast<double>(q.outMax) * q.outScale[o];
+            const auto clampPart = [&](double sign, double a, double b) {
+                if (b <= 0) return;
+                out.saturates = true;
+                F y = n.r;
+                add(y, 1, n.e);
+                if (a >= 0) {  // always at the limit
+                    add(n.e, -1, y);
+                    n.e.c += sign * U;
+                    exact = true;
+                    return;
+                }
+                const double lambda = b / (b - a), mu = -lambda * a / 2;
+                add(n.e, -lambda, y);
+                n.e.c += lambda * sign * U - sign * mu;
+                sym(n.e, symbols++, mu);
+            };
+            clampPart(1, ql - U, qu - U);
+            ql = std::min(ql, U);
+            qu = std::min(qu, U);
+            if (!q.relu) {
+                clampPart(-1, -U - qu, -U - ql);
+                ql = std::max(ql, -U);
+                qu = std::max(qu, -U);
+            }
+            nlo[o] = std::max(q.outMin, static_cast<long long>(std::floor(ql / q.outScale[o] + 0.5)));
+            nhi[o] = std::min(q.outMax, static_cast<long long>(std::floor(qu / q.outScale[o] + 0.5)));
+            if (!exact) sym(n.e, symbols++, 0.5 * q.outScale[o] * (1 + 1e-12));
         }
         v = std::move(next);
         qlo = nlo;
         qhi = nhi;
         inScale = q.outScale;
-        out.qLo.push_back(qlo);
-        out.qHi.push_back(qhi);
     }
     out.logits = v;
     return out;
 }
 
-// The integer program, exactly as the C code computes it.
-std::vector<long long> runProgram(const Program& p, const std::vector<float>& x) {
+// The integer program, exactly as the C code computes it (modular
+// accumulators wrap; classical ones are exact when no overflow is possible).
+std::vector<long long> runProgram(const std::vector<Layer>& net, const Program& p, const std::vector<float>& x) {
     std::vector<long long> cur(p.inputs);
     for (std::size_t i = 0; i < p.inputs; ++i) {
         const float t = x[i] * p.inv[i];
         float r = t >= 0.0f ? t + 0.5f : t - 0.5f;
         r = std::max(-1.0e9f, std::min(1.0e9f, r));
         long long v = static_cast<long long>(r);
-        cur[i] = std::max(-p.inMax, std::min(p.inMax, v));
+        cur[i] = std::max(p.inMin, std::min(p.inMax, v));
     }
-    for (const auto& q : p.layers) {
+    for (std::size_t l = 0; l < p.layers.size(); ++l) {
+        const QLayer& q = p.layers[l];
         std::vector<long long> next(q.out);
         for (std::size_t o = 0; o < q.out; ++o) {
-            long long acc = q.b[o];
-            for (std::size_t i = 0; i < q.in; ++i) acc += q.w[o * q.in + i] * cur[i];
+            const std::size_t c = q.channelOf(o);
+            long long acc = q.b[c];
+            for (const auto& tap : net[l].taps[o]) acc += q.w[tap.weight] * cur[tap.input];
+            if (q.modular) {
+                const unsigned long long mask = (1ULL << q.accBits) - 1;
+                const unsigned long long u = static_cast<unsigned long long>(acc) & mask;
+                acc = u >= (1ULL << (q.accBits - 1)) ? static_cast<long long>(u) - (1LL << q.accBits)
+                                                      : static_cast<long long>(u);
+            }
             if (q.relu && acc < 0) acc = 0;
-            const long long t = acc * q.m[o];
-            const long long u = t + (1LL << (q.s[o] - 1));
-            long long r = u >= 0 ? (u >> q.s[o]) : -((-u + ((1LL << q.s[o]) - 1)) >> q.s[o]);
+            const long long t = acc * q.m[c];
+            const long long u = t + (1LL << (q.s[c] - 1));
+            long long r = u >= 0 ? (u >> q.s[c]) : -((-u + ((1LL << q.s[c]) - 1)) >> q.s[c]);
             next[o] = std::max(q.outMin, std::min(q.outMax, r));
         }
         cur = next;
@@ -763,7 +992,8 @@ int main(int argc, char** argv) {
     if (!error.empty()) return 1;
 
     // 1. Code template.
-    bool templateOk = header.find("typedef " + std::string(cType(program.inputBits, false)) + " mf_input_t;") !=
+    bool templateOk = header.find("typedef " + std::string(cType(program.inputBits, program.inputUnsigned)) +
+                                  " mf_input_t;") !=
                           std::string::npos &&
                       header.find("typedef " + std::string(cType(program.layers.back().outBits, false)) +
                                   " mf_logit_t;") != std::string::npos;
@@ -773,8 +1003,11 @@ int main(int argc, char** argv) {
     // Shapes of the source model.
     bool shapes = net.size() == program.layers.size();
     for (std::size_t l = 0; shapes && l < net.size(); ++l) {
-        shapes = net[l].in == program.layers[l].in && net[l].out == program.layers[l].out &&
-                 net[l].relu == program.layers[l].relu;
+        const auto& f = net[l];
+        const auto& q = program.layers[l];
+        shapes = f.in == q.in && f.out == q.out && f.relu == q.relu && f.conv == q.conv &&
+                 (!f.conv || (f.g.inC == q.g.inC && f.g.inH == q.g.inH && f.g.inW == q.g.inW && f.g.outC == q.g.outC &&
+                              f.g.kH == q.g.kH && f.g.kW == q.g.kW && f.g.stride == q.g.stride && f.g.pad == q.g.pad));
     }
     report(shapes, "integer program has the source model's layer structure");
     if (!shapes || !templateOk) return 1;
@@ -787,8 +1020,13 @@ int main(int argc, char** argv) {
         return 1;
     }
     const auto global = analyse(net, program, domainLo, domainHi);
-    report(global.failure.empty(), "no input clamp, accumulator overflow or saturation on the domain" +
+    report(global.failure.empty(), "no input clamp or product/accumulator overflow on the domain" +
                                        (global.failure.empty() ? "" : ": " + global.failure));
+    if (certificate["claims"]["no_saturation_on_domain"].boolean) {
+        report(!global.saturates, "no requantisation clamp can trigger on the domain (as claimed)");
+    } else {
+        std::cout << "  [INFO] saturation is possible on the domain; the clamps are modelled in every proof\n";
+    }
     const auto claimedBits = certificate["claims"]["accumulator_bits"].numbers();
     bool bitsOk = claimedBits.size() == program.layers.size();
     for (std::size_t l = 0; bitsOk && l < claimedBits.size(); ++l) bitsOk = claimedBits[l] == program.layers[l].accBits;
@@ -892,7 +1130,7 @@ int main(int argc, char** argv) {
                 ++mismatches;
                 break;
             }
-            const auto logits = runProgram(program, x);
+            const auto logits = runProgram(net, program, x);
             const int best = static_cast<int>(std::max_element(logits.begin(), logits.end()) - logits.begin());
             std::ostringstream expected;
             expected << rows << "," << best;

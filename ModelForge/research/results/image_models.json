@@ -1,0 +1,21 @@
+{
+  "author": "Vaishnavi",
+  "models": {
+    "mnist_mlp": {
+      "test_accuracy": 0.9581,
+      "parameters": 25450
+    },
+    "mnist_cnn": {
+      "test_accuracy": 0.9636,
+      "parameters": 3226
+    },
+    "fashion_mlp": {
+      "test_accuracy": 0.8529,
+      "parameters": 25450
+    },
+    "fashion_cnn": {
+      "test_accuracy": 0.8575,
+      "parameters": 3226
+    }
+  }
+}

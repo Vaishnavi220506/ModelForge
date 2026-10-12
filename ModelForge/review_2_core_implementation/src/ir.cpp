@@ -28,6 +28,10 @@ std::string irOpName(IROp operation) {
             return "SOFTMAX";
         case IROp::FusedGemmRelu:
             return "FUSED_GEMM_RELU";
+        case IROp::Conv:
+            return "CONV";
+        case IROp::Flatten:
+            return "FLATTEN";
         case IROp::Return:
             return "RETURN";
     }
@@ -49,6 +53,10 @@ bool convertOp(const std::string& operation, IROp& result) {
         result = IROp::Sigmoid;
     } else if (operation == "Softmax") {
         result = IROp::Softmax;
+    } else if (operation == "Conv") {
+        result = IROp::Conv;
+    } else if (operation == "Flatten") {
+        result = IROp::Flatten;
     } else {
         return false;
     }
@@ -104,6 +112,8 @@ std::optional<IRGraph> buildIR(const ModelGraph& model,
                                       node.axis,
                                       node.transA,
                                       node.transB});
+        graph.instructions.back().stride = node.stride;
+        graph.instructions.back().pad = node.pad;
     }
 
     const auto outputIterator = model.tensors.find(model.outputName);

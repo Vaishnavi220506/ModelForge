@@ -78,6 +78,14 @@ bool generateCpp(const IRGraph& graph,
         diagnostics.error("codegen", "Input tensor information is missing");
         return false;
     }
+    for (const auto& instruction : graph.instructions) {
+        if (instruction.operation == IROp::Conv || instruction.operation == IROp::Flatten) {
+            diagnostics.error("codegen",
+                              "The float C++ backend does not support Conv/Flatten; use --certify "
+                              "(integer-only C99 backend)");
+            return false;
+        }
+    }
 
     std::error_code filesystemError;
     const std::filesystem::path directory(outputDirectory);

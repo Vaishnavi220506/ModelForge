@@ -256,6 +256,17 @@ bool parseManifest(std::istream& file,
                 const std::string transBPrefix = "transB=";
                 const std::string alphaPrefix = "alpha=";
                 const std::string betaPrefix = "beta=";
+                if (iterator->rfind("strides=", 0) == 0 || iterator->rfind("pads=", 0) == 0) {
+                    const bool stride = iterator->rfind("strides=", 0) == 0;
+                    try {
+                        const int value = std::stoi(iterator->substr(stride ? 8 : 5));
+                        if (value < (stride ? 1 : 0)) throw std::invalid_argument("range");
+                        (stride ? node.stride : node.pad) = value;
+                    } catch (...) {
+                        diagnostics.error("loader", "Invalid Conv attribute '" + *iterator + "'", lineNumber);
+                    }
+                    continue;
+                }
                 if (iterator->rfind(prefix, 0) == 0) {
                     try {
                         node.axis = std::stoi(iterator->substr(prefix.size()));

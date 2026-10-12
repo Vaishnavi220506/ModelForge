@@ -10,7 +10,7 @@ namespace modelforge {
 namespace {
 
 const std::unordered_set<std::string> kSupportedOperators = {
-    "Gemm", "MatMul", "Add", "Relu", "Sigmoid", "Softmax"};
+    "Gemm", "MatMul", "Add", "Relu", "Sigmoid", "Softmax", "Conv", "Flatten"};
 
 bool sameShape(const Shape& left, const Shape& right) {
     return left == right;
@@ -208,6 +208,40 @@ bool validate(ModelGraph& model,
                     diagnostics.error("semantic", "Gemm bias must contain one value per output element", node.sourceLine);
                     validNode = false;
                 }
+            }
+        } else if (node.op == "Conv") {
+            // NCHW with batch 1: x [1,C,H,W], w [M,C,kH,kW], optional bias [M] or [1,M].
+            const TensorInfo* weight = getInput(1);
+            const TensorInfo* bias = getInput(2);
+            if (node.inputs.size() < 2 || node.inputs.size() > 3 || first == nullptr || weight == nullptr ||
+                first->shape.size() != 4 || first->shape[0] != 1 || weight->shape.size() != 4 ||
+                !weight->isConstant || weight->shape[1] != first->shape[1]) {
+                diagnostics.error("semantic",
+                                  "Conv expects x [1,C,H,W], a constant weight [M,C,kH,kW] and an optional bias",
+                                  node.sourceLine);
+                validNode = false;
+            } else {
+                const std::int64_t outH = (first->shape[2] + 2 * node.pad - weight->shape[2]) / node.stride + 1;
+                const std::int64_t outW = (first->shape[3] + 2 * node.pad - weight->shape[3]) / node.stride + 1;
+                if (outH < 1 || outW < 1) {
+                    diagnostics.error("semantic", "Conv kernel is larger than the padded input", node.sourceLine);
+                    validNode = false;
+                } else {
+                    outputShape = {1, weight->shape[0], outH, outW};
+                }
+                if (node.inputs.size() == 3 &&
+                    (bias == nullptr || !bias->isConstant ||
+                     elementCount(bias->shape) != static_cast<std::size_t>(weight->shape[0]))) {
+                    diagnostics.error("semantic", "Conv bias must hold one value per output channel", node.sourceLine);
+                    validNode = false;
+                }
+            }
+        } else if (node.op == "Flatten") {
+            if (node.inputs.size() != 1 || first == nullptr || first->shape.empty() || first->shape[0] != 1) {
+                diagnostics.error("semantic", "Flatten expects one input with batch size 1", node.sourceLine);
+                validNode = false;
+            } else {
+                outputShape = {1, static_cast<std::int64_t>(elementCount(first->shape))};
             }
         } else if (node.op == "Add") {
             if (node.inputs.size() != 2) {

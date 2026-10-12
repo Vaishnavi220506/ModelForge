@@ -24,6 +24,8 @@ enum class IROp {
     Sigmoid,
     Softmax,
     FusedGemmRelu,
+    Conv,     // NCHW, batch 1, zero padding `pad`, stride `stride`
+    Flatten,  // [1, ...] -> [1, n]; the data order is unchanged
     Return
 };
 
@@ -40,6 +42,8 @@ struct IRInstruction {
     bool transB = false;
     // Parameter p of the test-only fault operators above.
     float testFaultParameter = 0.1f;
+    int stride = 1;  // Conv
+    int pad = 0;     // Conv
 };
 
 struct IRGraph {

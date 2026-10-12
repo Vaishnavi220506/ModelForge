@@ -38,6 +38,8 @@ add_library(modelforge_core
 )
 
 target_include_directories(modelforge_core PUBLIC src)
+find_package(Threads REQUIRED)
+target_link_libraries(modelforge_core PUBLIC Threads::Threads)
 
 if(MODELFORGE_WITH_ONNX)
     find_package(Protobuf REQUIRED)

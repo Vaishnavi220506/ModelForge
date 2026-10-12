@@ -21,6 +21,7 @@
 #include "qnet.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,6 +32,14 @@ struct AnalysisOptions {
     bool affine = true;             // false: interval domain (ablation)
     bool perChannelScales = true;   // lowering: per-channel input/activation scales
                                     // folded into the next layer's weights
+    bool modularAccumulation = true;  // lowering: wrap-around accumulators sized
+                                      // by the proved final sum
+    bool provenance = true;         // split the error by source (needed for blame)
+    // Lowering: choose activation scales from these float inputs (the maximum
+    // activation seen, times `headroom`) instead of from proved domain-wide
+    // ranges. Values beyond the range saturate; the analysis models the clamp.
+    std::shared_ptr<const std::vector<std::vector<double>>> calibration;
+    double headroom = 1.0;
 };
 
 // Error sources: 0 = input quantisation, 1 + l = weights of layer l,

@@ -10,6 +10,8 @@
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <atomic>
+#include <thread>
 
 namespace modelforge {
 namespace {
@@ -128,9 +130,16 @@ RegionProof proveRegion(const DenseNetwork& network, const QProgram& program,
                         const CertRegion& region, const ProofOptions& options) {
     RegionProof proof;
     bool failed = false;
+    AnalysisOptions fast = options.analysis;
+    fast.provenance = false;  // blame is only needed where the proof fails
+    const auto blameAt = [&](const Box& box) {
+        AnalysisOptions withBlame = options.analysis;
+        withBlame.provenance = true;
+        return analyzeRegion(network, program, box, withBlame, region.refClass).blame;
+    };
     std::function<bool(const Box&, int)> prove = [&](const Box& box, int depth) -> bool {
         ++proof.analyses;
-        const auto analysis = analyzeRegion(network, program, box, options.analysis, region.refClass);
+        const auto analysis = analyzeRegion(network, program, box, fast, region.refClass);
         const bool ok = options.referenceOnly ? analysis.refCertified : analysis.quantCertified;
         if (ok) {
             proof.tree.push_back({-1, 0.0});
@@ -139,7 +148,7 @@ RegionProof proveRegion(const DenseNetwork& network, const QProgram& program,
         }
         if (depth >= options.maxDepth || proof.analyses + 2 > options.maxAnalyses) {
             failed = true;
-            proof.blame = analysis.blame;
+            if (!options.referenceOnly) proof.blame = blameAt(box);
             proof.descent = analysis.descentDirection;
             proof.failingLeaf = box;
             return false;
@@ -157,7 +166,7 @@ RegionProof proveRegion(const DenseNetwork& network, const QProgram& program,
         }
         if (best < 0.0) {  // a point box that cannot be proved
             failed = true;
-            proof.blame = analysis.blame;
+            if (!options.referenceOnly) proof.blame = blameAt(box);
             proof.descent = analysis.descentDirection;
             proof.failingLeaf = box;
             return false;
@@ -256,6 +265,31 @@ double configCost(const QProgram& program, CostModel cost) {
     return (c.idealBits + activationBits) / 8.0;
 }
 
+namespace {
+
+// Runs body(r) for every index in `order` on all cores. Each region is
+// independent; results go to per-region slots, so the outcome does not depend
+// on the schedule (except which failure stops an early-exit run first).
+void parallelFor(const std::vector<std::size_t>& order, const std::function<bool(std::size_t)>& body) {
+    std::atomic<std::size_t> next{0};
+    std::atomic<bool> stop{false};
+    const std::size_t workers =
+        std::max<std::size_t>(1, std::min<std::size_t>(std::thread::hardware_concurrency(), 8));
+    const auto work = [&]() {
+        for (;;) {
+            const std::size_t k = next.fetch_add(1);
+            if (k >= order.size() || stop.load()) return;
+            if (!body(order[k])) stop.store(true);
+        }
+    };
+    std::vector<std::thread> threads;
+    for (std::size_t t = 1; t < workers; ++t) threads.emplace_back(work);
+    work();
+    for (auto& thread : threads) thread.join();
+}
+
+}  // namespace
+
 std::vector<bool> referenceRobustRegions(const DenseNetwork& network, const Box& domain,
                                          const std::vector<CertRegion>& regions,
                                          const ProofOptions& options) {
@@ -265,9 +299,14 @@ std::vector<bool> referenceRobustRegions(const DenseNetwork& network, const Box&
     if (!program) return robust;
     ProofOptions reference = options;
     reference.referenceOnly = true;
-    for (std::size_t r = 0; r < regions.size(); ++r) {
-        robust[r] = proveRegion(network, *program, regions[r], reference).proved;
-    }
+    std::vector<char> proved(regions.size(), 0);
+    std::vector<std::size_t> order(regions.size());
+    std::iota(order.begin(), order.end(), 0);
+    parallelFor(order, [&](std::size_t r) {
+        proved[r] = proveRegion(network, *program, regions[r], reference).proved;
+        return true;
+    });
+    for (std::size_t r = 0; r < regions.size(); ++r) robust[r] = proved[r] != 0;
     return robust;
 }
 
@@ -296,53 +335,92 @@ Evaluation evaluateProgram(const DenseNetwork& network, const QProgram& program,
         evaluation.status[r].name = regions[r].name;
         evaluation.status[r].excluded = !robust[r];
     }
-    for (std::size_t r : order) {
-        if (!robust[r]) continue;
-        auto& status = evaluation.status[r];
-        std::vector<double> blame;
+    struct Slot {
         bool failed = false;
+        std::vector<double> blame;
+        std::size_t analyses = 0, falsifierCalls = 0, falsifierHits = 0;
+        std::optional<Counterexample> counterexample;
+    };
+    std::vector<Slot> slots(regions.size());
+    AnalysisOptions fast = proofOptions.analysis;
+    fast.provenance = false;
+    parallelFor(order, [&](std::size_t r) {
+        if (!robust[r]) return true;
+        auto& status = evaluation.status[r];
+        auto& slot = slots[r];
         if (falsifyBudget > 0) {
             // Cheap concrete search first: a real counterexample settles the
             // region without an expensive proof attempt.
-            const auto root = analyzeRegion(network, program, regions[r].box, proofOptions.analysis, regions[r].refClass);
-            ++evaluation.analyses;
+            const auto root = analyzeRegion(network, program, regions[r].box, fast, regions[r].refClass);
+            ++slot.analyses;
             if (root.quantCertified) {
                 status.proved = true;
                 status.proof.proved = true;
                 status.proof.tree = {{-1, 0.0}};
                 status.proof.analyses = status.proof.leaves = 1;
-                continue;
+                return true;
             }
-            ++evaluation.falsifierCalls;
-            const auto cex = falsifyRegion(network, program, regions[r], root.descentDirection,
-                                           falsifyBudget, seed + static_cast<std::uint32_t>(r));
+            ++slot.falsifierCalls;
+            const auto cex = falsifyRegion(network, program, regions[r], root.descentDirection, falsifyBudget,
+                                           seed + static_cast<std::uint32_t>(r));
             if (cex) {
-                ++evaluation.falsifierHits;
+                ++slot.falsifierHits;
                 status.counterexample = true;
-                evaluation.counterexamples.push_back(*cex);
-                blame = root.blame;
-                failed = true;
+                slot.counterexample = *cex;
+                AnalysisOptions withBlame = proofOptions.analysis;
+                withBlame.provenance = true;
+                slot.blame = analyzeRegion(network, program, regions[r].box, withBlame, regions[r].refClass).blame;
+                ++slot.analyses;
+                slot.failed = true;
             }
         }
-        if (!failed) {
+        if (!slot.failed) {
             status.proof = proveRegion(network, program, regions[r], proofOptions);
-            evaluation.analyses += status.proof.analyses;
+            slot.analyses += status.proof.analyses;
             status.proved = status.proof.proved;
             if (!status.proved) {
-                failed = true;
-                blame = status.proof.blame;
+                slot.failed = true;
+                slot.blame = status.proof.blame;
             }
         }
-        if (failed) {
-            ++evaluation.failing;
-            const double sum = std::accumulate(blame.begin(), blame.end(), 0.0);
-            for (std::size_t s = 0; s < sources && s < blame.size(); ++s) {
-                evaluation.blame[s] += sum > 0 ? blame[s] / sum : 0.0;
-            }
-            if (stopAtFirstFailure) break;
+        return !(slot.failed && stopAtFirstFailure);
+    });
+    for (std::size_t r : order) {
+        const auto& slot = slots[r];
+        evaluation.analyses += slot.analyses;
+        evaluation.falsifierCalls += slot.falsifierCalls;
+        evaluation.falsifierHits += slot.falsifierHits;
+        if (slot.counterexample) evaluation.counterexamples.push_back(*slot.counterexample);
+        if (!slot.failed) continue;
+        ++evaluation.failing;
+        const double sum = std::accumulate(slot.blame.begin(), slot.blame.end(), 0.0);
+        for (std::size_t s = 0; s < sources && s < slot.blame.size(); ++s) {
+            evaluation.blame[s] += sum > 0 ? slot.blame[s] / sum : 0.0;
         }
     }
     return evaluation;
+}
+
+// Deeper search on every region left unproved (in parallel).
+void falsifyUnproved(const DenseNetwork& network, const QProgram& program, const std::vector<CertRegion>& regions,
+                     std::vector<RegionStatus>& status, std::size_t budget, std::uint32_t seed, TunerResult& result) {
+    std::vector<std::size_t> open;
+    for (std::size_t r = 0; r < regions.size(); ++r) {
+        if (!status[r].excluded && !status[r].proved) open.push_back(r);
+    }
+    std::vector<std::optional<Counterexample>> found(regions.size());
+    parallelFor(open, [&](std::size_t r) {
+        found[r] = falsifyRegion(network, program, regions[r], status[r].proof.descent, budget,
+                                 seed + static_cast<std::uint32_t>(r));
+        return true;
+    });
+    for (std::size_t r : open) {
+        ++result.falsifierCalls;
+        if (!found[r]) continue;
+        ++result.falsifierHits;
+        status[r].counterexample = true;
+        result.counterexamples.push_back(*found[r]);
+    }
 }
 
 void summarise(TunerResult& result) {
@@ -375,18 +453,7 @@ TunerResult checkConfiguration(const DenseNetwork& network, const Box& domain,
     auto evaluation = evaluateProgram(network, *program, regions, robust, proof, 0, order, false, seed);
     result.analyses = evaluation.analyses;
     if (falsifyBudget > 0) {
-        for (std::size_t r = 0; r < regions.size(); ++r) {
-            auto& status = evaluation.status[r];
-            if (status.excluded || status.proved) continue;
-            ++result.falsifierCalls;
-            const auto cex = falsifyRegion(network, *program, regions[r], status.proof.descent, falsifyBudget,
-                                           seed + static_cast<std::uint32_t>(r));
-            if (cex) {
-                ++result.falsifierHits;
-                status.counterexample = true;
-                result.counterexamples.push_back(*cex);
-            }
-        }
+        falsifyUnproved(network, *program, regions, evaluation.status, falsifyBudget, seed, result);
     }
     result.regions = std::move(evaluation.status);
     result.config = config;
@@ -552,18 +619,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     std::iota(order.begin(), order.end(), 0);
     auto final = evaluateProgram(network, *program, regions, robust, options.proof, 0, order, false, options.seed);
     result.analyses += final.analyses;
-    for (std::size_t r = 0; r < regions.size(); ++r) {
-        auto& status = final.status[r];
-        if (status.excluded || status.proved) continue;
-        ++result.falsifierCalls;
-        const auto cex = falsifyRegion(network, *program, regions[r], status.proof.descent, 400,
-                                       options.seed + static_cast<std::uint32_t>(r));
-        if (cex) {
-            ++result.falsifierHits;
-            status.counterexample = true;
-            result.counterexamples.push_back(*cex);
-        }
-    }
+    falsifyUnproved(network, *program, regions, final.status, 400, options.seed, result);
     result.regions = std::move(final.status);
     result.config = config;
     result.program = std::move(*program);
@@ -593,7 +649,8 @@ bool writeCertificate(const std::string& path, const std::string& modelPath, con
     out << ", \"hi\": ";
     writeDoubles(out, program.domain.hi);
     out << "},\n  \"claims\": {\n    \"no_accumulator_overflow_on_domain\": true,\n"
-        << "    \"no_saturation_on_domain\": true,\n    \"accumulator_bits\": [";
+        << "    \"no_saturation_on_domain\": " << (program.saturationPossible ? "false" : "true")
+        << ",\n    \"scales\": \"" << (program.calibrated ? "calibrated" : "proved") << "\",\n    \"accumulator_bits\": [";
     for (std::size_t l = 0; l < program.layers.size(); ++l) out << (l ? ", " : "") << program.layers[l].accBits;
     out << "],\n    \"max_abs_logit_error_on_domain\": ";
     std::vector<double> claimed;

@@ -220,6 +220,43 @@ std::optional<std::vector<float>> executeIRTrace(
             case IROp::Softmax:
                 result = softmax(*first);
                 break;
+            case IROp::Conv: {
+                const auto* weight = findValue(graph, values, instruction.inputs.at(1));
+                const auto* bias = instruction.inputs.size() == 3 ? findValue(graph, values, instruction.inputs[2]) : nullptr;
+                const auto inInfo = graph.values.find(instruction.inputs.at(0));
+                const auto wInfo = graph.values.find(instruction.inputs.at(1));
+                if (weight == nullptr || inInfo == graph.values.end() || wInfo == graph.values.end()) {
+                    diagnostics.error("runtime", "Conv runtime tensor information is unavailable");
+                    return std::nullopt;
+                }
+                const auto C = inInfo->second.shape[1], H = inInfo->second.shape[2], W = inInfo->second.shape[3];
+                const auto M = wInfo->second.shape[0], KH = wInfo->second.shape[2], KW = wInfo->second.shape[3];
+                const auto OH = instruction.shape[2], OW = instruction.shape[3];
+                result.assign(static_cast<std::size_t>(M * OH * OW), 0.0f);
+                for (std::int64_t m = 0; m < M; ++m) {
+                    for (std::int64_t oy = 0; oy < OH; ++oy) {
+                        for (std::int64_t ox = 0; ox < OW; ++ox) {
+                            float sum = bias ? (*bias)[static_cast<std::size_t>(m)] : 0.0f;
+                            for (std::int64_t c = 0; c < C; ++c) {
+                                for (std::int64_t ky = 0; ky < KH; ++ky) {
+                                    for (std::int64_t kx = 0; kx < KW; ++kx) {
+                                        const auto iy = oy * instruction.stride + ky - instruction.pad;
+                                        const auto ix = ox * instruction.stride + kx - instruction.pad;
+                                        if (iy < 0 || iy >= H || ix < 0 || ix >= W) continue;
+                                        sum += (*weight)[static_cast<std::size_t>(((m * C + c) * KH + ky) * KW + kx)] *
+                                               (*first)[static_cast<std::size_t>((c * H + iy) * W + ix)];
+                                    }
+                                }
+                            }
+                            result[static_cast<std::size_t>((m * OH + oy) * OW + ox)] = sum;
+                        }
+                    }
+                }
+                break;
+            }
+            case IROp::Flatten:
+                result = *first;
+                break;
             case IROp::Input:
             case IROp::Return:
                 break;

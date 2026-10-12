@@ -3,16 +3,19 @@
 // ForgeCert, part 1: the integer-only target of ModelForge.
 //
 // A float model (IR) is lowered to a *quantised integer program* (QProgram):
-// every tensor is an integer array with a scale, every dense layer is an
-// integer dot product into an accumulator of an inferred width, followed by
-// fixed-point requantisation (an integer multiplier and a right shift). The
-// program uses no floating point after the input has been quantised, so the
-// emitted C99 runs on microcontrollers without an FPU.
+// every tensor is an integer array with per-channel scales, every linear
+// layer (dense or 2-D convolution) is an integer dot product into an
+// accumulator of a proved width, followed by fixed-point requantisation (an
+// integer multiplier and a right shift). The program uses no floating point
+// after the input has been quantised, so the emitted C99 runs on
+// microcontrollers without an FPU (AVR, Cortex-M0).
 //
-// The precision of every tensor is a compiler decision (PrecisionConfig).
-// ForgeCert chooses it so that the *emitted* program provably makes the same
-// decision as the float model on user-specified input regions (diffai.h,
-// certify.h).
+// Two width decisions are made from *proved* ranges (diffai.h):
+//   * the accumulator type: classical (every partial sum fits) or modular
+//     (partial sums may wrap around in unsigned arithmetic; only the final sum
+//     must fit, which the abstract interpretation bounds much more tightly);
+//   * the multiply type: 16-bit when |weight| * |activation| provably fits.
+// The precision of every tensor is chosen by the tuner (certify.h).
 
 #include "ir.h"
 
@@ -24,25 +27,60 @@
 
 namespace modelforge {
 
-// A chain of dense layers recovered from the IR (Gemm / MatMul+Add, optional
-// ReLU after every hidden layer). The output activation (Softmax, Sigmoid or
-// none) is order-preserving, so the decision is the argmax of the logits.
+enum class LayerKind { Dense, Conv };
+
+struct ConvShape {
+    std::size_t inC = 0, inH = 0, inW = 0;
+    std::size_t outC = 0, outH = 0, outW = 0;
+    std::size_t kH = 0, kW = 0;
+    std::size_t stride = 1, pad = 0;
+};
+
+// One term of an output neuron's dot product: input neuron x parameter.
+struct Tap {
+    std::uint32_t input = 0;
+    std::uint32_t weight = 0;
+};
+
+// A linear layer recovered from the IR, with optional ReLU. Dense layers come
+// from Gemm / MatMul+Add, convolutions from Conv (NCHW, batch 1). Flatten is
+// the identity on data and disappears.
 struct DenseLayer {
     std::string name;
+    LayerKind kind = LayerKind::Dense;
     std::size_t in = 0;
     std::size_t out = 0;
-    std::vector<double> weight;  // out x in, row-major: weight[o * in + i]
-    std::vector<double> bias;    // out
+    std::vector<double> weight;  // dense: out x in; conv: outC x inC x kH x kW
+    std::vector<double> bias;    // one per output channel
     bool relu = false;
+    ConvShape conv;
+    std::vector<std::vector<Tap>> taps;  // per output neuron
+
+    std::size_t channels() const { return kind == LayerKind::Conv ? conv.outC : out; }
+    std::size_t channelOf(std::size_t o) const {
+        return kind == LayerKind::Conv ? o / (conv.outH * conv.outW) : o;
+    }
+    std::size_t weightChannel(std::size_t w) const {
+        return kind == LayerKind::Conv ? w / (conv.inC * conv.kH * conv.kW) : w / in;
+    }
 };
+
+// Fills `taps` from the layer kind and shape.
+void buildTaps(DenseLayer& layer);
 
 struct DenseNetwork {
     std::string name;
     std::size_t inputs = 0;
     std::size_t classes = 0;
+    std::vector<std::size_t> inputShape;  // {C, H, W} for images, {n} otherwise
     std::vector<DenseLayer> layers;
-    std::string outputActivation;  // "softmax", "sigmoid" or "none"
+    std::string outputActivation;   // "softmax", "sigmoid" or "none"
     bool singleLogitPadded = false; // a 1-logit head got an implicit 0 logit
+
+    // Input neurons that share one scale (a conv first layer shares its
+    // weights across positions, so all pixels of one channel share a scale).
+    std::size_t inputGroupOf(std::size_t i) const;
+    std::size_t parameterCount() const;
 };
 
 std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::string& error);
@@ -76,46 +114,61 @@ struct PrecisionConfig {
 PrecisionConfig uniformConfig(std::size_t layers, int weightBits, int activationBits);
 
 struct QLayer {
+    LayerKind kind = LayerKind::Dense;
+    ConvShape conv;
     std::size_t in = 0;
     std::size_t out = 0;
+    std::size_t channels = 0;
     bool relu = false;
     int weightBits = 8;
-    std::vector<std::int32_t> qWeight;  // out x in
     // Weights are quantised after folding the input scales in: the integer
-    // weight approximates W[o,i] * inScale[i] / weightScale[o], so per-channel
-    // input scales cost nothing at run time.
+    // weight approximates W[w] * inScale(input) / weightScale[channel], so
+    // per-channel input scales cost nothing at run time.
+    std::vector<std::int32_t> qWeight;  // same layout as DenseLayer::weight
     std::vector<double> weightScale;    // per output channel
-    std::vector<std::int64_t> qBias;    // at scale weightScale[o]
-    std::vector<double> inScale;        // per input channel
-    std::vector<double> outScale;       // per output channel (one shared value for logits)
+    std::vector<std::int64_t> qBias;    // per output channel, at scale weightScale
+    std::vector<double> inScale;        // per input neuron
+    std::vector<double> outScale;       // per output neuron (shared within a channel group)
     int outBits = 8;
     bool outUnsigned = true;
     std::int64_t outMin = 0;
     std::int64_t outMax = 255;
-    std::vector<std::int32_t> multiplier;  // requantisation: q = round(acc * m / 2^shift)
+    std::vector<std::int32_t> multiplier;  // per channel: q = round(acc * m / 2^shift)
     std::vector<int> shift;
-    int accBits = 32;                      // 16, 32 or 64; proved by range analysis
-    std::vector<std::int64_t> accBound;    // proved bound on |every partial sum|
+    int accBits = 32;                      // 16, 32 or 64
+    bool modular = false;                  // wrap-around accumulation, final sum proved to fit
+    int mulBits = 32;                      // 16: every product provably fits int16
+    std::vector<std::int64_t> prefixBound; // classical bound on every partial sum
+    std::vector<std::int64_t> finalBound;  // proved bound on the final sum
     std::vector<std::int64_t> qOutLo;      // proved range of the quantised output
     std::vector<std::int64_t> qOutHi;
+    std::vector<std::vector<Tap>> taps;
+
+    std::size_t channelOf(std::size_t o) const {
+        return kind == LayerKind::Conv ? o / (conv.outH * conv.outW) : o;
+    }
 };
 
 struct QProgram {
     std::string name;
     std::size_t inputs = 0;
     std::size_t classes = 0;
+    std::vector<std::size_t> inputShape;
     int inputBits = 8;
+    bool inputUnsigned = false;      // non-negative domain: codes 0 .. 2^bits - 1
     std::vector<double> inputScale;  // per input feature
     std::int64_t inputMin = -127;
     std::int64_t inputMax = 127;
     Box domain;  // the input domain every global claim is about
     std::vector<QLayer> layers;
     PrecisionConfig config;
+    bool calibrated = false;          // scales from data, not from proved ranges
+    bool saturationPossible = false;  // some clamp can trigger on the domain (modelled)
 };
 
 // Error radius of input quantisation in units of the input scale. The C code
 // computes x * (1/s) in float32; this covers that rounding as well.
-double inputQuantisationSlack(int inputBits);
+double inputQuantisationSlack(std::int64_t inputMax);
 
 // Exactly what the emitted C does (float32 input scaling, round half away
 // from zero, saturation).
@@ -124,11 +177,14 @@ std::vector<std::int64_t> quantizeInput(const QProgram& program, const std::vect
 struct IntegerRun {
     std::vector<std::int64_t> logits;
     int decision = -1;
-    bool accumulatorOverflow = false;  // a partial sum left the accumulator type
+    bool accumulatorOverflow = false;  // the C accumulator would not hold the sum
+    bool productOverflow = false;      // a product left the multiply type
     bool saturated = false;            // a requantised value hit the clamp
 };
 
-// Bit-exact integer semantics of the emitted C program.
+// Bit-exact integer semantics of the emitted C program (in the absence of
+// overflow, which is flagged; modular accumulation is exact iff the final
+// sum fits).
 IntegerRun runInteger(const QProgram& program, const std::vector<std::int64_t>& qInput);
 IntegerRun runInteger(const QProgram& program, const std::vector<double>& x);
 std::vector<double> dequantizedLogits(const QProgram& program, const IntegerRun& run);
@@ -136,19 +192,23 @@ std::vector<double> dequantizedLogits(const QProgram& program, const IntegerRun&
 // Rounding right shift used everywhere: floor((t + 2^(s-1)) / 2^s).
 std::int64_t roundShift(std::int64_t value, int shift);
 
-// Storage of the emitted arrays: weights (packed 4-bit, int8 or int16),
-// biases, requantisation constants, and the activation buffers (RAM).
+// Storage of the emitted arrays (flash) and activation buffers (RAM).
 struct ProgramCost {
     double weightBytes = 0;  // flash for weights only
-    double flashBytes = 0;   // weights + biases + multipliers + shifts
+    double flashBytes = 0;   // weights + biases + multipliers + shifts + input scales
     double ramBytes = 0;     // two largest consecutive activation buffers
     double idealBits = 0;    // sum of weightBits * |W| (sub-byte packing)
 };
 ProgramCost programCost(const QProgram& program);
 double float32Bytes(const DenseNetwork& network);  // weights + biases in float32
+std::size_t multiplyAccumulates(const DenseNetwork& network);
 
 // Emits model_q.h, model_q.c (integer-only C99), main_q.c and CMakeLists.txt.
 // The data arrays in model_q.c are what the independent checker reads.
 bool emitIntegerC(const QProgram& program, const std::string& directory, std::string& error);
+
+// Emits model_f.h / model_f.c: the float32 reference as plain C99 (the
+// baseline a microcontroller without FPU runs with soft-float).
+bool emitFloatC(const DenseNetwork& network, const std::string& directory, std::string& error);
 
 }  // namespace modelforge

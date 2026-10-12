@@ -73,6 +73,11 @@ GuardianDecision checkCandidate(const IRGraph& before,
 GuardianReport optimizeWithGuardian(IRGraph& graph, DiagnosticEngine& diagnostics) {
     GuardianReport result;
     result.acceptedOptimizations.instructionsBefore = graph.instructions.size();
+    // Guardian's boundary probes are defined for dense graphs; convolutional
+    // graphs keep their instructions unchanged (no graph pass applies to them).
+    for (const auto& instruction : graph.instructions) {
+        if (instruction.operation == IROp::Conv || instruction.operation == IROp::Flatten) return result;
+    }
     for (const auto pass : {OptimizationPass::ConstantFolding,
                             OptimizationPass::DenseReluFusion,
                             OptimizationPass::DeadNodeRemoval}) {
