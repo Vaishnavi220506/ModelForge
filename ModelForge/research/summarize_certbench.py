@@ -1,7 +1,8 @@
 """Summarise modelforge_certbench results into the paper's tables.
 
 Author: Vaishnavi
-Usage: python summarize_certbench.py certbench.json   (standard library only)
+Usage: python summarize_certbench.py certbench.json [more.json ...]   (standard library only)
+Several files (e.g. one per suite) are merged.
 """
 
 import json
@@ -75,10 +76,13 @@ def paired(cases, a, b, key, only_certified=True):
         print(f"  {a} vs {b} on {key}: smaller {smaller}, larger {larger}, tie {tie}, mean ratio {ratio / n:.3f} (n={n})")
 
 
-def main(path):
-    data = json.load(open(path))
-    cases = data["cases"]
-    print(f"{len(cases)} cases, {data['seconds']:.0f} s total")
+def main(paths):
+    cases, seconds = [], 0.0
+    for path in paths:
+        data = json.load(open(path))
+        cases += data["cases"]
+        seconds += data.get("seconds", 0.0)
+    print(f"{len(cases)} cases, {seconds:.0f} s total")
     for suite in ("tabular", "image", "zoo"):
         table([c for c in cases if suite_of(c) == suite], suite)
     print("\nPaired comparisons (cases where both certify every region):")
@@ -115,4 +119,4 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "certbench.json")
+    main(sys.argv[1:] or ["certbench.json"])

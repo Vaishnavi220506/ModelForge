@@ -545,7 +545,10 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     // would only drive every width to the top. They are still attempted for
     // the certificate at the end.
     std::vector<bool> target = robust;
-    if (options.reachableTargets) {
+    // Only on large inputs: provability is not monotone in precision (a
+    // mixed configuration can prove a region that uniform 16 bits cannot),
+    // so small models, where climbing is cheap, keep every robust region.
+    if (options.reachableTargets && large) {
         if (const auto top = lower(uniformConfig(L, wLadder.back(), aLadder.back()))) {
             const auto evaluation = evaluateProgram(network, *top, regions, robust, options.proof,
                                                     options.falsifyFirst ? options.falsifyBudget : 0, order, false,
