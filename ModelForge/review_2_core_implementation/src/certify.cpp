@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <map>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -58,6 +59,16 @@ int nextStorageClass(const std::vector<int>& ladder, int value, int kind) {
         if (rung > value && storage(rung) > storage(value)) return rung;
     }
     return 0;
+}
+
+// Largest rung whose C storage type is narrower.
+int previousStorageClass(const std::vector<int>& ladder, int value, int kind) {
+    const auto storage = [kind](int bits) { return kind == 1 ? (bits <= 4 ? 0 : bits <= 8 ? 1 : 2) : (bits <= 8 ? 0 : 1); };
+    int best = 0;
+    for (int rung : ladder) {
+        if (rung < value && storage(rung) < storage(value)) best = rung;
+    }
+    return best;
 }
 
 double marginOf(const std::vector<std::int64_t>& logits, int cls) {
@@ -590,60 +601,96 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     }
 
     if (allProved && options.minimize) {
-        // Local search: undo refinements that turned out to be unnecessary and,
-        // for objectives where more bits can be cheaper (latency: 8-bit weights
-        // avoid nibble unpacking), try one rung up as well. Any certified move
-        // that lowers the cost is taken; repeat until none does.
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            const double cost = configCost(*program, options.cost);
-            struct Move {
-                double saving;
-                std::size_t source;
-                int direction;
-            };
-            std::vector<Move> candidates;
-            for (std::size_t s = 0; s < sources; ++s) {
-                const Slot slot = slotOf(s, L);
-                if (slot.kind < 0) continue;
-                for (int direction : {-1, +1, +2}) {
-                    PrecisionConfig trial = config;
-                    // +2: jump to the next storage class (packed 4-bit -> int8 -> int16
-                    // weights, 8-bit -> 16-bit activations), which can be faster.
-                    const int value = direction == 2 ? nextStorageClass(ladderFor(slot), slotValue(trial, slot), slot.kind)
-                                                     : nextRung(ladderFor(slot), slotValue(trial, slot), direction);
-                    if (value == 0) continue;
-                    slotValue(trial, slot) = value;
-                    const auto trialProgram = lower(trial);
-                    if (!trialProgram) continue;
-                    const double saving = cost - configCost(*trialProgram, options.cost);
-                    if (saving > 1e-9) candidates.push_back({saving, s, direction});
+        // Local search around a certified configuration. Moves: one rung down or
+        // up, or a jump to the next / previous storage class (packed 4-bit, int8,
+        // int16 weights; 1- or 2-byte activations); with compound moves, also
+        // every pair of such moves on two different sources (e.g. fewer weight
+        // bits and more activation bits, which keeps 16-bit multiplies). Any
+        // certified move that lowers the cost is taken, until none does.
+        std::map<std::string, double> costCache;
+        const auto costOf = [&](const PrecisionConfig& c) -> double {
+            const auto key = c.describe();
+            const auto hit = costCache.find(key);
+            if (hit != costCache.end()) return hit->second;
+            const auto p = lower(c);
+            const double value = p ? configCost(*p, options.cost) : std::numeric_limits<double>::infinity();
+            costCache[key] = value;
+            return value;
+        };
+        const auto apply = [&](PrecisionConfig& c, std::size_t source, int direction) {
+            const Slot slot = slotOf(source, L);
+            if (slot.kind < 0) return false;
+            const int value = slotValue(c, slot);
+            const int next = direction == 2    ? nextStorageClass(ladderFor(slot), value, slot.kind)
+                             : direction == -2 ? previousStorageClass(ladderFor(slot), value, slot.kind)
+                                               : nextRung(ladderFor(slot), value, direction);
+            if (next == 0 || next == value) return false;
+            slotValue(c, slot) = next;
+            return true;
+        };
+        const auto certifies = [&](const QProgram& p) {
+            const auto evaluation = evaluateProgram(network, p, regions, robust, options.proof, 0, order, true, options.seed);
+            result.analyses += evaluation.analyses;
+            return evaluation.failing == 0;
+        };
+        const auto localSearch = [&](PrecisionConfig current, const std::string& tag) {
+            for (;;) {
+                const double cost = costOf(current);
+                std::vector<std::pair<double, PrecisionConfig>> moves;
+                const int directions[] = {-1, +1, -2, +2};
+                for (std::size_t s1 = 0; s1 < sources; ++s1) {
+                    for (int d1 : directions) {
+                        PrecisionConfig one = current;
+                        if (!apply(one, s1, d1)) continue;
+                        const double c1 = costOf(one);
+                        if (c1 < cost - 1e-9) moves.push_back({cost - c1, one});
+                        if (!options.compoundMoves) continue;
+                        for (std::size_t s2 = s1 + 1; s2 < sources; ++s2) {
+                            for (int d2 : directions) {
+                                PrecisionConfig two = one;
+                                if (!apply(two, s2, d2)) continue;
+                                const double c2 = costOf(two);
+                                if (c2 < cost - 1e-9) moves.push_back({cost - c2, two});
+                            }
+                        }
+                    }
                 }
-            }
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const Move& x, const Move& y) { return x.saving > y.saving; });
-            for (const auto& move : candidates) {
-                const Slot slot = slotOf(move.source, L);
-                PrecisionConfig trial = config;
-                slotValue(trial, slot) =
-                    move.direction == 2 ? nextStorageClass(ladderFor(slot), slotValue(trial, slot), slot.kind)
-                                        : nextRung(ladderFor(slot), slotValue(trial, slot), move.direction);
-                auto trialProgram = lower(trial);
-                if (!trialProgram) continue;
-                const auto evaluation = evaluateProgram(network, *trialProgram, regions, robust, options.proof,
-                                                        0, order, true, options.seed);
-                result.analyses += evaluation.analyses;
-                if (evaluation.failing == 0) {
-                    result.log.push_back(std::string("improve: ") + (move.direction < 0 ? "lower " : "widen ") +
-                                         errorSourceName(move.source, L) + " -> " + trial.describe());
-                    config = trial;
-                    program = std::move(trialProgram);
-                    changed = true;
+                std::sort(moves.begin(), moves.end(),
+                          [](const auto& x, const auto& y) { return x.first > y.first; });
+                bool improved = false;
+                for (const auto& move : moves) {
+                    const auto p = lower(move.second);
+                    if (!p || !certifies(*p)) continue;
+                    result.log.push_back(tag + ": " + current.describe() + " -> " + move.second.describe());
+                    current = move.second;
+                    improved = true;
                     break;
                 }
+                if (!improved) return current;
+            }
+        };
+        PrecisionConfig best = localSearch(config, "improve");
+        if (options.multiStart) {
+            // Second start: the cheapest certified uniform configuration.
+            std::vector<std::pair<double, PrecisionConfig>> uniform;
+            for (int w : wLadder) {
+                for (int a : aLadder) {
+                    const auto c = uniformConfig(L, w, a);
+                    uniform.push_back({costOf(c), c});
+                }
+            }
+            std::sort(uniform.begin(), uniform.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+            for (const auto& candidate : uniform) {
+                if (candidate.first >= costOf(best)) break;  // cannot beat what we have
+                const auto p = lower(candidate.second);
+                if (!p || !certifies(*p)) continue;
+                const auto other = localSearch(candidate.second, "restart");
+                if (costOf(other) < costOf(best)) best = other;
+                break;
             }
         }
+        config = best;
+        program = lower(config);
     }
 
     // Final proofs (the certificate) and a deeper search on what is left.

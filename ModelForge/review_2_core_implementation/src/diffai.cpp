@@ -7,16 +7,23 @@
 namespace modelforge {
 namespace {
 
-// Affine form c + sum_k a[k] * eta_k with eta_k in [-1, 1]. Missing
-// coefficients are zero, so forms grow lazily as fresh symbols appear.
+// Affine form c + sum_k a_k * eta_k with eta_k in [-1, 1], stored sparsely as
+// (symbol, coefficient) pairs sorted by symbol. A first-layer convolution
+// neuron touches a few dozen symbols out of thousands, so sparse forms keep
+// image models (thousands of inputs and neurons) cheap.
+struct Term {
+    std::uint32_t symbol;
+    double value;
+};
+
 struct Form {
     double c = 0.0;
-    std::vector<double> a;
+    std::vector<Term> a;
 };
 
 double radius(const Form& f) {
     double r = 0.0;
-    for (double v : f.a) r += std::fabs(v);
+    for (const auto& t : f.a) r += std::fabs(t.value);
     return r;
 }
 
@@ -31,19 +38,98 @@ double upper(const Form& f) {
     return f.c + r + slack(f, r);
 }
 
+// dst += alpha * src (sorted merge).
 void axpy(Form& dst, double alpha, const Form& src) {
     if (alpha == 0.0) return;
     dst.c += alpha * src.c;
-    if (dst.a.size() < src.a.size()) dst.a.resize(src.a.size(), 0.0);
-    for (std::size_t k = 0; k < src.a.size(); ++k) dst.a[k] += alpha * src.a[k];
+    if (src.a.empty()) return;
+    if (dst.a.empty()) {
+        dst.a.reserve(src.a.size());
+        for (const auto& t : src.a) dst.a.push_back({t.symbol, alpha * t.value});
+        return;
+    }
+    std::vector<Term> merged;
+    merged.reserve(dst.a.size() + src.a.size());
+    std::size_t i = 0, j = 0;
+    while (i < dst.a.size() || j < src.a.size()) {
+        if (j == src.a.size() || (i < dst.a.size() && dst.a[i].symbol < src.a[j].symbol)) {
+            merged.push_back(dst.a[i++]);
+        } else if (i == dst.a.size() || src.a[j].symbol < dst.a[i].symbol) {
+            merged.push_back({src.a[j].symbol, alpha * src.a[j].value});
+            ++j;
+        } else {
+            merged.push_back({dst.a[i].symbol, dst.a[i].value + alpha * src.a[j].value});
+            ++i;
+            ++j;
+        }
+    }
+    dst.a = std::move(merged);
+}
+
+double coefficientOf(const Form& f, std::size_t symbol) {
+    const auto s = static_cast<std::uint32_t>(symbol);
+    auto it = std::lower_bound(f.a.begin(), f.a.end(), s, [](const Term& t, std::uint32_t k) { return t.symbol < k; });
+    return it != f.a.end() && it->symbol == s ? it->value : 0.0;
 }
 
 bool isZero(const Form& f) { return f.c == 0.0 && f.a.empty(); }
 
 void addSymbol(Form& f, std::size_t symbol, double coefficient) {
-    if (f.a.size() <= symbol) f.a.resize(symbol + 1, 0.0);
-    f.a[symbol] += coefficient;
+    const auto s = static_cast<std::uint32_t>(symbol);
+    if (f.a.empty() || f.a.back().symbol < s) {
+        f.a.push_back({s, coefficient});  // fresh symbols are always the largest
+        return;
+    }
+    auto it = std::lower_bound(f.a.begin(), f.a.end(), s, [](const Term& t, std::uint32_t k) { return t.symbol < k; });
+    if (it != f.a.end() && it->symbol == s) {
+        it->value += coefficient;
+    } else {
+        f.a.insert(it, {s, coefficient});
+    }
 }
+
+// Sparse accumulator for sums of many forms (the affine step): O(total terms).
+class Accumulator {
+public:
+    void reserve(std::size_t symbols) {
+        if (value_.size() < symbols) {
+            value_.resize(symbols, 0.0);
+            used_.resize(symbols, 0);
+        }
+    }
+    void add(double alpha, const Form& f) {
+        if (alpha == 0.0) return;
+        constant_ += alpha * f.c;
+        for (const auto& t : f.a) {
+            if (!used_[t.symbol]) {
+                used_[t.symbol] = 1;
+                touched_.push_back(t.symbol);
+            }
+            value_[t.symbol] += alpha * t.value;
+        }
+    }
+    void addConstant(double v) { constant_ += v; }
+    Form take() {
+        std::sort(touched_.begin(), touched_.end());
+        Form f;
+        f.c = constant_;
+        f.a.reserve(touched_.size());
+        for (auto k : touched_) {
+            if (value_[k] != 0.0) f.a.push_back({k, value_[k]});
+            value_[k] = 0.0;
+            used_[k] = 0;
+        }
+        touched_.clear();
+        constant_ = 0.0;
+        return f;
+    }
+
+private:
+    std::vector<double> value_;
+    std::vector<char> used_;
+    std::vector<std::uint32_t> touched_;
+    double constant_ = 0.0;
+};
 
 struct Neuron {
     Form r;               // float model
@@ -108,23 +194,26 @@ public:
                                std::size_t weightSource) const {
         std::vector<Neuron> out(layer.out);
         const std::size_t ws = part(weightSource);
+        Accumulator sum;
+        sum.reserve(symbols_);
         for (std::size_t o = 0; o < layer.out; ++o) {
             Neuron& n = out[o];
             n.e.assign(sources_, Form{});
             const std::size_t c = layer.channelOf(o);
-            n.r.c = layer.bias[c];
             const auto& taps = layer.taps[o];
-            for (std::size_t k = 0; k < taps.size(); ++k) {
-                const double w = layer.weight[taps[k].weight];
-                const double wq = tapWeight[o][k];
-                const Neuron& x = in[taps[k].input];
-                axpy(n.r, w, x.r);
-                axpy(n.e[ws], wq - w, x.r);
-                for (std::size_t s = 0; s < sources_; ++s) {
-                    if (!isZero(x.e[s])) axpy(n.e[s], wq, x.e[s]);
+            for (std::size_t k = 0; k < taps.size(); ++k) sum.add(layer.weight[taps[k].weight], in[taps[k].input].r);
+            sum.addConstant(layer.bias[c]);
+            n.r = sum.take();
+            for (std::size_t s = 0; s < sources_; ++s) {
+                for (std::size_t k = 0; k < taps.size(); ++k) {
+                    const Neuron& x = in[taps[k].input];
+                    const double wq = tapWeight[o][k];
+                    if (s == ws) sum.add(wq - layer.weight[taps[k].weight], x.r);
+                    if (!isZero(x.e[s])) sum.add(wq, x.e[s]);
                 }
+                if (s == ws) sum.addConstant(bhat[o] - layer.bias[c]);
+                n.e[s] = sum.take();
             }
-            n.e[ws].c += bhat[o] - layer.bias[c];
         }
         return out;
     }
@@ -448,8 +537,8 @@ RegionAnalysis analyzeRegion(const DenseNetwork& network, const QProgram& progra
     result.splitScore.assign(n, 0.0);
     result.descentDirection.assign(n, 0.0);
     for (std::size_t i = 0; i < n; ++i) {
-        const double qc = i < worstQuant.a.size() ? worstQuant.a[i] : 0.0;
-        const double rc = i < worstRef.a.size() ? worstRef.a[i] : 0.0;
+        const double qc = coefficientOf(worstQuant, i);
+        const double rc = coefficientOf(worstRef, i);
         result.splitScore[i] = result.refCertified ? std::fabs(qc) : std::fabs(rc);
         result.descentDirection[i] = qc > 0 ? -1.0 : qc < 0 ? 1.0 : 0.0;
     }

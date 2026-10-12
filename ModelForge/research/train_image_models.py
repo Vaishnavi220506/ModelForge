@@ -17,7 +17,11 @@ Outputs (committed, so the C++ tools never need Python):
   review_2_core_implementation/models/image/<dataset>_calib.csv  (500 training images: calibration/domain)
   research/results/image_models.json                              (test accuracy on all 10,000)
 
-Usage: python train_image_models.py <dir with the idx .gz files>   (needs torch, numpy)
+  cifar_cnn  Conv 3->16 (3x3, stride 2, pad 1) -> ReLU -> Conv 16->32 (3x3, stride 2, pad 1)
+             -> ReLU -> Flatten -> Dense 2048x10            (CIFAR-10, 32x32 RGB)
+
+Usage: python train_image_models.py <dir with the idx .gz files> [<dir with CIFAR-10 parquet files>]
+(needs torch, numpy; CIFAR also pandas + pillow)
 Download: MNIST from https://storage.googleapis.com/cvdf-datasets/mnist/ and
 Fashion-MNIST from https://github.com/zalandoresearch/fashion-mnist (data/fashion).
 """
@@ -53,6 +57,28 @@ def load(directory, prefix):
             load_idx(d / f"{prefix}t10k-images-idx3-ubyte.gz"), load_idx(d / f"{prefix}t10k-labels-idx1-ubyte.gz"))
 
 
+def load_cifar(directory):
+    import io
+
+    import pandas as pd
+    from PIL import Image
+
+    def read(name):
+        frame = pd.read_parquet(Path(directory) / name)
+        images = np.stack([np.asarray(Image.open(io.BytesIO(item["bytes"])).convert("RGB"), dtype=np.float32)
+                           for item in frame["img"]]) / 255.0
+        # NHWC -> NCHW, flattened in C, H, W order (ModelForge's layout)
+        return images.transpose(0, 3, 1, 2).reshape(len(frame), -1), frame["label"].to_numpy().astype(np.int64)
+    x_train, y_train = read("train-00000-of-00001.parquet")
+    x_test, y_test = read("test-00000-of-00001.parquet")
+    return x_train, y_train, x_test, y_test
+
+
+def cifar_cnn():
+    return nn.Sequential(nn.Conv2d(3, 16, 3, stride=2, padding=1), nn.ReLU(),
+                         nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(), nn.Flatten(), nn.Linear(2048, 10))
+
+
 def mlp():
     return nn.Sequential(nn.Flatten(), nn.Linear(784, 32), nn.ReLU(), nn.Linear(32, 10))
 
@@ -62,9 +88,9 @@ def cnn():
                          nn.Flatten(), nn.Linear(288, 10))
 
 
-def train(model, x, y, epochs, seed):
+def train(model, x, y, epochs, seed, shape=(1, 28, 28)):
     torch.manual_seed(seed)
-    xs = torch.tensor(x).reshape(-1, 1, 28, 28)
+    xs = torch.tensor(x).reshape(-1, *shape)
     ys = torch.tensor(y)
     optimiser = torch.optim.Adam(model.parameters(), lr=2e-3)
     for _ in range(epochs):
@@ -82,12 +108,12 @@ def values(array):
     return ",".join(f"{v:.9g}" for v in np.asarray(array, dtype=np.float32).ravel())
 
 
-def manifest(name, model, arch):
-    lines = [f"# {name}: trained with PyTorch on 28x28 images, pixels in [0, 1] (author: Vaishnavi).",
+def manifest(name, model, arch, shape=(1, 28, 28)):
+    lines = [f"# {name}: trained with PyTorch on {shape[1]}x{shape[2]} images, pixels in [0, 1] (author: Vaishnavi).",
              f"model {name}"]
     layers = [m for m in model if isinstance(m, (nn.Linear, nn.Conv2d))]
     if arch == "cnn":
-        lines.append("input x float32 1,1,28,28")
+        lines.append(f"input x float32 1,{shape[0]},{shape[1]},{shape[2]}")
     else:
         lines.append("input x float32 1,784")
     lines.append("output y float32 1,10")
@@ -144,6 +170,23 @@ def main():
             parameters = sum(p.numel() for p in model.parameters())
             results["models"][name] = {"test_accuracy": accuracy, "parameters": parameters}
             print(f"{name}: test accuracy {accuracy:.4f}, {parameters} parameters")
+    if len(sys.argv) > 2:
+        x_train, y_train, x_test, y_test = load_cifar(sys.argv[2])
+        shape = (3, 32, 32)
+        with open(OUT / "cifar_test.csv", "w") as handle:  # 100 rows each: 3,072 values per image
+            for row, label in zip(x_test[:100], y_test[:100]):
+                handle.write(values(row) + f",{int(label)}\n")
+        with open(OUT / "cifar_calib.csv", "w") as handle:
+            for row, label in zip(x_train[:100], y_train[:100]):
+                handle.write(values(row) + f",{int(label)}\n")
+        model = train(cifar_cnn(), x_train, y_train, 15, seed=0, shape=shape).eval()
+        with torch.no_grad():
+            logits = model(torch.tensor(x_test).reshape(-1, *shape))
+        accuracy = float((logits.argmax(1).numpy() == y_test).mean())
+        (OUT / "cifar_cnn.mforge").write_text(manifest("cifar_cnn", model, "cnn", shape))
+        parameters = sum(p.numel() for p in model.parameters())
+        results["models"]["cifar_cnn"] = {"test_accuracy": accuracy, "parameters": parameters}
+        print(f"cifar_cnn: test accuracy {accuracy:.4f}, {parameters} parameters")
     RESULTS.write_text(json.dumps(results, indent=2) + "\n")
 
 

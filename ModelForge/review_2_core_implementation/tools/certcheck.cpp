@@ -731,13 +731,14 @@ std::string loadProgram(const std::string& source, Program& p) {
 }
 
 // ------------------------------------------------- affine forms (checker)
+// Sparse affine form: constant plus (symbol, coefficient) pairs sorted by symbol.
 struct F {
     double c = 0;
-    std::vector<double> a;
+    std::vector<std::pair<std::size_t, double>> a;
 };
 double rad(const F& f) {
     double r = 0;
-    for (double v : f.a) r += std::fabs(v);
+    for (const auto& t : f.a) r += std::fabs(t.second);
     return r;
 }
 double lo(const F& f) {
@@ -751,13 +752,64 @@ double hi(const F& f) {
 void add(F& d, double k, const F& s) {
     if (k == 0) return;
     d.c += k * s.c;
-    if (d.a.size() < s.a.size()) d.a.resize(s.a.size(), 0);
-    for (std::size_t i = 0; i < s.a.size(); ++i) d.a[i] += k * s.a[i];
+    std::vector<std::pair<std::size_t, double>> out;
+    out.reserve(d.a.size() + s.a.size());
+    std::size_t i = 0, j = 0;
+    while (i < d.a.size() || j < s.a.size()) {
+        if (j == s.a.size() || (i < d.a.size() && d.a[i].first < s.a[j].first)) {
+            out.push_back(d.a[i++]);
+        } else if (i == d.a.size() || s.a[j].first < d.a[i].first) {
+            out.push_back({s.a[j].first, k * s.a[j].second});
+            ++j;
+        } else {
+            out.push_back({d.a[i].first, d.a[i].second + k * s.a[j].second});
+            ++i;
+            ++j;
+        }
+    }
+    d.a = std::move(out);
 }
 void sym(F& f, std::size_t k, double v) {
-    if (f.a.size() <= k) f.a.resize(k + 1, 0);
-    f.a[k] += v;
+    F single;
+    single.a.push_back({k, v});
+    if (f.a.empty() || f.a.back().first < k) {
+        f.a.push_back({k, v});
+    } else {
+        add(f, 1, single);
+    }
 }
+// Dense scratch for long sums (one output neuron of a layer).
+struct Sum {
+    std::vector<double> value;
+    std::vector<char> used;
+    std::vector<std::size_t> touched;
+    void add(double k, const F& f, double& constant) {
+        constant += k * f.c;
+        for (const auto& t : f.a) {
+            if (t.first >= value.size()) {
+                value.resize(t.first + 1, 0);
+                used.resize(t.first + 1, 0);
+            }
+            if (!used[t.first]) {
+                used[t.first] = 1;
+                touched.push_back(t.first);
+            }
+            value[t.first] += k * t.second;
+        }
+    }
+    F take(double constant) {
+        std::sort(touched.begin(), touched.end());
+        F f;
+        f.c = constant;
+        for (auto k : touched) {
+            if (value[k] != 0) f.a.push_back({k, value[k]});
+            value[k] = 0;
+            used[k] = 0;
+        }
+        touched.clear();
+        return f;
+    }
+};
 
 struct Pair {
     F r, e;  // float model value, integer program error
@@ -801,6 +853,7 @@ Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vec
         const long long mulMax = (1LL << (q.mulBits - 1)) - 1;
         std::vector<Pair> next(q.out);
         std::vector<double> factor(q.out);
+        Sum sum;
         for (std::size_t o = 0; o < q.out; ++o) {
             const std::size_t c = q.channelOf(o);
             // Products and (classical) partial sums.
@@ -818,15 +871,16 @@ Analysis analyse(const std::vector<Layer>& net, const Program& p, const std::vec
             const double k = q.outScale[o] * std::ldexp(static_cast<double>(q.m[c]), -q.s[c]);
             factor[o] = k;
             Pair& n = next[o];
-            n.r.c = f.b[c];
-            n.e.c = k * static_cast<double>(q.b[c]) - f.b[c];
+            double rc = f.b[c], ec = k * static_cast<double>(q.b[c]) - f.b[c];
+            for (const auto& tap : f.taps[o]) sum.add(f.w[tap.weight], v[tap.input].r, rc);
+            n.r = sum.take(rc);
             for (const auto& tap : f.taps[o]) {
                 const double wf = f.w[tap.weight];
                 const double wq = k * static_cast<double>(q.w[tap.weight]) / inScale[tap.input];
-                add(n.r, wf, v[tap.input].r);
-                add(n.e, wq - wf, v[tap.input].r);
-                add(n.e, wq, v[tap.input].e);
+                sum.add(wq - wf, v[tap.input].r, ec);
+                sum.add(wq, v[tap.input].e, ec);
             }
+            n.e = sum.take(ec);
         }
         std::vector<long long> nlo(q.out), nhi(q.out);
         for (std::size_t o = 0; o < q.out; ++o) {

@@ -2,7 +2,7 @@
   "author": "Vaishnavi",
   "models": {
     "mnist_mlp": {
-      "test_accuracy": 0.9581,
+      "test_accuracy": 0.9576,
       "parameters": 25450
     },
     "mnist_cnn": {
@@ -16,6 +16,10 @@
     "fashion_cnn": {
       "test_accuracy": 0.8575,
       "parameters": 3226
+    },
+    "cifar_cnn": {
+      "test_accuracy": 0.617,
+      "parameters": 25578
     }
   }
 }

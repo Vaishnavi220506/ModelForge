@@ -95,7 +95,9 @@ struct TunerOptions {
     ProofOptions proof;
     bool falsifyFirst = true;          // cheap search before an expensive proof
     std::size_t falsifyBudget = 48;
-    bool minimize = true;
+    bool minimize = true;              // final local search
+    bool compoundMoves = true;         // local search also tries pairs of moves
+    bool multiStart = true;            // ... and restarts from the cheapest certified uniform config
     std::size_t maxIterations = 64;
     std::uint32_t seed = 20261012;
 };

@@ -276,6 +276,7 @@ int main(int argc, char** argv) {
         std::string folder, model, dataset;
         bool image;
         std::vector<double> radii;
+        bool lite = false;  // CIFAR-10: baselines and the three tuner objectives only
     };
     std::vector<Case> cases;
     if (suite != "image") {
@@ -290,6 +291,7 @@ int main(int argc, char** argv) {
             const std::string name = m;
             cases.push_back({"image", name, name.substr(0, name.find('_')), true, {0.01, 0.02}});
         }
+        cases.push_back({"image", "cifar_cnn", "cifar", true, {1.0 / 255.0}, true});
     }
     if (quick) {
         cases = {{"real", "iris_mlp16", "iris", false, {0.1}}, {"real", "wine_mlp16", "wine", false, {0.1}}};
@@ -329,7 +331,8 @@ int main(int argc, char** argv) {
         }
         auto calibration = std::make_shared<std::vector<std::vector<double>>>();
         for (const auto& row : train.rows) calibration->emplace_back(row.begin(), row.end());
-        const PrecisionConfig guided = accuracyGuided(*network, domain, test);
+        const PrecisionConfig guided = entry.lite ? uniformConfig(network->layers.size(), 8, 8)
+                                                  : accuracyGuided(*network, domain, test);
         for (double eps : radii) {
             const auto regions = regionsAroundRows(*network, test.rows, eps, domain, maxRegions);
             TunerOptions base;
@@ -353,7 +356,7 @@ int main(int argc, char** argv) {
             }
             fixed("uniform_int4", uniformConfig(L, 4, 8));
             fixed("uniform_int16", uniformConfig(L, 16, 16));
-            fixed("accuracy_guided", guided);
+            if (!entry.lite) fixed("accuracy_guided", guided);
 
             const auto tuned = tunePrecision(*network, domain, regions, base, &robust);
             outcomes.push_back(summarise("forgecert", *network, tuned, test));
@@ -365,10 +368,18 @@ int main(int argc, char** argv) {
             };
             variant("forgecert_calibrated", [&](TunerOptions& o) { o.proof.analysis.calibration = calibration; });
             variant("forgecert_latency", [](TunerOptions& o) { o.cost = CostModel::Latency; });
-            variant("ablation_interval_domain", [](TunerOptions& o) { o.proof.analysis.affine = false; });
-            variant("ablation_per_tensor_scales", [](TunerOptions& o) { o.proof.analysis.perChannelScales = false; });
-            variant("ablation_no_modular_accumulation",
-                    [](TunerOptions& o) { o.proof.analysis.modularAccumulation = false; });
+            if (!entry.lite) {
+                variant("ablation_interval_domain", [](TunerOptions& o) { o.proof.analysis.affine = false; });
+                variant("ablation_per_tensor_scales",
+                        [](TunerOptions& o) { o.proof.analysis.perChannelScales = false; });
+                variant("ablation_no_modular_accumulation",
+                        [](TunerOptions& o) { o.proof.analysis.modularAccumulation = false; });
+                variant("ablation_latency_greedy_search", [](TunerOptions& o) {
+                    o.cost = CostModel::Latency;
+                    o.compoundMoves = false;
+                    o.multiStart = false;
+                });
+            }
             if (!entry.image) {  // the full set of tuner ablations on the tabular suite
                 variant("ablation_uniform_refine", [](TunerOptions& o) { o.strategy = RefineStrategy::Uniform; });
                 for (std::uint32_t seed : {1u, 2u, 3u}) {
@@ -402,13 +413,13 @@ int main(int argc, char** argv) {
                 best = e.first;
                 lattice = e.second;
             }
-            const auto soundness = audit(*network, tuned, regions, quick ? 200 : 2000);
+            const auto soundness = audit(*network, tuned, regions, quick || entry.lite ? 200 : 2000);
 
             // Independent checker on the emitted artifact.
             double checkSeconds = -1;
             int checkExit = -1;
             if (!quick && std::string(MODELFORGE_CERTCHECK).size() > 0 && tuned.ok) {
-                const fs::path artifact = fs::path(outDir) / "artifacts" / (model + "_eps" + std::to_string(eps).substr(0, 4));
+                const fs::path artifact = fs::path(outDir) / "artifacts" / (model + "_eps" + std::to_string(eps).substr(0, 6));
                 emitIntegerC(tuned.program, artifact.string(), error);
                 writeCertificate((artifact / "certificate.json").string(), (real / (model + ".mforge")).string(),
                                  *network, regions, tuned, eps, error);
