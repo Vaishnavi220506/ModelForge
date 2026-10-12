@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
@@ -552,6 +553,95 @@ void testForgeCert(const std::filesystem::path& fixtureDirectory) {
           "layer code and inference must be integer-only");
 }
 
+void testForgeCertConvolution(const std::filesystem::path& fixtureDirectory) {
+    const auto image = fixtureDirectory.parent_path().parent_path() / "models" / "image";
+    std::string error;
+    const auto graph = compileFile(image / "mnist_cnn.mforge");
+    const auto network = modelforge::extractDenseNetwork(graph, error);
+    check(network && network->layers.size() == 3 && network->layers[0].kind == modelforge::LayerKind::Conv &&
+              network->layers[1].kind == modelforge::LayerKind::Conv && network->layers[0].out == 4 * 13 * 13 &&
+              network->layers[1].out == 8 * 6 * 6 && network->inputs == 784,
+          "MNIST CNN should extract as conv, conv, dense with the right shapes");
+    if (!network) return;
+    modelforge::Dataset test, calib;
+    check(modelforge::loadDataset((image / "mnist_test.csv").string(), 784, test, error) &&
+              modelforge::loadDataset((image / "mnist_calib.csv").string(), 784, calib, error),
+          "MNIST data should load");
+
+    // The tap-based network equals the front end's reference interpreter.
+    modelforge::DiagnosticEngine diagnostics;
+    for (std::size_t r = 0; r < 5; ++r) {
+        const auto out = modelforge::executeIR(graph, test.rows[r], diagnostics);
+        const std::vector<double> x(test.rows[r].begin(), test.rows[r].end());
+        const auto logits = modelforge::referenceLogits(*network, x);
+        // executeIR applies Softmax, which preserves the argmax.
+        check(out && modelforge::argmaxFirst(logits) ==
+                         static_cast<int>(std::max_element(out->begin(), out->end()) - out->begin()),
+              "conv network and IR interpreter should agree");
+    }
+
+    modelforge::Box domain;
+    domain.lo.assign(784, 0.0);
+    domain.hi.assign(784, 1.0);
+    const auto program = modelforge::lowerToInteger(*network, domain, modelforge::uniformConfig(3, 8, 16), error);
+    check(program.has_value() && program->inputUnsigned, "image domain should give unsigned input codes");
+    if (!program) return;
+    std::size_t agree = 0;
+    for (const auto& row : test.rows) {
+        const std::vector<double> x(row.begin(), row.end());
+        const auto run = modelforge::runInteger(*program, x);
+        check(!run.accumulatorOverflow && !run.productOverflow && !run.saturated,
+              "proved-scale CNN must not overflow or saturate");
+        agree += run.decision == modelforge::argmaxFirst(modelforge::referenceLogits(*network, x));
+    }
+    check(agree + 2 >= test.rows.size(), "int8 CNN should agree with the float model on the test set");
+
+    // Soundness on conv regions, for proved and calibrated scales.
+    modelforge::AnalysisOptions calibrated;
+    auto rows = std::make_shared<std::vector<std::vector<double>>>();
+    for (const auto& row : calib.rows) rows->emplace_back(row.begin(), row.end());
+    calibrated.calibration = rows;
+    const auto calibratedProgram =
+        modelforge::lowerToInteger(*network, domain, modelforge::uniformConfig(3, 8, 8), error, calibrated);
+    check(calibratedProgram && calibratedProgram->calibrated && calibratedProgram->saturationPossible,
+          "calibrated scales should allow (modelled) saturation on [0,1]^784");
+    std::mt19937 rng(9);
+    std::size_t violations = 0;
+    for (const auto* p : {&*program, &*calibratedProgram}) {
+        const auto regions = modelforge::regionsAroundRows(*network, test.rows, 0.02, domain, 6);
+        for (const auto& region : regions) {
+            const auto analysis = modelforge::analyzeRegion(*network, *p, region.box, {}, region.refClass);
+            for (int k = 0; k < 150; ++k) {
+                std::vector<double> x(784);
+                for (std::size_t i = 0; i < 784; ++i) {
+                    const double u = std::uniform_real_distribution<double>(0, 1)(rng);
+                    x[i] = region.box.lo[i] + (k % 2 ? (u < 0.5 ? 0.0 : 1.0) : u) * (region.box.hi[i] - region.box.lo[i]);
+                }
+                const auto run = modelforge::runInteger(*p, x);
+                const auto logits = modelforge::dequantizedLogits(*p, run);
+                const auto ref = modelforge::referenceLogits(*network, x);
+                for (std::size_t c = 0; c < logits.size(); ++c) {
+                    if (logits[c] < analysis.logitLower[c] || logits[c] > analysis.logitUpper[c] ||
+                        std::fabs(logits[c] - ref[c]) > analysis.logitErrorBound[c]) {
+                        ++violations;
+                    }
+                }
+                if (analysis.quantCertified && run.decision != analysis.refClass) ++violations;
+            }
+        }
+    }
+    check(violations == 0, "conv analysis (with saturation) must bound every sampled execution");
+
+    // Emitted C for the conv network uses the conv loop template and flash tables.
+    const auto out = std::filesystem::temp_directory_path() / "modelforge_forgecert_conv";
+    check(modelforge::emitIntegerC(*program, out.string(), error), "conv C should be emitted");
+    std::ifstream source(out / "model_q.c");
+    const std::string code((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+    check(code.find("const int iy = oy * 2 + ky - 0;") != std::string::npos &&
+              code.find("static const MF_ROM") != std::string::npos,
+          "conv layers should be emitted as sliding-window loops over flash tables");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -567,6 +657,7 @@ int main(int argc, char* argv[]) {
     testGuardianPlus(fixtureDirectory);
     testShrink(fixtureDirectory);
     testForgeCert(fixtureDirectory);
+    testForgeCertConvolution(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

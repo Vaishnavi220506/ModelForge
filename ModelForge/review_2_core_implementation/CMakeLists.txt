@@ -134,6 +134,20 @@ add_test(
     COMMAND modelforge_certcheck ${CMAKE_BINARY_DIR}/forgecert_wine
             ${CMAKE_CURRENT_SOURCE_DIR}/models/real/wine_mlp32x16.mforge
 )
+add_test(
+    NAME forgecert_certify_mnist_cnn
+    COMMAND modelforge ${CMAKE_CURRENT_SOURCE_DIR}/models/image/mnist_cnn.mforge --certify
+            --data ${CMAKE_CURRENT_SOURCE_DIR}/models/image/mnist_test.csv
+            --domain ${CMAKE_CURRENT_SOURCE_DIR}/models/image/mnist_calib.csv --domain-range 0,1
+            --eps 0.01 --max-regions 20 --scales calibrated --out ${CMAKE_BINARY_DIR}/forgecert_mnist_cnn
+)
+add_test(
+    NAME forgecert_independent_check_cnn
+    COMMAND modelforge_certcheck ${CMAKE_BINARY_DIR}/forgecert_mnist_cnn
+            ${CMAKE_CURRENT_SOURCE_DIR}/models/image/mnist_cnn.mforge
+)
+set_tests_properties(forgecert_certify_mnist_cnn PROPERTIES FIXTURES_SETUP forgecert_cnn)
+set_tests_properties(forgecert_independent_check_cnn PROPERTIES FIXTURES_REQUIRED forgecert_cnn)
 set_tests_properties(forgecert_certify_wine PROPERTIES FIXTURES_SETUP forgecert)
 set_tests_properties(forgecert_independent_check PROPERTIES FIXTURES_REQUIRED forgecert)
 add_test(

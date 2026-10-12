@@ -50,6 +50,16 @@ int nextRung(const std::vector<int>& ladder, int value, int direction) {
     return 0;
 }
 
+// Smallest rung whose C storage type is wider (weights: <=4 packed, <=8 int8,
+// int16; activations: <=8 one byte, two bytes).
+int nextStorageClass(const std::vector<int>& ladder, int value, int kind) {
+    const auto storage = [kind](int bits) { return kind == 1 ? (bits <= 4 ? 0 : bits <= 8 ? 1 : 2) : (bits <= 8 ? 0 : 1); };
+    for (int rung : ladder) {
+        if (rung > value && storage(rung) > storage(value)) return rung;
+    }
+    return 0;
+}
+
 double marginOf(const std::vector<std::int64_t>& logits, int cls) {
     double rival = -std::numeric_limits<double>::infinity();
     for (std::size_t j = 0; j < logits.size(); ++j) {
@@ -580,37 +590,53 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     }
 
     if (allProved && options.minimize) {
-        // Undo any refinement that turned out to be unnecessary.
+        // Local search: undo refinements that turned out to be unnecessary and,
+        // for objectives where more bits can be cheaper (latency: 8-bit weights
+        // avoid nibble unpacking), try one rung up as well. Any certified move
+        // that lowers the cost is taken; repeat until none does.
         bool changed = true;
         while (changed) {
             changed = false;
             const double cost = configCost(*program, options.cost);
-            std::vector<std::pair<double, std::size_t>> candidates;
+            struct Move {
+                double saving;
+                std::size_t source;
+                int direction;
+            };
+            std::vector<Move> candidates;
             for (std::size_t s = 0; s < sources; ++s) {
                 const Slot slot = slotOf(s, L);
                 if (slot.kind < 0) continue;
-                PrecisionConfig trial = config;
-                const int previous = nextRung(ladderFor(slot), slotValue(trial, slot), -1);
-                if (previous == 0) continue;
-                slotValue(trial, slot) = previous;
-                const auto trialProgram = lower(trial);
-                if (!trialProgram) continue;
-                candidates.push_back({cost - configCost(*trialProgram, options.cost), s});
+                for (int direction : {-1, +1, +2}) {
+                    PrecisionConfig trial = config;
+                    // +2: jump to the next storage class (packed 4-bit -> int8 -> int16
+                    // weights, 8-bit -> 16-bit activations), which can be faster.
+                    const int value = direction == 2 ? nextStorageClass(ladderFor(slot), slotValue(trial, slot), slot.kind)
+                                                     : nextRung(ladderFor(slot), slotValue(trial, slot), direction);
+                    if (value == 0) continue;
+                    slotValue(trial, slot) = value;
+                    const auto trialProgram = lower(trial);
+                    if (!trialProgram) continue;
+                    const double saving = cost - configCost(*trialProgram, options.cost);
+                    if (saving > 1e-9) candidates.push_back({saving, s, direction});
+                }
             }
-            std::sort(candidates.rbegin(), candidates.rend());
-            for (const auto& candidate : candidates) {
-                if (candidate.first <= 0.0) continue;
-                const Slot slot = slotOf(candidate.second, L);
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const Move& x, const Move& y) { return x.saving > y.saving; });
+            for (const auto& move : candidates) {
+                const Slot slot = slotOf(move.source, L);
                 PrecisionConfig trial = config;
-                slotValue(trial, slot) = nextRung(ladderFor(slot), slotValue(trial, slot), -1);
+                slotValue(trial, slot) =
+                    move.direction == 2 ? nextStorageClass(ladderFor(slot), slotValue(trial, slot), slot.kind)
+                                        : nextRung(ladderFor(slot), slotValue(trial, slot), move.direction);
                 auto trialProgram = lower(trial);
                 if (!trialProgram) continue;
                 const auto evaluation = evaluateProgram(network, *trialProgram, regions, robust, options.proof,
                                                         0, order, true, options.seed);
                 result.analyses += evaluation.analyses;
                 if (evaluation.failing == 0) {
-                    result.log.push_back("minimise: lower " + errorSourceName(candidate.second, L) + " -> " +
-                                         trial.describe());
+                    result.log.push_back(std::string("improve: ") + (move.direction < 0 ? "lower " : "widen ") +
+                                         errorSourceName(move.source, L) + " -> " + trial.describe());
                     config = trial;
                     program = std::move(trialProgram);
                     changed = true;

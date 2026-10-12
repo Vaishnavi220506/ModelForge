@@ -53,6 +53,8 @@ struct Outcome {
     std::size_t proved = 0, unproved = 0, counterexamples = 0, excluded = 0;
     std::size_t iterations = 0, analyses = 0, lowerings = 0;
     double seconds = 0;
+    double cycles = 0;          // estimated AVR cycles per inference
+    bool calibrated = false;
     std::size_t testFlips = 0;  // integer vs float disagreements on the test set
     std::vector<int> accBits, worstAccBits;
 };
@@ -86,6 +88,8 @@ Outcome summarise(const std::string& name, const DenseNetwork& network, const Tu
     o.analyses = r.analyses;
     o.lowerings = r.lowerings;
     o.seconds = r.seconds;
+    o.cycles = estimatedAvrCycles(r.program);
+    o.calibrated = r.program.calibrated;
     o.testFlips = testFlips(network, r.program, test);
     for (const auto& layer : r.program.layers) {
         o.accBits.push_back(layer.accBits);
@@ -189,6 +193,8 @@ struct Audit {
 
 Audit audit(const DenseNetwork& network, const TunerResult& r, const std::vector<CertRegion>& regions,
             std::size_t perRegion) {
+    // With calibrated scales saturation is allowed (and modelled), not a violation.
+    const bool saturationAllowed = r.program.calibrated;
     Audit a;
     std::mt19937 rng(11);
     for (std::size_t k = 0; k < regions.size(); ++k) {
@@ -207,7 +213,7 @@ Audit audit(const DenseNetwork& network, const TunerResult& r, const std::vector
             const auto logits = dequantizedLogits(r.program, run);
             ++a.samples;
             bool bad = run.decision != regions[k].refClass || argmaxFirst(ref) != regions[k].refClass ||
-                       run.accumulatorOverflow || run.saturated;
+                       run.accumulatorOverflow || run.productOverflow || (run.saturated && !saturationAllowed);
             for (std::size_t c = 0; c < logits.size(); ++c) {
                 const double err = std::fabs(logits[c] - ref[c]);
                 if (err > bounds.logitErrorBound[c]) bad = true;
@@ -226,7 +232,7 @@ Audit audit(const DenseNetwork& network, const TunerResult& r, const std::vector
         }
         const auto run = runInteger(r.program, x);
         ++a.samples;
-        a.violations += run.accumulatorOverflow || run.saturated;
+        a.violations += run.accumulatorOverflow || run.productOverflow || (run.saturated && !saturationAllowed);
     }
     return a;
 }
@@ -239,7 +245,8 @@ std::string json(const Outcome& o) {
       << ", \"proved\": " << o.proved << ", \"unproved\": " << o.unproved
       << ", \"counterexamples\": " << o.counterexamples << ", \"excluded\": " << o.excluded
       << ", \"iterations\": " << o.iterations << ", \"analyses\": " << o.analyses << ", \"lowerings\": " << o.lowerings
-      << ", \"seconds\": " << o.seconds << ", \"test_flips\": " << o.testFlips << ", \"acc_bits\": [";
+      << ", \"seconds\": " << o.seconds << ", \"cycles\": " << o.cycles
+      << ", \"calibrated\": " << (o.calibrated ? "true" : "false") << ", \"test_flips\": " << o.testFlips << ", \"acc_bits\": [";
     for (std::size_t i = 0; i < o.accBits.size(); ++i) t << (i ? ", " : "") << o.accBits[i];
     t << "], \"worst_case_acc_bits\": [";
     for (std::size_t i = 0; i < o.worstAccBits.size(); ++i) t << (i ? ", " : "") << o.worstAccBits[i];
@@ -253,21 +260,39 @@ int main(int argc, char** argv) {
     bool quick = false;
     std::string outDir = "certbench";
     std::size_t maxRegions = 100;
+    std::string suite = "all";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--quick") quick = true;
+        if (a == "--suite" && i + 1 < argc) suite = argv[++i];
         if (a == "--out" && i + 1 < argc) outDir = argv[++i];
         if (a == "--regions" && i + 1 < argc) maxRegions = static_cast<std::size_t>(std::atoi(argv[++i]));
     }
     fs::create_directories(outDir);
-    const fs::path real = fs::path(MODELFORGE_MODELS_DIR) / "real";
-    std::vector<std::string> models = {"iris_mlp16", "iris_mlp32x16", "wine_mlp16", "wine_mlp32x16",
-                                       "breast_cancer_mlp16", "breast_cancer_mlp32x16", "digits_mlp16",
-                                       "digits_mlp32x16"};
-    std::vector<double> radii = {0.05, 0.1, 0.2};
+    // Tabular models: standardised features, domain = training range + 10%.
+    // Image models: pixels in [0, 1], domain = [0, 1]^784, calibration rows
+    // from the training split.
+    struct Case {
+        std::string folder, model, dataset;
+        bool image;
+        std::vector<double> radii;
+    };
+    std::vector<Case> cases;
+    if (suite != "image") {
+        for (const char* m : {"iris_mlp16", "iris_mlp32x16", "wine_mlp16", "wine_mlp32x16", "breast_cancer_mlp16",
+                              "breast_cancer_mlp32x16", "digits_mlp16", "digits_mlp32x16"}) {
+            const std::string name = m;
+            cases.push_back({"real", name, name.substr(0, name.find("_mlp")), false, {0.05, 0.1, 0.2}});
+        }
+    }
+    if (suite != "tabular") {
+        for (const char* m : {"mnist_mlp", "mnist_cnn", "fashion_mlp", "fashion_cnn"}) {
+            const std::string name = m;
+            cases.push_back({"image", name, name.substr(0, name.find('_')), true, {0.01, 0.02}});
+        }
+    }
     if (quick) {
-        models = {"iris_mlp16", "wine_mlp16"};
-        radii = {0.1};
+        cases = {{"real", "iris_mlp16", "iris", false, {0.1}}, {"real", "wine_mlp16", "wine", false, {0.1}}};
         maxRegions = std::min<std::size_t>(maxRegions, 30);
     }
     std::ofstream results(fs::path(outDir) / "certbench.json");
@@ -275,8 +300,11 @@ int main(int argc, char** argv) {
     bool firstCase = true;
     std::cout << std::fixed;
     const auto start = std::chrono::steady_clock::now();
-    for (const auto& model : models) {
-        const std::string dataset = model.substr(0, model.find("_mlp"));
+    for (const auto& entry : cases) {
+        const std::string& model = entry.model;
+        const std::string& dataset = entry.dataset;
+        const fs::path real = fs::path(MODELFORGE_MODELS_DIR) / entry.folder;
+        const std::vector<double>& radii = entry.radii;
         std::ifstream file(real / (model + ".mforge"));
         const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         IRGraph graph;
@@ -288,12 +316,19 @@ int main(int argc, char** argv) {
         }
         const auto network = extractDenseNetwork(graph, error);
         Dataset train, test;
-        if (!network || !loadDataset((real / (dataset + "_train.csv")).string(), network->inputs, train, error) ||
+        const std::string calibrationFile = entry.image ? dataset + "_calib.csv" : dataset + "_train.csv";
+        if (!network || !loadDataset((real / calibrationFile).string(), network->inputs, train, error) ||
             !loadDataset((real / (dataset + "_test.csv")).string(), network->inputs, test, error)) {
             std::cerr << "cannot load " << model << ": " << error << "\n";
             return 1;
         }
-        const Box domain = domainFromData(train.rows);
+        Box domain = domainFromData(train.rows);
+        if (entry.image) {
+            domain.lo.assign(network->inputs, 0.0);
+            domain.hi.assign(network->inputs, 1.0);
+        }
+        auto calibration = std::make_shared<std::vector<std::vector<double>>>();
+        for (const auto& row : train.rows) calibration->emplace_back(row.begin(), row.end());
         const PrecisionConfig guided = accuracyGuided(*network, domain, test);
         for (double eps : radii) {
             const auto regions = regionsAroundRows(*network, test.rows, eps, domain, maxRegions);
@@ -307,6 +342,15 @@ int main(int argc, char** argv) {
             };
             const std::size_t L = network->layers.size();
             fixed("uniform_int8", uniformConfig(L, 8, 8));
+            {
+                // Industry default (TFLite-style): int8 with scales calibrated on data.
+                ProofOptions calibrated = base.proof;
+                calibrated.analysis.calibration = calibration;
+                outcomes.push_back(summarise("uniform_int8_calibrated", *network,
+                                             checkConfiguration(*network, domain, regions, uniformConfig(L, 8, 8),
+                                                                calibrated, &robust, 400, 3),
+                                             test));
+            }
             fixed("uniform_int4", uniformConfig(L, 4, 8));
             fixed("uniform_int16", uniformConfig(L, 16, 16));
             fixed("accuracy_guided", guided);
@@ -319,35 +363,41 @@ int main(int argc, char** argv) {
                 const auto r = tunePrecision(*network, domain, regions, options, &robust);
                 outcomes.push_back(summarise(name, *network, r, test));
             };
-            variant("ablation_uniform_refine", [](TunerOptions& o) { o.strategy = RefineStrategy::Uniform; });
-            for (std::uint32_t seed : {1u, 2u, 3u}) {
-                variant("ablation_random_refine_s" + std::to_string(seed), [seed](TunerOptions& o) {
-                    o.strategy = RefineStrategy::RandomSource;
-                    o.seed = seed;
-                });
-            }
-            variant("ablation_no_falsifier", [](TunerOptions& o) { o.falsifyFirst = false; });
-            variant("ablation_no_minimise", [](TunerOptions& o) { o.minimize = false; });
-            variant("ablation_no_splitting", [](TunerOptions& o) { o.proof.maxDepth = 0; });
+            variant("forgecert_calibrated", [&](TunerOptions& o) { o.proof.analysis.calibration = calibration; });
+            variant("forgecert_latency", [](TunerOptions& o) { o.cost = CostModel::Latency; });
             variant("ablation_interval_domain", [](TunerOptions& o) { o.proof.analysis.affine = false; });
             variant("ablation_per_tensor_scales", [](TunerOptions& o) { o.proof.analysis.perChannelScales = false; });
-            variant("bits_cost_model", [](TunerOptions& o) { o.cost = CostModel::Bits; });
-            variant("bits_uniform_refine", [](TunerOptions& o) {
-                o.cost = CostModel::Bits;
-                o.strategy = RefineStrategy::Uniform;
-            });
-            for (std::uint32_t seed : {1u, 2u, 3u}) {
-                variant("bits_random_refine_s" + std::to_string(seed), [seed](TunerOptions& o) {
+            variant("ablation_no_modular_accumulation",
+                    [](TunerOptions& o) { o.proof.analysis.modularAccumulation = false; });
+            if (!entry.image) {  // the full set of tuner ablations on the tabular suite
+                variant("ablation_uniform_refine", [](TunerOptions& o) { o.strategy = RefineStrategy::Uniform; });
+                for (std::uint32_t seed : {1u, 2u, 3u}) {
+                    variant("ablation_random_refine_s" + std::to_string(seed), [seed](TunerOptions& o) {
+                        o.strategy = RefineStrategy::RandomSource;
+                        o.seed = seed;
+                    });
+                }
+                variant("ablation_no_falsifier", [](TunerOptions& o) { o.falsifyFirst = false; });
+                variant("ablation_no_minimise", [](TunerOptions& o) { o.minimize = false; });
+                variant("ablation_no_splitting", [](TunerOptions& o) { o.proof.maxDepth = 0; });
+                variant("bits_cost_model", [](TunerOptions& o) { o.cost = CostModel::Bits; });
+                variant("bits_uniform_refine", [](TunerOptions& o) {
                     o.cost = CostModel::Bits;
-                    o.strategy = RefineStrategy::RandomSource;
-                    o.seed = seed;
+                    o.strategy = RefineStrategy::Uniform;
                 });
+                for (std::uint32_t seed : {1u, 2u, 3u}) {
+                    variant("bits_random_refine_s" + std::to_string(seed), [seed](TunerOptions& o) {
+                        o.cost = CostModel::Bits;
+                        o.strategy = RefineStrategy::RandomSource;
+                        o.seed = seed;
+                    });
+                }
             }
 
             double optimum = -1;
             std::size_t lattice = 0;
             PrecisionConfig best;
-            if (!quick && eps == 0.1) {
+            if (!quick && !entry.image && eps == 0.1) {
                 const auto e = exhaustive(*network, domain, regions, robust, base.proof, optimum);
                 best = e.first;
                 lattice = e.second;
@@ -377,17 +427,21 @@ int main(int argc, char** argv) {
                       << std::setprecision(0) << float32Bytes(*network) << " B\n";
             std::cout << "  " << std::left << std::setw(30) << "method" << std::setw(26) << "precision" << std::right
                       << std::setw(8) << "flash" << std::setw(8) << "proved" << std::setw(9) << "unproved"
-                      << std::setw(6) << "cex" << std::setw(6) << "flips" << std::setw(8) << "time\n";
+                      << std::setw(6) << "cex" << std::setw(6) << "flips" << std::setw(10) << "cycles"
+                      << std::setw(8) << "time\n";
             for (const auto& o : outcomes) {
                 std::cout << "  " << std::left << std::setw(30) << o.name << std::setw(26) << o.config << std::right
                           << std::setw(8) << std::setprecision(0) << o.flash << std::setw(8) << o.proved
                           << std::setw(9) << o.unproved << std::setw(6) << o.counterexamples << std::setw(6)
-                          << o.testFlips << std::setw(7) << std::setprecision(2) << o.seconds << "s\n";
+                          << o.testFlips << std::setw(10) << std::setprecision(0) << o.cycles << std::setw(8)
+                          << std::setprecision(2) << o.seconds << "s\n";
             }
             if (optimum >= 0) {
                 std::cout << "  exhaustive optimum over " << lattice << " configurations: " << best.describe()
                           << " cost " << std::setprecision(0) << optimum << " B (ForgeCert "
-                          << outcomes[4].cost << " B)\n";
+                          << std::find_if(outcomes.begin(), outcomes.end(),
+                                          [](const Outcome& o) { return o.name == "forgecert"; })->cost
+                          << " B)\n";
             }
             std::cout << "  soundness audit: " << soundness.samples << " samples, " << soundness.violations
                       << " violations, max observed/proved error " << std::setprecision(3) << soundness.maxRatio
