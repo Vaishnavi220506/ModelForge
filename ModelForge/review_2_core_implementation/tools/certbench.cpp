@@ -332,6 +332,17 @@ int main(int argc, char** argv) {
             variant("ablation_interval_domain", [](TunerOptions& o) { o.proof.analysis.affine = false; });
             variant("ablation_per_tensor_scales", [](TunerOptions& o) { o.proof.analysis.perChannelScales = false; });
             variant("bits_cost_model", [](TunerOptions& o) { o.cost = CostModel::Bits; });
+            variant("bits_uniform_refine", [](TunerOptions& o) {
+                o.cost = CostModel::Bits;
+                o.strategy = RefineStrategy::Uniform;
+            });
+            for (std::uint32_t seed : {1u, 2u, 3u}) {
+                variant("bits_random_refine_s" + std::to_string(seed), [seed](TunerOptions& o) {
+                    o.cost = CostModel::Bits;
+                    o.strategy = RefineStrategy::RandomSource;
+                    o.seed = seed;
+                });
+            }
 
             double optimum = -1;
             std::size_t lattice = 0;
