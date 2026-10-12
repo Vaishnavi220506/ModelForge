@@ -340,7 +340,8 @@ std::map<std::string, Array> parseArrays(const std::string& source) {
         const char* end = source.c_str() + close;
         while (cursor < end) {
             char* next = nullptr;
-            const double v = std::strtod(cursor, &next);
+            const double v = type == "float" ? static_cast<double>(std::strtof(cursor, &next))
+                                             : std::strtod(cursor, &next);
             if (next == cursor) {
                 ++cursor;
                 continue;
@@ -420,10 +421,12 @@ std::vector<std::string> expectedFragments(const Program& p) {
     std::vector<std::string> parts{
         "static int64_t mf_round_shift(int64_t t, int s) {\n"
         "    int64_t u = t + ((int64_t)1 << (s - 1));\n"
-        "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n",
-        "static int8_t mf_nibble(const uint8_t *packed, int k) {\n"
-        "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
-        "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n"};
+        "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n"};
+    if (std::any_of(p.layers.begin(), p.layers.end(), [](const QLayer& q) { return q.wbits <= 4; })) {
+        parts.push_back("static int8_t mf_nibble(const uint8_t *packed, int k) {\n"
+                        "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
+                        "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n");
+    }
     for (std::size_t l = 0; l < p.layers.size(); ++l) parts.push_back(expectedLayer(p, l));
     std::ostringstream quant;
     quant << "void mf_quantize_input(const float *x, mf_input_t *q) {\n"

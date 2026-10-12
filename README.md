@@ -2,12 +2,40 @@
 
 **Author: Vaishnavi**
 
-ModelForge is a C++17 compiler for small neural-network models with a built-in
-per-pass validator, **Guardian-APC+**. Before any graph rewrite is kept, Guardian
-tests it with inputs placed on the model's own ReLU boundaries at every depth,
-focused on the layers the rewrite changed, ordered by activation-pattern
-coverage, and followed by a near-miss search. A wrong rewrite is rolled back
-with a replayable counterexample and the layer where the bug first shows.
+ModelForge is a C++17 compiler for small neural networks. Its main research
+contribution is **ForgeCert: proof-carrying integer code**. ModelForge compiles
+a trained float model to **integer-only C99** for microcontrollers without an
+FPU, and ships a **certificate** that the emitted C program
+
+1. never overflows an accumulator or saturates a value anywhere in the input domain, and
+2. returns exactly the float model's decision for *every* input in each certified
+   region (an L∞ ball around a real sample), not just on the test set.
+
+A counterexample-guided tuner chooses the bit width of every layer, using error
+provenance carried by the abstract domain to decide which layer to make more
+precise. A separate checker, `modelforge_certcheck`, shares no code with the
+compiler and re-validates the certificate from the source model and the emitted
+`.c` file alone.
+
+Evaluation results: see the [ForgeCert notes](ModelForge/docs/forgecert.md) (numbers are being regenerated with `modelforge_certbench`).
+
+```powershell
+.\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\real\wine_mlp32x16.mforge --certify --data .\ModelForge\review_2_core_implementation\models\real\wine_test.csv --domain .\ModelForge\review_2_core_implementation\models\real\wine_train.csv --eps 0.1 --out .\build\cert
+.\build\Release\modelforge_certcheck.exe .\build\cert .\ModelForge\review_2_core_implementation\models\real\wine_mlp32x16.mforge
+.\build\Release\modelforge_certbench.exe --out .\build\certbench    # all paper tables
+```
+
+See [ForgeCert](ModelForge/docs/forgecert.md) and the
+[paper draft](ModelForge/paper/forgecert.tex).
+
+### Earlier contributions (now stages of the pipeline)
+
+Every graph rewrite is validated by **Guardian-APC+** before it is kept. Guardian
+tests the rewrite with inputs placed on the model's own ReLU boundaries at
+every depth, focused on the layers the rewrite changed, ordered by
+activation-pattern coverage, and followed by a near-miss search. A wrong
+rewrite is rolled back with a replayable counterexample and the layer where
+the bug first shows.
 
 On 96 synthetic models with 2,160 injected faults, Guardian-APC+ detects 99.2%
 of observable faults with 128 inputs. Uniform random testing detects 75.0% and

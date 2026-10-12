@@ -13,9 +13,11 @@ jobs:
           - os: ubuntu-latest
             exe: ""
             generated_exe: build/generated_build/generated_model
+            certified_exe: build/certified_build/generated_model_q
           - os: windows-latest
             exe: .exe
             generated_exe: build/generated_build/Release/generated_model.exe
+            certified_exe: build/certified_build/Release/generated_model_q.exe
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -61,6 +63,21 @@ jobs:
           cat build/batch_predictions.csv
           python -c "import csv; r=list(csv.reader(open('build/batch_predictions.csv'))); assert len(r)==3 and r[0]==['row','prediction','score_0','score_1','score_2']; assert [x[1] for x in r[1:]]==['1','2']; assert all(abs(sum(map(float,x[2:]))-1)<1e-5 for x in r[1:])"
           if "${{ matrix.generated_exe }}" --csv ModelForge/review_2_core_implementation/models/iris_inputs_invalid.csv >/dev/null 2>&1; then exit 1; fi
+      - name: ForgeCert - certified integer-only compilation of a real model
+        shell: bash
+        run: |
+          M=ModelForge/review_2_core_implementation/models/real
+          "build/Release/modelforge${{ matrix.exe }}" $M/wine_mlp32x16.mforge --certify --data $M/wine_test.csv --domain $M/wine_train.csv --eps 0.1 --out build/certified
+      - name: Build the emitted integer-only C99
+        run: |
+          cmake -S build/certified -B build/certified_build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/certified_build --config Release
+      - name: Independent certificate check (incl. compiled binary vs proof semantics)
+        shell: bash
+        run: |
+          M=ModelForge/review_2_core_implementation/models/real
+          "${{ matrix.certified_exe }}" --raw $M/wine_test.csv > build/certified/raw.csv
+          "build/Release/modelforge_certcheck${{ matrix.exe }}" build/certified $M/wine_mlp32x16.mforge --expect build/certified/raw.csv $M/wine_test.csv
       - name: Save generated code and Guardian evidence
         uses: actions/upload-artifact@v4
         with:
@@ -70,6 +87,9 @@ jobs:
             build/generated/model.h
             build/generated/optimization_certificate.json
             build/generated/counterexample.json
+            build/certified/model_q.c
+            build/certified/model_q.h
+            build/certified/certificate.json
             build/guardian_eval.csv
             build/batch_predictions.csv
             build/research/results.json

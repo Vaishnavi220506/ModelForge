@@ -1,29 +1,35 @@
-# Paper draft: Guardian-APC
+# Paper drafts
 
 Author: **Vaishnavi**
 
-`guardian_apc.tex` is an IEEE two-column conference draft describing the
-Guardian-APC+ validator and its evaluation. `references.bib` holds the citations.
+| File | Topic | Numbers come from |
+| --- | --- | --- |
+| `forgecert.tex` | **Main paper.** ForgeCert: proof-carrying integer code for neural networks via counterexample-guided precision tuning | `modelforge_certbench` → `../research/results/certbench.json`, summarised by `../research/summarize_certbench.py` |
+| `guardian_apc.tex` | Earlier paper. Guardian-APC+, per-pass validation of graph rewrites (now one stage of the ForgeCert pipeline) | `modelforge_bench` → `../research/results/results.json` |
 
-Build it on Overleaf (upload this folder) or locally:
+`references.bib` holds the citations for both papers.
 
-```text
-pdflatex guardian_apc
-bibtex guardian_apc
-pdflatex guardian_apc
-pdflatex guardian_apc
-```
-
-Every number in the paper comes from `modelforge_bench`. The snapshot used for
-the draft is in `../research/results/results.json` (master seed 20260917,
-96 models, budget 128). The seed-robustness and B = 32 rows come from:
+Build on Overleaf (upload this folder) or locally:
 
 ```text
-modelforge_bench --seed 1
-modelforge_bench --seed 2
-modelforge_bench --seed 3
-modelforge_bench --budget 32
+pdflatex forgecert
+bibtex forgecert
+pdflatex forgecert
+pdflatex forgecert
 ```
 
-The author is set to Vaishnavi; add the department, institution and email before submitting, and re-run the benchmark on the
-machine you report in the paper.
+To regenerate every ForgeCert number (about 20 minutes on one core):
+
+```text
+modelforge_certbench --out build/certbench
+python ModelForge/research/summarize_certbench.py build/certbench/certbench.json
+```
+
+For Guardian-APC+ (seed-robustness rows: `--seed 1/2/3`, `--budget 32`):
+
+```text
+modelforge_bench
+```
+
+Before submitting, fill in the department, institution and email, and re-run
+the benchmarks on the machine you report in the paper.

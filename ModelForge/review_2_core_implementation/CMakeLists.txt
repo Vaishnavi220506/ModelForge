@@ -92,11 +92,20 @@ endforeach()
 # Independent certificate checker: deliberately NOT linked to modelforge_core.
 add_executable(modelforge_certcheck tools/certcheck.cpp)
 
+# ForgeCert evaluation (baselines, ablations, exhaustive optimum, audit).
+add_executable(modelforge_certbench tools/certbench.cpp)
+target_link_libraries(modelforge_certbench PRIVATE modelforge_core)
+target_compile_definitions(modelforge_certbench PRIVATE
+    MODELFORGE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/models"
+    MODELFORGE_CERTCHECK="$<TARGET_FILE:modelforge_certcheck>")
+add_dependencies(modelforge_certbench modelforge_certcheck)
+
 # Keep multi-configuration generators (such as Visual Studio) predictable
 # when this project is built from the workspace wrapper or directly.
 set(MODELFORGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set_target_properties(modelforge modelforge_tests modelforge_guardian_eval
-                      modelforge_bench modelforge_studio modelforge_certcheck PROPERTIES
+                      modelforge_bench modelforge_studio modelforge_certcheck
+                      modelforge_certbench PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${MODELFORGE_OUTPUT_DIR}"
 )
 set_target_properties(modelforge_core PROPERTIES
@@ -125,6 +134,10 @@ add_test(
 )
 set_tests_properties(forgecert_certify_wine PROPERTIES FIXTURES_SETUP forgecert)
 set_tests_properties(forgecert_independent_check PROPERTIES FIXTURES_REQUIRED forgecert)
+add_test(
+    NAME forgecert_bench_quick
+    COMMAND modelforge_certbench --quick --out ${CMAKE_BINARY_DIR}/certbench_quick
+)
 add_test(
     NAME modelforge_guardian_eval
     COMMAND modelforge_guardian_eval ${CMAKE_CURRENT_SOURCE_DIR}/models/iris_demo.mforge

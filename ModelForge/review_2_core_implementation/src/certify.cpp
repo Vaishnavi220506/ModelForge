@@ -367,7 +367,7 @@ TunerResult checkConfiguration(const DenseNetwork& network, const Box& domain,
     const auto start = std::chrono::steady_clock::now();
     TunerResult result;
     const auto robust = robustIn ? *robustIn : referenceRobustRegions(network, domain, regions, proof);
-    auto program = lowerToInteger(network, domain, config, result.error);
+    auto program = lowerToInteger(network, domain, config, result.error, proof.analysis);
     if (!program) return result;
     result.lowerings = 1;
     std::vector<std::size_t> order(regions.size());
@@ -412,7 +412,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     const auto lower = [&](const PrecisionConfig& config) {
         ++result.lowerings;
         std::string error;
-        auto program = lowerToInteger(network, domain, config, error);
+        auto program = lowerToInteger(network, domain, config, error, options.proof.analysis);
         if (!program) result.error = error;
         return program;
     };

@@ -74,10 +74,20 @@ int storageBits(std::int64_t lo, std::int64_t hi) {
     return 64;
 }
 
-std::string hexDouble(double value) {
+// Decimal literals that round-trip exactly (17 digits for double, 9 for float);
+// hex-float literals are not accepted by every C compiler.
+std::string exactDouble(double value) {
     std::ostringstream text;
-    text << std::hexfloat << value;
+    text << std::setprecision(17) << value;
     return text.str();
+}
+
+std::string exactFloat(float value) {
+    std::ostringstream text;
+    text << std::setprecision(9) << value;
+    std::string literal = text.str();
+    if (literal.find_first_of(".e") == std::string::npos) literal += ".0";
+    return literal;
 }
 
 template <typename T>
@@ -458,7 +468,7 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
     const auto writeScales = [&](const std::string& name, const std::vector<double>& values) {
         source << "static const double " << name << "[" << values.size() << "] = {";
         for (std::size_t i = 0; i < values.size(); ++i) {
-            source << (i % 4 == 0 ? "\n   " : "") << " " << hexDouble(values[i]) << (i + 1 < values.size() ? "," : "");
+            source << (i % 4 == 0 ? "\n   " : "") << " " << exactDouble(values[i]) << (i + 1 < values.size() ? "," : "");
         }
         source << "\n};\n";
     };
@@ -470,16 +480,20 @@ bool emitIntegerC(const QProgram& program, const std::string& directory, std::st
     writeScales("MF_SCALE_" + std::to_string(program.layers.size() - 1), program.layers.back().outScale);
     source << "static const float MF_INPUT_INV_SCALE[" << program.inputs << "] = {";
     for (std::size_t i = 0; i < program.inputs; ++i) {
-        source << (i % 4 == 0 ? "\n   " : "") << " " << hexDouble(static_cast<float>(1.0 / program.inputScale[i])) << "f"
+        source << (i % 4 == 0 ? "\n   " : "") << " " << exactFloat(static_cast<float>(1.0 / program.inputScale[i])) << "f"
                << (i + 1 < program.inputs ? "," : "");
     }
     source << "\n};\n\n";
     source << "static int64_t mf_round_shift(int64_t t, int s) {\n"
            << "    int64_t u = t + ((int64_t)1 << (s - 1));\n"
-           << "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n\n"
-           << "static int8_t mf_nibble(const uint8_t *packed, int k) {\n"
-           << "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
-           << "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n\n";
+           << "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n\n";
+    const bool anyPacked = std::any_of(program.layers.begin(), program.layers.end(),
+                                       [](const QLayer& layer) { return layer.weightBits <= 4; });
+    if (anyPacked) {
+        source << "static int8_t mf_nibble(const uint8_t *packed, int k) {\n"
+               << "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
+               << "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n\n";
+    }
 
     for (std::size_t l = 0; l < program.layers.size(); ++l) {
         const auto& layer = program.layers[l];
