@@ -1,4 +1,5 @@
 #include "analysis.h"
+#include "certify.h"
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
@@ -33,6 +34,12 @@ struct CommandLineOptions {
     std::string shrink;
     std::string predictPath;
     std::string dataPath;
+    bool certify = false;
+    double eps = 0.1;
+    std::string domainPath;
+    std::size_t maxRegions = 200;
+    std::string precision;
+    std::string cost = "bytes";
 };
 
 void printUsage() {
@@ -50,6 +57,14 @@ void printUsage() {
               << "  --data <csv>       Test data for --shrink (features..., label per row)\n"
               << "  --predict <csv>    Run the compiled model on every CSV row and write\n"
               << "                     <out>/predictions.csv (same format as generated_model --csv)\n"
+              << "  --certify          ForgeCert: compile to integer-only C99 with a proof that it\n"
+              << "                     makes the float model's decision on every region (needs --data)\n"
+              << "  --eps <r>          Region radius around each --data row (default 0.1)\n"
+              << "  --domain <csv>     Rows that define the input domain (default: --data)\n"
+              << "  --max-regions <n>  Certify at most n rows (default 200)\n"
+              << "  --precision <p>    Fixed precision instead of tuning: int8, int4 (4-bit weights,\n"
+              << "                     8-bit activations) or w4,8:a8,16 (per layer)\n"
+              << "  --cost <m>         Tuning objective: bytes (MCU storage, default) or bits\n"
               << "  --compare <other>  Check that <other> behaves like the input model\n"
               << "                     (e.g. a hand-optimised, converted or edited copy)\n"
               << "  --help             Show this help\n";
@@ -98,6 +113,29 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
                 return std::nullopt;
             }
             (argument == "--shrink" ? options.shrink : options.dataPath) = argv[++index];
+            continue;
+        }
+        if (argument == "--certify") {
+            options.certify = true;
+            continue;
+        }
+        if (argument == "--eps" || argument == "--domain" || argument == "--max-regions" ||
+            argument == "--precision" || argument == "--cost") {
+            if (index + 1 >= argc) {
+                std::cerr << argument << " requires a value\n";
+                return std::nullopt;
+            }
+            const std::string value = argv[++index];
+            try {
+                if (argument == "--eps") options.eps = std::stod(value);
+                if (argument == "--max-regions") options.maxRegions = static_cast<std::size_t>(std::stoul(value));
+            } catch (...) {
+                std::cerr << argument << " requires a number\n";
+                return std::nullopt;
+            }
+            if (argument == "--domain") options.domainPath = value;
+            if (argument == "--precision") options.precision = value;
+            if (argument == "--cost") options.cost = value;
             continue;
         }
         if (argument == "--compare") {
@@ -393,6 +431,128 @@ int compareModels(const CommandLineOptions& options) {
     return 3;
 }
 
+
+// "int8" / "int4" / "w4,8:a8,16" -> configuration for `layers` dense layers.
+std::optional<modelforge::PrecisionConfig> parsePrecision(const std::string& text, std::size_t layers) {
+    if (text == "int8") return modelforge::uniformConfig(layers, 8, 8);
+    if (text == "int4") return modelforge::uniformConfig(layers, 4, 8);
+    if (text == "int16") return modelforge::uniformConfig(layers, 16, 16);
+    const auto colon = text.find(':');
+    if (text.size() < 4 || text[0] != 'w' || colon == std::string::npos || text[colon + 1] != 'a') {
+        return std::nullopt;
+    }
+    const auto list = [](const std::string& part) {
+        std::vector<int> values;
+        std::stringstream stream(part);
+        std::string item;
+        while (std::getline(stream, item, ',')) values.push_back(std::atoi(item.c_str()));
+        return values;
+    };
+    modelforge::PrecisionConfig config;
+    config.weightBits = list(text.substr(1, colon - 1));
+    config.activationBits = list(text.substr(colon + 2));
+    if (config.weightBits.size() != layers || config.activationBits.size() != layers) return std::nullopt;
+    return config;
+}
+
+// ForgeCert: certified integer-only compilation.
+int certifyModel(const CommandLineOptions& options) {
+    modelforge::DiagnosticEngine diagnostics;
+    std::cout << "ForgeCert: certified integer-only compilation (ModelForge, by Vaishnavi)\n"
+              << "[1/6] Front end: load, validate, lower to IR\n";
+    auto graph = compileForComparison(options.inputPath, diagnostics);
+    if (!graph) {
+        diagnostics.print(std::cerr);
+        return 1;
+    }
+    std::cout << "[2/6] Graph optimisation with per-pass validation (Guardian-APC+)\n";
+    const auto guardian = modelforge::optimizeWithGuardian(*graph, diagnostics);
+    for (const auto& decision : guardian.decisions) {
+        std::cout << "      " << std::left << std::setw(20) << decision.passName
+                  << (decision.accepted ? "accepted" : "ROLLED BACK") << "\n";
+    }
+    std::string error;
+    const auto network = modelforge::extractDenseNetwork(*graph, error);
+    if (!network) {
+        std::cerr << "The integer target does not support this model: " << error << "\n";
+        return 1;
+    }
+    if (options.dataPath.empty()) {
+        std::cerr << "--certify needs --data <rows.csv> (regions are balls around these rows)\n";
+        return 1;
+    }
+    modelforge::Dataset anchors, domainRows;
+    if (!modelforge::loadDataset(options.dataPath, network->inputs, anchors, error) ||
+        (!options.domainPath.empty() &&
+         !modelforge::loadDataset(options.domainPath, network->inputs, domainRows, error))) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    const auto domain = modelforge::domainFromData(options.domainPath.empty() ? anchors.rows : domainRows.rows);
+    const auto regions = modelforge::regionsAroundRows(*network, anchors.rows, options.eps, domain, options.maxRegions);
+    std::cout << "[3/6] Specification: " << regions.size() << " regions (L-inf radius " << options.eps
+              << ") inside a " << network->inputs << "-dimensional input domain\n";
+
+    modelforge::TunerOptions tuner;
+    tuner.cost = options.cost == "bits" ? modelforge::CostModel::Bits : modelforge::CostModel::Bytes;
+    const auto robust = modelforge::referenceRobustRegions(*network, domain, regions, tuner.proof);
+    modelforge::TunerResult result;
+    if (!options.precision.empty()) {
+        const auto config = parsePrecision(options.precision, network->layers.size());
+        if (!config) {
+            std::cerr << "Cannot parse --precision '" << options.precision << "' for "
+                      << network->layers.size() << " layers\n";
+            return 1;
+        }
+        std::cout << "[4/6] Checking the fixed precision " << config->describe() << "\n";
+        result = modelforge::checkConfiguration(*network, domain, regions, *config, tuner.proof, &robust, 400, 7);
+    } else {
+        std::cout << "[4/6] Counterexample-guided precision tuning\n";
+        result = modelforge::tunePrecision(*network, domain, regions, tuner, &robust);
+        for (const auto& line : result.log) std::cout << "      " << line << "\n";
+    }
+    if (!result.ok) {
+        std::cerr << "Lowering failed: " << result.error << "\n";
+        return 1;
+    }
+    const auto& program = result.program;
+    const auto cost = modelforge::programCost(program);
+    std::cout << "[5/6] Integer program: " << program.config.describe() << "\n"
+              << "      flash " << std::fixed << std::setprecision(0) << cost.flashBytes << " B (float32 model "
+              << modelforge::float32Bytes(*network) << " B), RAM " << cost.ramBytes << " B, accumulators";
+    for (const auto& layer : program.layers) std::cout << " int" << layer.accBits;
+    std::cout << "\n      regions: " << result.proved << " proved, " << result.excluded
+              << " excluded (float model itself not provably constant), " << result.unproved << " unproved";
+    const auto withCounterexample = std::count_if(result.regions.begin(), result.regions.end(), [](const auto& r) {
+        return !r.excluded && !r.proved && r.counterexample;
+    });
+    if (result.unproved > 0) std::cout << " (" << withCounterexample << " with a real counterexample)";
+    std::cout << "\n";
+
+    std::cout << "[6/6] Emitting integer-only C99 and the certificate\n";
+    const std::filesystem::path out = options.outputDirectory;
+    if (!modelforge::emitIntegerC(program, out.string(), error) ||
+        !modelforge::writeCertificate((out / "certificate.json").string(), options.inputPath, *network, regions,
+                                      result, options.eps, error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    if (!result.counterexamples.empty()) {
+        std::ofstream file(out / "counterexamples.csv");
+        file << "region,float_class,integer_class,input...\n" << std::setprecision(9);
+        for (const auto& cex : result.counterexamples) {
+            file << cex.region << "," << cex.refClass << "," << cex.quantClass;
+            for (double v : cex.input) file << "," << v;
+            file << "\n";
+        }
+    }
+    std::cout << "      " << (out / "model_q.c").string() << ", model_q.h, main_q.c, CMakeLists.txt\n"
+              << "      " << (out / "certificate.json").string() << "\n"
+              << "      Re-check independently: modelforge_certcheck " << out.string() << " " << options.inputPath
+              << "\n";
+    return result.unproved == 0 ? 0 : 4;
+}
+
 // Shrink-and-check: compress, search for realistic disagreements, recommend.
 int shrinkModel(const CommandLineOptions& options) {
     modelforge::DiagnosticEngine diagnostics;
@@ -511,6 +671,9 @@ int main(int argc, char* argv[]) {
     modelforge::DiagnosticEngine diagnostics;
     modelforge::ModelGraph model;
 
+    if (options->certify) {
+        return certifyModel(*options);
+    }
     if (!options->shrink.empty()) {
         return shrinkModel(*options);
     }

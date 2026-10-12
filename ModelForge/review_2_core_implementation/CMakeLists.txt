@@ -21,13 +21,16 @@ endif()
 add_library(modelforge_core
     src/adaptive.cpp
     src/analysis.cpp
+    src/certify.cpp
     src/codegen.cpp
+    src/diffai.cpp
     src/diagnostics.cpp
     src/guardian.cpp
     src/ir.cpp
     src/loader.cpp
     src/model.cpp
     src/optimizer.cpp
+    src/qnet.cpp
     src/research.cpp
     src/shrink.cpp
     src/validator.cpp
@@ -86,11 +89,14 @@ foreach(tool modelforge_bench modelforge_studio)
         MODELFORGE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/models")
 endforeach()
 
+# Independent certificate checker: deliberately NOT linked to modelforge_core.
+add_executable(modelforge_certcheck tools/certcheck.cpp)
+
 # Keep multi-configuration generators (such as Visual Studio) predictable
 # when this project is built from the workspace wrapper or directly.
 set(MODELFORGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set_target_properties(modelforge modelforge_tests modelforge_guardian_eval
-                      modelforge_bench modelforge_studio PROPERTIES
+                      modelforge_bench modelforge_studio modelforge_certcheck PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${MODELFORGE_OUTPUT_DIR}"
 )
 set_target_properties(modelforge_core PROPERTIES
@@ -103,6 +109,22 @@ add_test(
     NAME modelforge_tests
     COMMAND modelforge_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures
 )
+# ForgeCert end to end: certify a real model, then re-check the emitted C with
+# the independent checker (which shares no code with the compiler).
+add_test(
+    NAME forgecert_certify_wine
+    COMMAND modelforge ${CMAKE_CURRENT_SOURCE_DIR}/models/real/wine_mlp32x16.mforge --certify
+            --data ${CMAKE_CURRENT_SOURCE_DIR}/models/real/wine_test.csv
+            --domain ${CMAKE_CURRENT_SOURCE_DIR}/models/real/wine_train.csv
+            --eps 0.1 --out ${CMAKE_BINARY_DIR}/forgecert_wine
+)
+add_test(
+    NAME forgecert_independent_check
+    COMMAND modelforge_certcheck ${CMAKE_BINARY_DIR}/forgecert_wine
+            ${CMAKE_CURRENT_SOURCE_DIR}/models/real/wine_mlp32x16.mforge
+)
+set_tests_properties(forgecert_certify_wine PROPERTIES FIXTURES_SETUP forgecert)
+set_tests_properties(forgecert_independent_check PROPERTIES FIXTURES_REQUIRED forgecert)
 add_test(
     NAME modelforge_guardian_eval
     COMMAND modelforge_guardian_eval ${CMAKE_CURRENT_SOURCE_DIR}/models/iris_demo.mforge

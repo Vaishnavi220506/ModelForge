@@ -1,5 +1,6 @@
 #include "adaptive.h"
 #include "analysis.h"
+#include "certify.h"
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
@@ -385,6 +386,172 @@ void testOutputComparison() {
           "non-finite output should be rejected");
 }
 
+
+modelforge::IRGraph compileFile(const std::filesystem::path& path) {
+    std::ifstream file(path);
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    modelforge::IRGraph graph;
+    modelforge::DiagnosticEngine diagnostics;
+    check(modelforge::compileManifestText(text, graph, diagnostics), "model should compile: " + path.string());
+    return graph;
+}
+
+void testForgeCert(const std::filesystem::path& fixtureDirectory) {
+    const auto models = fixtureDirectory.parent_path().parent_path() / "models";
+    const auto real = models / "real";
+    std::string error;
+
+    // Rounding helper: round half up, also for negatives.
+    check(modelforge::roundShift(5, 1) == 3 && modelforge::roundShift(-5, 1) == -2 &&
+              modelforge::roundShift(-6, 1) == -3 && modelforge::roundShift(7, 2) == 2,
+          "roundShift should be floor((t + 2^(s-1)) / 2^s)");
+
+    // A one-logit sigmoid head decides z > 0: it becomes two classes.
+    const auto binary = modelforge::extractDenseNetwork(compileFile(models / "binary_sigmoid_demo.mforge"), error);
+    check(binary && binary->classes == 2 && binary->outputActivation == "sigmoid",
+          "two-output sigmoid model should extract as a dense network");
+
+    const auto graph = compileFile(real / "wine_mlp16.mforge");
+    const auto network = modelforge::extractDenseNetwork(graph, error);
+    check(network && network->layers.size() == 2 && network->classes == 3 && network->layers[0].relu &&
+              !network->layers[1].relu,
+          "Wine MLP should extract as Gemm+ReLU, Gemm");
+    if (!network) return;
+    modelforge::Dataset train, test;
+    check(modelforge::loadDataset((real / "wine_train.csv").string(), 13, train, error) &&
+              modelforge::loadDataset((real / "wine_test.csv").string(), 13, test, error),
+          "Wine data should load");
+    const auto domain = modelforge::domainFromData(train.rows);
+
+    // int8 lowering: range inference rules out overflow and saturation.
+    const auto int8 = modelforge::lowerToInteger(*network, domain, modelforge::uniformConfig(2, 8, 8), error);
+    check(int8.has_value(), "int8 lowering should succeed: " + error);
+    if (!int8) return;
+    std::mt19937 rng(3);
+    std::size_t agree = 0;
+    bool overflow = false;
+    for (const auto& row : test.rows) {
+        const std::vector<double> x(row.begin(), row.end());
+        const auto run = modelforge::runInteger(*int8, x);
+        overflow = overflow || run.accumulatorOverflow || run.saturated;
+        agree += run.decision == modelforge::argmaxFirst(modelforge::referenceLogits(*network, x));
+    }
+    for (int k = 0; k < 3000; ++k) {
+        std::vector<double> x(13);
+        for (std::size_t i = 0; i < 13; ++i) {
+            x[i] = std::uniform_real_distribution<double>(domain.lo[i], domain.hi[i])(rng);
+        }
+        const auto run = modelforge::runInteger(*int8, x);
+        overflow = overflow || run.accumulatorOverflow || run.saturated;
+    }
+    check(!overflow, "integer program must never overflow or saturate inside the domain");
+    check(agree + 1 >= test.rows.size(), "int8 program should agree with the float model on the test set");
+
+    // Soundness of the differential analysis on random boxes (int4: large errors).
+    const auto int4 = modelforge::lowerToInteger(*network, domain, modelforge::uniformConfig(2, 4, 8), error);
+    check(int4.has_value(), "int4 lowering should succeed");
+    if (!int4) return;
+    std::size_t violations = 0, certified = 0;
+    for (int b = 0; b < 40; ++b) {
+        const auto& row = test.rows[static_cast<std::size_t>(b) % test.rows.size()];
+        modelforge::Box box;
+        for (std::size_t i = 0; i < 13; ++i) {
+            box.lo.push_back(std::max(domain.lo[i], row[i] - 0.15));
+            box.hi.push_back(std::min(domain.hi[i], row[i] + 0.15));
+        }
+        const auto analysis = modelforge::analyzeRegion(*network, *int4, box);
+        certified += analysis.quantCertified;
+        for (int k = 0; k < 300; ++k) {
+            std::vector<double> x(13);
+            for (std::size_t i = 0; i < 13; ++i) {
+                const double u = std::uniform_real_distribution<double>(0, 1)(rng);
+                x[i] = box.lo[i] + (k % 2 ? (u < 0.5 ? 0.0 : 1.0) : u) * (box.hi[i] - box.lo[i]);
+            }
+            const auto run = modelforge::runInteger(*int4, x);
+            const auto ref = modelforge::referenceLogits(*network, x);
+            const auto logits = modelforge::dequantizedLogits(*int4, run);
+            for (std::size_t c = 0; c < 3; ++c) {
+                if (std::fabs(logits[c] - ref[c]) > analysis.logitErrorBound[c] ||
+                    logits[c] < analysis.logitLower[c] || logits[c] > analysis.logitUpper[c]) {
+                    ++violations;
+                }
+            }
+            if (analysis.quantCertified && run.decision != analysis.refClass) ++violations;
+        }
+    }
+    check(violations == 0, "differential abstract interpretation must bound every sampled execution");
+    check(certified > 0, "some int4 boxes should be certified");
+
+    // The affine domain proves at least what the interval domain proves.
+    modelforge::AnalysisOptions interval;
+    interval.affine = false;
+    std::size_t affineProved = 0, intervalProved = 0;
+    const auto regions = modelforge::regionsAroundRows(*network, test.rows, 0.1, domain, 30);
+    for (const auto& region : regions) {
+        affineProved += modelforge::analyzeRegion(*network, *int4, region.box, {}, region.refClass).quantCertified;
+        intervalProved += modelforge::analyzeRegion(*network, *int4, region.box, interval, region.refClass).quantCertified;
+    }
+    check(affineProved >= intervalProved && affineProved > 0, "affine forms should not lose to intervals");
+
+    // Counterexample-guided tuning proves every robust region and shrinks the model.
+    modelforge::TunerOptions options;
+    const auto tuned = modelforge::tunePrecision(*network, domain, regions, options);
+    check(tuned.ok && tuned.unproved == 0 && tuned.proved + tuned.excluded == regions.size(),
+          "tuner should prove every region whose float decision is constant");
+    check(modelforge::programCost(tuned.program).flashBytes < modelforge::float32Bytes(*network) / 2,
+          "certified integer program should be less than half the float32 size");
+    for (std::size_t r = 0; r < regions.size(); ++r) {
+        if (!tuned.regions[r].proved) continue;
+        for (int k = 0; k < 200; ++k) {
+            std::vector<double> x(13);
+            for (std::size_t i = 0; i < 13; ++i) {
+                x[i] = std::uniform_real_distribution<double>(regions[r].box.lo[i], regions[r].box.hi[i])(rng);
+            }
+            check(modelforge::runInteger(tuned.program, x).decision == regions[r].refClass,
+                  "a proved region must never disagree");
+        }
+    }
+
+    // Falsifier: int4 on Digits has real disagreements next to real samples.
+    const auto digits = modelforge::extractDenseNetwork(compileFile(real / "digits_mlp16.mforge"), error);
+    modelforge::Dataset digitsTrain, digitsTest;
+    check(digits && modelforge::loadDataset((real / "digits_train.csv").string(), 64, digitsTrain, error) &&
+              modelforge::loadDataset((real / "digits_test.csv").string(), 64, digitsTest, error),
+          "Digits model and data should load");
+    if (!digits) return;
+    const auto digitsDomain = modelforge::domainFromData(digitsTrain.rows);
+    const auto digitsRegions = modelforge::regionsAroundRows(*digits, digitsTest.rows, 0.1, digitsDomain, 30);
+    const auto checked = modelforge::checkConfiguration(*digits, digitsDomain, digitsRegions,
+                                                        modelforge::uniformConfig(2, 4, 8), options.proof,
+                                                        nullptr, 300, 5);
+    check(!checked.counterexamples.empty(), "falsifier should find a real int4 counterexample on Digits");
+    for (const auto& cex : checked.counterexamples) {
+        const auto run = modelforge::runInteger(checked.program, cex.input);
+        check(run.decision == cex.quantClass && run.decision != cex.refClass &&
+                  modelforge::argmaxFirst(modelforge::referenceLogits(*digits, cex.input)) == cex.refClass,
+              "every reported counterexample must replay");
+    }
+
+    // Emission writes the integer-only C sources.
+    const auto out = std::filesystem::temp_directory_path() / "modelforge_forgecert_test";
+    check(modelforge::emitIntegerC(tuned.program, out.string(), error) &&
+              std::filesystem::exists(out / "model_q.c") && std::filesystem::exists(out / "main_q.c"),
+          "integer C should be emitted");
+    std::ifstream source(out / "model_q.c");
+    const std::string code((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+    const auto begin = code.find("static void mf_layer0");
+    const auto end = code.find("void mf_quantize_input");
+    const auto inferBegin = code.find("int mf_infer_q");
+    const auto inferEnd = code.find("int mf_predict");
+    const std::string integerPart =
+        begin == std::string::npos || end == std::string::npos || inferEnd == std::string::npos
+            ? std::string("float")
+            : code.substr(begin, end - begin) + code.substr(inferBegin, inferEnd - inferBegin);
+    check(integerPart.find("float") == std::string::npos && integerPart.find("double") == std::string::npos &&
+              integerPart.find("static const double") == std::string::npos,
+          "layer code and inference must be integer-only");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -399,6 +566,7 @@ int main(int argc, char* argv[]) {
     testGuardianApc();
     testGuardianPlus(fixtureDirectory);
     testShrink(fixtureDirectory);
+    testForgeCert(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";
