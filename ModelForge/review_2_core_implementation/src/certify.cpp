@@ -508,6 +508,15 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     const auto aLadder = activationLadder(options.cost);
     const auto robust = robustIn ? *robustIn : referenceRobustRegions(network, domain, regions, options.proof);
     std::mt19937 rng(options.seed);
+    // Proof budget while searching. Bisecting a box one input at a time pays
+    // off in a few dimensions; for images it almost never does, so the search
+    // rejects candidates after a few analyses. A region proved with a small
+    // budget is also proved with the full one, which the final proofs use.
+    ProofOptions search = options.proof;
+    const std::size_t searchBudget = options.searchAnalyses > 0 ? options.searchAnalyses
+                                     : network.inputs > 100       ? 12
+                                                                  : options.proof.maxAnalyses;
+    search.maxAnalyses = std::min(search.maxAnalyses, searchBudget);
 
     const auto lower = [&](const PrecisionConfig& config) {
         ++result.lowerings;
@@ -520,16 +529,37 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         return slot.kind == 0 ? aLadder : wLadder;
     };
 
-    PrecisionConfig config = uniformConfig(L, wLadder.front(), aLadder.front());
     std::vector<std::size_t> order(regions.size());
     std::iota(order.begin(), order.end(), 0);
+    // The search targets the regions that the most precise program on the
+    // lattice proves: no configuration can do better than it, so the others
+    // would only drive every width to the top. They are still attempted for
+    // the certificate at the end.
+    std::vector<bool> target = robust;
+    if (options.reachableTargets) {
+        if (const auto top = lower(uniformConfig(L, wLadder.back(), aLadder.back()))) {
+            const auto evaluation = evaluateProgram(network, *top, regions, robust, options.proof,
+                                                    options.falsifyFirst ? options.falsifyBudget : 0, order, false,
+                                                    options.seed);
+            result.analyses += evaluation.analyses;
+            for (std::size_t r : evaluation.failedRegions) target[r] = false;
+            result.unreachable = evaluation.failedRegions.size();
+            if (result.unreachable > 0) {
+                result.log.push_back(std::to_string(result.unreachable) + " robust region(s) not provable even at " +
+                                     uniformConfig(L, wLadder.back(), aLadder.back()).describe() +
+                                     ": not targeted by the search");
+            }
+        }
+    }
+
+    PrecisionConfig config = uniformConfig(L, wLadder.front(), aLadder.front());
     std::optional<QProgram> program;
     bool allProved = false;
     for (std::size_t iteration = 0; iteration < options.maxIterations; ++iteration) {
         program = lower(config);
         if (!program) return result;
         ++result.iterations;
-        const auto evaluation = evaluateProgram(network, *program, regions, robust, options.proof,
+        const auto evaluation = evaluateProgram(network, *program, regions, target, search,
                                                 options.falsifyFirst ? options.falsifyBudget : 0, order,
                                                 false, options.seed + static_cast<std::uint32_t>(iteration * 7919));
         result.analyses += evaluation.analyses;
@@ -684,7 +714,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         // A region that defeated one candidate probably defeats the next:
         // it moves to the front, and a short falsifier run precedes proofs.
         const auto certifies = [&](const QProgram& p) {
-            const auto evaluation = evaluateProgram(network, p, regions, robust, options.proof,
+            const auto evaluation = evaluateProgram(network, p, regions, target, search,
                                                     options.falsifyFirst ? 8 : 0, order, true, options.seed);
             result.analyses += evaluation.analyses;
             result.falsifierCalls += evaluation.falsifierCalls;
@@ -695,46 +725,61 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             }
             return evaluation.failing == 0;
         };
+        // On large inputs (expensive lowerings and proofs) the neighbourhood
+        // escalates: compound moves are tried only when no single move
+        // certifies. Small models search the full neighbourhood at once.
+        const bool escalate = network.inputs > 100;
         const auto localSearch = [&](PrecisionConfig current, const std::string& tag) {
             for (;;) {
                 const double cost = costOf(current);
-                std::vector<PrecisionConfig> candidates;
                 const int directions[] = {-1, +1, -2, +2};
-                for (std::size_t s1 = 0; s1 < sources; ++s1) {
-                    for (int d1 : directions) {
-                        PrecisionConfig one = current;
-                        if (!apply(one, s1, d1)) continue;
-                        candidates.push_back(one);
-                        if (!options.compoundMoves) continue;
-                        for (std::size_t s2 = s1 + 1; s2 < sources; ++s2) {
-                            if (!related(s1, s2)) continue;
-                            for (int d2 : directions) {
-                                PrecisionConfig two = one;
-                                if (apply(two, s2, d2)) candidates.push_back(two);
+                const auto neighbours = [&](bool singles, bool pairs) {
+                    std::vector<PrecisionConfig> candidates;
+                    for (std::size_t s1 = 0; s1 < sources; ++s1) {
+                        for (int d1 : directions) {
+                            PrecisionConfig one = current;
+                            if (!apply(one, s1, d1)) continue;
+                            if (singles) candidates.push_back(one);
+                            if (!pairs) continue;
+                            for (std::size_t s2 = s1 + 1; s2 < sources; ++s2) {
+                                if (!related(s1, s2)) continue;
+                                for (int d2 : directions) {
+                                    PrecisionConfig two = one;
+                                    if (apply(two, s2, d2)) candidates.push_back(two);
+                                }
                             }
                         }
                     }
-                }
-                precompute(candidates);
-                std::vector<std::pair<double, PrecisionConfig>> moves;
-                std::map<std::string, bool> seen;
-                for (const auto& c : candidates) {
-                    const double value = costOf(c);
-                    if (value < cost - 1e-9 && !seen[c.describe()]) {
-                        seen[c.describe()] = true;
-                        moves.push_back({cost - value, c});
+                    return candidates;
+                };
+                const auto tryMoves = [&](const std::vector<PrecisionConfig>& candidates) {
+                    precompute(candidates);
+                    std::vector<std::pair<double, PrecisionConfig>> moves;
+                    std::map<std::string, bool> seen;
+                    for (const auto& c : candidates) {
+                        const double value = costOf(c);
+                        if (value < cost - 1e-9 && !seen[c.describe()]) {
+                            seen[c.describe()] = true;
+                            moves.push_back({cost - value, c});
+                        }
                     }
-                }
-                std::sort(moves.begin(), moves.end(),
-                          [](const auto& x, const auto& y) { return x.first > y.first; });
+                    std::sort(moves.begin(), moves.end(),
+                              [](const auto& x, const auto& y) { return x.first > y.first; });
+                    for (const auto& move : moves) {
+                        const auto p = lower(move.second);
+                        if (!p || !certifies(*p)) continue;
+                        result.log.push_back(tag + ": " + current.describe() + " -> " + move.second.describe());
+                        current = move.second;
+                        return true;
+                    }
+                    return false;
+                };
                 bool improved = false;
-                for (const auto& move : moves) {
-                    const auto p = lower(move.second);
-                    if (!p || !certifies(*p)) continue;
-                    result.log.push_back(tag + ": " + current.describe() + " -> " + move.second.describe());
-                    current = move.second;
-                    improved = true;
-                    break;
+                if (escalate) {
+                    improved = tryMoves(neighbours(true, false)) ||
+                               (options.compoundMoves && tryMoves(neighbours(false, true)));
+                } else {
+                    improved = tryMoves(neighbours(true, options.compoundMoves));
                 }
                 if (!improved) return current;
             }

@@ -1,0 +1,37 @@
+{
+  "author": "Vaishnavi",
+  "models": {
+    "mnist_lenet": {
+      "test_accuracy": 0.9847,
+      "parameters": 8474
+    },
+    "mnist_lenet_avg": {
+      "test_accuracy": 0.981,
+      "parameters": 8474
+    },
+    "mnist_dscnn": {
+      "test_accuracy": 0.9693,
+      "parameters": 3402
+    },
+    "mnist_resnet": {
+      "test_accuracy": 0.9736,
+      "parameters": 5122
+    },
+    "fashion_lenet": {
+      "test_accuracy": 0.8665,
+      "parameters": 8474
+    },
+    "fashion_lenet_avg": {
+      "test_accuracy": 0.8518,
+      "parameters": 8474
+    },
+    "fashion_dscnn": {
+      "test_accuracy": 0.8359,
+      "parameters": 3402
+    },
+    "fashion_resnet": {
+      "test_accuracy": 0.8512,
+      "parameters": 5122
+    }
+  }
+}

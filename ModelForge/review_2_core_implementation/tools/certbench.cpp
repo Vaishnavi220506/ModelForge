@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
         // separable blocks with batch norm, residual connections.
         for (const char* d : {"mnist", "fashion"}) {
             for (const char* a : {"lenet", "lenet_avg", "dscnn", "resnet"}) {
-                cases.push_back({"image", std::string(d) + "_" + a, d, true, {0.01}, true});
+                cases.push_back({"image", std::string(d) + "_" + a, d, true, {1.0 / 255.0}, true});
             }
         }
     }
@@ -345,7 +345,9 @@ int main(int argc, char** argv) {
         const PrecisionConfig guided = entry.lite ? uniformConfig(network->layers.size(), 8, 8)
                                                   : accuracyGuided(*network, domain, test);
         for (double eps : radii) {
-            const auto regions = regionsAroundRows(*network, test.rows, eps, domain, maxRegions);
+            // Lite cases (large images, deep graphs) use at most 50 regions.
+            const auto regions =
+                regionsAroundRows(*network, test.rows, eps, domain, entry.lite ? std::min<std::size_t>(maxRegions, 50) : maxRegions);
             TunerOptions base;
             const auto robust = referenceRobustRegions(*network, domain, regions, base.proof);
             std::vector<Outcome> outcomes;

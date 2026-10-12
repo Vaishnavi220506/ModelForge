@@ -42,8 +42,8 @@ def dscnn():
     def block(cin, cout, stride):
         return [nn.Conv2d(cin, cin, 3, stride=stride, padding=1, groups=cin, bias=False), nn.BatchNorm2d(cin), nn.ReLU(),
                 nn.Conv2d(cin, cout, 1, bias=False), nn.BatchNorm2d(cout), nn.ReLU()]
-    return nn.Sequential(nn.Conv2d(1, 8, 3, stride=2, padding=1, bias=False), nn.BatchNorm2d(8), nn.ReLU(),
-                         *block(8, 16, 1), *block(16, 24, 2), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(24, 10))
+    return nn.Sequential(nn.Conv2d(1, 16, 3, stride=2, padding=1, bias=False), nn.BatchNorm2d(16), nn.ReLU(),
+                         *block(16, 32, 1), *block(32, 48, 2), nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(48, 10))
 
 
 class Residual(nn.Module):
@@ -79,7 +79,7 @@ class ResNet(nn.Module):
 ARCHS = {
     "lenet": (lambda: lenet(nn.MaxPool2d), 4),
     "lenet_avg": (lambda: lenet(nn.AvgPool2d), 4),
-    "dscnn": (dscnn, 12),
+    "dscnn": (dscnn, 8),
     "resnet": (ResNet, 4),
 }
 

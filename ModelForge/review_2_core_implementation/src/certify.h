@@ -99,6 +99,8 @@ struct TunerOptions {
     bool compoundMoves = true;         // local search also tries pairs of moves
     bool multiStart = true;            // ... and restarts from the cheapest certified uniform config
     std::size_t maxIterations = 64;
+    bool reachableTargets = true;      // search only for regions the top configuration proves
+    std::size_t searchAnalyses = 0;    // per-region proof budget while searching (0: 12 for >100 inputs, else full)
     std::uint32_t seed = 20261012;
 };
 
@@ -119,6 +121,7 @@ struct TunerResult {
     std::size_t proved = 0;
     std::size_t excluded = 0;
     std::size_t unproved = 0;
+    std::size_t unreachable = 0;  // robust, but not provable even by the most precise configuration
     std::size_t iterations = 0;
     std::size_t lowerings = 0;
     std::size_t analyses = 0;

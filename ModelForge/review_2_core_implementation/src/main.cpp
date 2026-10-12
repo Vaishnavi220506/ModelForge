@@ -569,6 +569,9 @@ int certifyModel(const CommandLineOptions& options) {
         return !r.excluded && !r.proved && r.counterexample;
     });
     if (result.unproved > 0) std::cout << " (" << withCounterexample << " with a real counterexample)";
+    if (result.unreachable > 0) {
+        std::cout << "; " << result.unreachable << " of the robust regions are beyond the analysis even at 16 bits";
+    }
     std::cout << "\n";
 
     std::cout << "[6/6] Emitting integer-only C99 and the certificate\n";

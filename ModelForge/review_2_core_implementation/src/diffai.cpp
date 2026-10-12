@@ -88,6 +88,30 @@ void addSymbol(Form& f, std::size_t symbol, double coefficient) {
     }
 }
 
+// Consolidation: keeps the `keep` largest terms of a form and replaces the
+// rest by one fresh symbol with the sum of their magnitudes. Sound (the fresh
+// symbol can take the value of the dropped part), but it forgets their
+// correlation with other forms.
+void consolidate(Form& f, std::size_t keep, std::uint32_t freshSymbol) {
+    if (f.a.size() <= keep) return;
+    std::vector<double> magnitude(f.a.size());
+    for (std::size_t k = 0; k < f.a.size(); ++k) magnitude[k] = std::fabs(f.a[k].value);
+    std::nth_element(magnitude.begin(), magnitude.begin() + static_cast<long>(f.a.size() - keep), magnitude.end());
+    const double threshold = magnitude[f.a.size() - keep];
+    std::vector<Term> kept;
+    kept.reserve(keep + 1);
+    double dropped = 0.0;
+    for (const auto& t : f.a) {
+        if (std::fabs(t.value) >= threshold && kept.size() < keep) {
+            kept.push_back(t);
+        } else {
+            dropped += std::fabs(t.value);
+        }
+    }
+    if (dropped > 0.0) kept.push_back({freshSymbol, dropped * (1.0 + 1e-12)});
+    f.a = std::move(kept);
+}
+
 // Sparse accumulator for sums of many forms (the affine step): O(total terms).
 class Accumulator {
 public:
@@ -100,6 +124,10 @@ public:
     void add(double alpha, const Form& f) {
         if (alpha == 0.0) return;
         constant_ += alpha * f.c;
+        if (!f.a.empty()) {
+            low_ = std::min(low_, f.a.front().symbol);
+            high_ = std::max(high_, f.a.back().symbol);
+        }
         for (const auto& t : f.a) {
             if (!used_[t.symbol]) {
                 used_[t.symbol] = 1;
@@ -110,17 +138,28 @@ public:
     }
     void addConstant(double v) { constant_ += v; }
     Form take() {
-        std::sort(touched_.begin(), touched_.end());
         Form f;
         f.c = constant_;
         f.a.reserve(touched_.size());
-        for (auto k : touched_) {
+        const auto emit = [&](std::uint32_t k) {
             if (value_[k] != 0.0) f.a.push_back({k, value_[k]});
             value_[k] = 0.0;
             used_[k] = 0;
+        };
+        // Dense touched ranges are scanned in order; sparse ones are sorted.
+        const std::size_t n = touched_.size();
+        if (n > 0 && static_cast<std::size_t>(high_ - low_) < 8 * n) {
+            for (std::uint32_t k = low_; k <= high_; ++k) {
+                if (used_[k]) emit(k);
+            }
+        } else {
+            std::sort(touched_.begin(), touched_.end());
+            for (auto k : touched_) emit(k);
         }
         touched_.clear();
         constant_ = 0.0;
+        low_ = std::numeric_limits<std::uint32_t>::max();
+        high_ = 0;
         return f;
     }
 
@@ -129,6 +168,8 @@ private:
     std::vector<char> used_;
     std::vector<std::uint32_t> touched_;
     double constant_ = 0.0;
+    std::uint32_t low_ = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t high_ = 0;
 };
 
 struct Neuron {
@@ -181,6 +222,15 @@ public:
     Engine(std::size_t sources, bool affine, bool provenance)
         : sources_(provenance ? sources : 1), affine_(affine), provenance_(provenance) {}
     std::size_t fresh() { return symbols_++; }
+    // Bounds the size of every form of a tensor (domain-wide analysis only).
+    void consolidate(std::vector<Neuron>& tensor, std::size_t keep) {
+        for (auto& n : tensor) {
+            if (n.r.a.size() > keep) modelforge::consolidate(n.r, keep, static_cast<std::uint32_t>(fresh()));
+            for (auto& part : n.e) {
+                if (part.a.size() > keep) modelforge::consolidate(part, keep, static_cast<std::uint32_t>(fresh()));
+            }
+        }
+    }
     std::size_t sources() const { return sources_; }
     std::size_t part(std::size_t source) const { return provenance_ ? source : 0; }
 
@@ -715,6 +765,7 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
     }
 
     Engine engine(errorSourceCount(L), options.affine, false);
+    constexpr std::size_t kDomainTerms = 512;
     // Per tensor: forms, scales, proved integer ranges, and the neurons proved
     // to be exactly 0 on the whole domain in the float model and in the
     // integer program (dead ReLUs).
@@ -990,6 +1041,10 @@ std::optional<QProgram> lowerToInteger(const DenseNetwork& network, const Box& d
             error = "could not place layer " + std::to_string(l) + " output range without saturation";
             return std::nullopt;
         }
+        // The domain-wide forms only choose scales and widths (every claim is
+        // re-proved by the region analysis and the checker), so they are kept
+        // small on deep graphs.
+        engine.consolidate(next, kDomainTerms);
         finish(std::move(layer), std::move(next));
     }
     planBuffers(program);
