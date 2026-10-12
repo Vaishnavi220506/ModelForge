@@ -101,6 +101,8 @@ struct TunerOptions {
     std::size_t maxIterations = 64;
     bool reachableTargets = true;      // search only for regions the top configuration proves
     std::size_t searchAnalyses = 0;    // per-region proof budget while searching (0: 12 for >100 inputs, else full)
+    std::size_t maxCandidateProofs = 0;  // local-search candidates proved (0: 120 for >100 inputs, else unlimited)
+    bool trace = false;                // stream the tuner log to stderr
     std::uint32_t seed = 20261012;
 };
 

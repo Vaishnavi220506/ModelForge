@@ -293,6 +293,8 @@ int main(int argc, char** argv) {
             const std::string name = m;
             cases.push_back({"image", name, name.substr(0, name.find('_')), true, {0.01, 0.02}});
         }
+    }
+    if (suite == "all" || suite == "image" || suite == "cifar") {
         cases.push_back({"image", "cifar_cnn", "cifar", true, {1.0 / 255.0}, true});
     }
     if (suite == "all" || suite == "zoo") {

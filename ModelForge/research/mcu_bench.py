@@ -170,6 +170,7 @@ def main():
     parser.add_argument("--samples", type=int, default=5)
     parser.add_argument("--out", default="mcu_results.json")
     parser.add_argument("--only", default="", help="comma-separated model names (default: all)")
+    parser.add_argument("--merge", action="store_true", help="update entries of an existing --out file")
     args = parser.parse_args()
     build = Path(args.build)
     modelforge = build / "Release" / "modelforge"
@@ -199,7 +200,8 @@ def main():
             if directory.exists():
                 shutil.rmtree(directory)
             command = [str(modelforge), str(MODELS / f"{model}.mforge"), "--certify", "--data", str(MODELS / data),
-                       "--domain", str(MODELS / domain), "--eps", str(eps), "--max-regions", "60",
+                       "--domain", str(MODELS / domain), "--eps", str(eps),
+                       "--max-regions", "20" if mcu == "atmega1284p" else "60",
                        "--out", str(directory)]
             if box:
                 command += ["--domain-range", box]
@@ -250,6 +252,10 @@ def main():
             results.append(entry)
             print(json.dumps(entry))
             sys.stdout.flush()
+    if args.merge and Path(args.out).exists():
+        fresh = {(r["model"], r["variant"]) for r in results}
+        old = json.loads(Path(args.out).read_text())["results"]
+        results = [r for r in old if (r["model"], r["variant"]) not in fresh] + results
     Path(args.out).write_text(json.dumps({"author": "Vaishnavi", "mcu": "8-bit AVR @ 16 MHz (simavr): per entry",
                                           "samples": args.samples, "results": results}, indent=2) + "\n")
     if not all(r["avr_matches_host"] and r.get("avr_float_matches_host", True) for r in results):

@@ -35,6 +35,7 @@ struct CommandLineOptions {
     std::string predictPath;
     std::string dataPath;
     bool certify = false;
+    bool trace = false;  // --trace: stream the tuner's log
     double eps = 0.1;
     std::string domainPath;
     std::size_t maxRegions = 200;
@@ -70,6 +71,7 @@ void printUsage() {
               << "  --max-regions <n>  Certify at most n rows (default 200)\n"
               << "  --precision <p>    Fixed precision instead of tuning: int8, int4 (4-bit weights,\n"
               << "                     8-bit activations) or w4,8:a8,16 (per layer)\n"
+              << "  --trace            Stream the precision tuner's progress\n"
               << "  --cost <m>         Tuning objective: bytes (MCU storage, default), bits, or\n"
               << "                     latency (estimated cycles on an 8-bit AVR)\n"
               << "  --compare <other>  Check that <other> behaves like the input model\n"
@@ -124,6 +126,10 @@ std::optional<CommandLineOptions> parseArguments(int argc, char* argv[]) {
         }
         if (argument == "--certify") {
             options.certify = true;
+            continue;
+        }
+        if (argument == "--trace") {
+            options.trace = true;
             continue;
         }
         if (argument == "--eps" || argument == "--domain" || argument == "--max-regions" ||
@@ -516,6 +522,7 @@ int certifyModel(const CommandLineOptions& options) {
               << ") inside a " << network->inputs << "-dimensional input domain\n";
 
     modelforge::TunerOptions tuner;
+    tuner.trace = options.trace;
     tuner.cost = options.cost == "bits"      ? modelforge::CostModel::Bits
                  : options.cost == "latency" ? modelforge::CostModel::Latency
                                              : modelforge::CostModel::Bytes;
@@ -543,7 +550,9 @@ int certifyModel(const CommandLineOptions& options) {
     } else {
         std::cout << "[4/6] Counterexample-guided precision tuning\n";
         result = modelforge::tunePrecision(*network, domain, regions, tuner, &robust);
-        for (const auto& line : result.log) std::cout << "      " << line << "\n";
+        if (!options.trace) {
+            for (const auto& line : result.log) std::cout << "      " << line << "\n";
+        }
     }
     if (!result.ok) {
         std::cerr << "Lowering failed: " << result.error << "\n";

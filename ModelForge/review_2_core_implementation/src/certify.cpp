@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <map>
 #include <limits>
 #include <numeric>
@@ -512,12 +513,20 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
     // off in a few dimensions; for images it almost never does, so the search
     // rejects candidates after a few analyses. A region proved with a small
     // budget is also proved with the full one, which the final proofs use.
+    const bool large = network.inputs > 100;
     ProofOptions search = options.proof;
     const std::size_t searchBudget = options.searchAnalyses > 0 ? options.searchAnalyses
-                                     : network.inputs > 100       ? 12
+                                     : large                      ? 12
                                                                   : options.proof.maxAnalyses;
     search.maxAnalyses = std::min(search.maxAnalyses, searchBudget);
 
+    // Every log line is also streamed to stderr with --trace.
+    const auto note = [&](const std::string& line) {
+        result.log.push_back(line);
+        if (options.trace) std::cerr << "      [tuner " << std::fixed << std::setprecision(0)
+                                     << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                                     << " s] " << line << std::endl;
+    };
     const auto lower = [&](const PrecisionConfig& config) {
         ++result.lowerings;
         std::string error;
@@ -545,7 +554,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             for (std::size_t r : evaluation.failedRegions) target[r] = false;
             result.unreachable = evaluation.failedRegions.size();
             if (result.unreachable > 0) {
-                result.log.push_back(std::to_string(result.unreachable) + " robust region(s) not provable even at " +
+                note(std::to_string(result.unreachable) + " robust region(s) not provable even at " +
                                      uniformConfig(L, wLadder.back(), aLadder.back()).describe() +
                                      ": not targeted by the search");
             }
@@ -575,7 +584,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
              << "  failing " << evaluation.failing << "  (counterexamples "
              << evaluation.falsifierHits << ")";
         if (evaluation.failing == 0) {
-            result.log.push_back(line.str() + "  -> all regions proved");
+            note(line.str() + "  -> all regions proved");
             allProved = true;
             break;
         }
@@ -615,7 +624,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             if (lowered[s]) bumpable.push_back(s);
         }
         if (bumpable.empty()) {
-            result.log.push_back(line.str() + "  -> no precision left to add");
+            note(line.str() + "  -> no precision left to add");
             break;
         }
         std::vector<std::size_t> chosen;
@@ -647,7 +656,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             slotValue(config, slot) = nextRung(ladderFor(slot), slotValue(config, slot), +1);
             raised << (raised.tellp() > 0 ? ", " : "") << errorSourceName(s, L);
         }
-        result.log.push_back(line.str() + "  -> raise " + raised.str());
+        note(line.str() + "  -> raise " + raised.str());
     }
 
     if (allProved && options.minimize) {
@@ -713,7 +722,15 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         };
         // A region that defeated one candidate probably defeats the next:
         // it moves to the front, and a short falsifier run precedes proofs.
+        // Large inputs: the number of candidate proofs in the local search is
+        // bounded (deterministically), so a long plateau of near-misses
+        // cannot dominate the compile time.
+        const std::size_t proofLimit = options.maxCandidateProofs > 0 ? options.maxCandidateProofs
+                                       : large                        ? 120
+                                                                      : 0;
+        std::size_t candidateProofs = 0;
         const auto certifies = [&](const QProgram& p) {
+            if (proofLimit > 0 && ++candidateProofs > proofLimit) return false;
             const auto evaluation = evaluateProgram(network, p, regions, target, search,
                                                     options.falsifyFirst ? 8 : 0, order, true, options.seed);
             result.analyses += evaluation.analyses;
@@ -728,7 +745,6 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         // On large inputs (expensive lowerings and proofs) the neighbourhood
         // escalates: compound moves are tried only when no single move
         // certifies. Small models search the full neighbourhood at once.
-        const bool escalate = network.inputs > 100;
         const auto localSearch = [&](PrecisionConfig current, const std::string& tag) {
             for (;;) {
                 const double cost = costOf(current);
@@ -768,14 +784,14 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
                     for (const auto& move : moves) {
                         const auto p = lower(move.second);
                         if (!p || !certifies(*p)) continue;
-                        result.log.push_back(tag + ": " + current.describe() + " -> " + move.second.describe());
+                        note(tag + ": " + current.describe() + " -> " + move.second.describe());
                         current = move.second;
                         return true;
                     }
                     return false;
                 };
                 bool improved = false;
-                if (escalate) {
+                if (large) {
                     improved = tryMoves(neighbours(true, false)) ||
                                (options.compoundMoves && tryMoves(neighbours(false, true)));
                 } else {
