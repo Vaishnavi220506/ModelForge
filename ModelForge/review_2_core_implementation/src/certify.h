@@ -86,7 +86,7 @@ std::optional<Counterexample> falsifyRegion(const DenseNetwork& network, const Q
                                             const CertRegion& region, const std::vector<double>& descent,
                                             std::size_t budget, std::uint32_t seed);
 
-enum class CostModel { Bytes, Bits };
+enum class CostModel { Bytes, Bits, Latency };
 enum class RefineStrategy { Blame, Uniform, RandomSource };
 
 struct TunerOptions {

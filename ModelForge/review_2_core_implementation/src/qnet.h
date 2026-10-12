@@ -200,6 +200,12 @@ struct ProgramCost {
     double idealBits = 0;    // sum of weightBits * |W| (sub-byte packing)
 };
 ProgramCost programCost(const QProgram& program);
+
+// Estimated cycles per inference on an 8-bit AVR (ATmega2560), from per-MAC
+// costs measured with simavr for every combination of weight storage
+// (4-bit packed / 8 / 16), activation width (8 / 16), multiply width (16 /
+// 32) and accumulator width (16 / 32 / 64), plus requantisation per neuron.
+double estimatedAvrCycles(const QProgram& program);
 double float32Bytes(const DenseNetwork& network);  // weights + biases in float32
 std::size_t multiplyAccumulates(const DenseNetwork& network);
 

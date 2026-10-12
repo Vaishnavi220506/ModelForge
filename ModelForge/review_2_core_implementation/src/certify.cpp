@@ -246,6 +246,8 @@ std::optional<Counterexample> falsifyRegion(const DenseNetwork& network, const Q
 }
 
 std::vector<int> weightLadder(CostModel cost) {
+    // Latency uses the fine lattice: e.g. 6-bit weights x 10-bit activations
+    // still give products that provably fit a 16-bit multiply.
     return cost == CostModel::Bytes ? std::vector<int>{4, 8, 16}
                                     : std::vector<int>{2, 3, 4, 5, 6, 7, 8, 10, 12, 16};
 }
@@ -258,6 +260,8 @@ std::vector<int> activationLadder(CostModel cost) {
 double configCost(const QProgram& program, CostModel cost) {
     const auto c = programCost(program);
     if (cost == CostModel::Bytes) return c.flashBytes + c.ramBytes;
+    // Latency: AVR cycles, with bytes as a small tie-breaker.
+    if (cost == CostModel::Latency) return estimatedAvrCycles(program) + 1e-3 * (c.flashBytes + c.ramBytes);
     double activationBits = program.inputs * program.inputBits;
     for (std::size_t l = 0; l + 1 < program.layers.size(); ++l) {
         activationBits += program.layers[l].out * program.layers[l].outBits;
@@ -508,7 +512,8 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         const double cost = configCost(*program, options.cost);
         std::ostringstream line;
         line << "iteration " << iteration << ": " << config.describe() << "  cost " << std::fixed
-             << std::setprecision(1) << cost << " B  failing " << evaluation.failing << "  (counterexamples "
+             << std::setprecision(1) << cost << (options.cost == CostModel::Latency ? " cycles" : " B")
+             << "  failing " << evaluation.failing << "  (counterexamples "
              << evaluation.falsifierHits << ")";
         if (evaluation.failing == 0) {
             result.log.push_back(line.str() + "  -> all regions proved");

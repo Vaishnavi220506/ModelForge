@@ -435,9 +435,11 @@ std::map<std::string, Array> parseArrays(const std::string& source) {
     const std::string key = "static const ";
     while ((p = source.find(key, p)) != std::string::npos) {
         p += key.size();
-        std::istringstream head(source.substr(p, 80));
+        std::istringstream head(source.substr(p, 100));
         std::string type, declarator;
-        head >> type >> declarator;
+        head >> type;
+        if (type == "MF_ROM") head >> type;  // flash qualifier (empty or __flash)
+        head >> declarator;
         const auto bracket = declarator.find('[');
         const auto open = source.find('{', p);
         const auto semicolon = source.find(';', p);
@@ -582,7 +584,7 @@ std::vector<std::string> expectedFragments(const Program& p) {
         "    int64_t u = t + ((int64_t)1 << (s - 1));\n"
         "    return u >= 0 ? (u >> s) : -((-u + (((int64_t)1 << s) - 1)) >> s);\n}\n"};
     if (std::any_of(p.layers.begin(), p.layers.end(), [](const QLayer& q) { return q.wbits <= 4; })) {
-        parts.push_back("static int8_t mf_nibble(const uint8_t *packed, int k) {\n"
+        parts.push_back("static int8_t mf_nibble(const MF_ROM uint8_t *packed, int k) {\n"
                         "    int v = (k & 1) ? (packed[k >> 1] >> 4) : (packed[k >> 1] & 15);\n"
                         "    return (int8_t)(v >= 8 ? v - 16 : v);\n}\n");
     }

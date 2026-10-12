@@ -70,7 +70,8 @@ void printUsage() {
               << "  --max-regions <n>  Certify at most n rows (default 200)\n"
               << "  --precision <p>    Fixed precision instead of tuning: int8, int4 (4-bit weights,\n"
               << "                     8-bit activations) or w4,8:a8,16 (per layer)\n"
-              << "  --cost <m>         Tuning objective: bytes (MCU storage, default) or bits\n"
+              << "  --cost <m>         Tuning objective: bytes (MCU storage, default), bits, or\n"
+              << "                     latency (estimated cycles on an 8-bit AVR)\n"
               << "  --compare <other>  Check that <other> behaves like the input model\n"
               << "                     (e.g. a hand-optimised, converted or edited copy)\n"
               << "  --help             Show this help\n";
@@ -515,7 +516,9 @@ int certifyModel(const CommandLineOptions& options) {
               << ") inside a " << network->inputs << "-dimensional input domain\n";
 
     modelforge::TunerOptions tuner;
-    tuner.cost = options.cost == "bits" ? modelforge::CostModel::Bits : modelforge::CostModel::Bytes;
+    tuner.cost = options.cost == "bits"      ? modelforge::CostModel::Bits
+                 : options.cost == "latency" ? modelforge::CostModel::Latency
+                                             : modelforge::CostModel::Bytes;
     if (options.scales == "calibrated") {
         auto rows = std::make_shared<std::vector<std::vector<double>>>();
         for (const auto& row : (options.domainPath.empty() ? anchors.rows : domainRows.rows)) {
@@ -549,7 +552,9 @@ int certifyModel(const CommandLineOptions& options) {
     const auto& program = result.program;
     const auto cost = modelforge::programCost(program);
     std::cout << "[5/6] Integer program: " << program.config.describe() << "\n"
-              << "      flash " << std::fixed << std::setprecision(0) << cost.flashBytes << " B (float32 model "
+              << "      estimated AVR cycles " << std::fixed << std::setprecision(0)
+              << modelforge::estimatedAvrCycles(program) << "\n"
+              << "      flash " << cost.flashBytes << " B (float32 model "
               << modelforge::float32Bytes(*network) << " B), RAM " << cost.ramBytes << " B, accumulators";
     for (const auto& layer : program.layers) std::cout << " int" << layer.accBits;
     std::cout << "\n      regions: " << result.proved << " proved, " << result.excluded
@@ -563,6 +568,7 @@ int certifyModel(const CommandLineOptions& options) {
     std::cout << "[6/6] Emitting integer-only C99 and the certificate\n";
     const std::filesystem::path out = options.outputDirectory;
     if (!modelforge::emitIntegerC(program, out.string(), error) ||
+        !modelforge::emitFloatC(*network, out.string(), error) ||
         !modelforge::writeCertificate((out / "certificate.json").string(), options.inputPath, *network, regions,
                                       result, options.eps, error)) {
         std::cerr << error << "\n";
@@ -578,6 +584,7 @@ int certifyModel(const CommandLineOptions& options) {
         }
     }
     std::cout << "      " << (out / "model_q.c").string() << ", model_q.h, main_q.c, CMakeLists.txt\n"
+              << "      " << (out / "model_f.c").string() << " (float32 C99 baseline)\n"
               << "      " << (out / "certificate.json").string() << "\n"
               << "      Re-check independently: modelforge_certcheck " << out.string() << " " << options.inputPath
               << "\n";
