@@ -1,0 +1,368 @@
+{
+  "author": "Vaishnavi",
+  "mcu": "ATmega2560 @ 16 MHz (simavr)",
+  "samples": 10,
+  "results": [
+    {
+      "model": "mnist_cnn",
+      "variant": "forgecert",
+      "precision": "w[4,4,8] a[16,16,16]",
+      "proved": 59,
+      "excluded": 1,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 10630,
+        "ram": 6634
+      },
+      "avr_int_cycles_mean": 2503102.9,
+      "estimated_cycles": 2380540.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 7536,
+        "data": 0,
+        "bss": 3496
+      },
+      "avr_float": {
+        "flash": 15648,
+        "ram": 6994,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 5406803.5,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 13496,
+        "data": 0,
+        "bss": 3856
+      }
+    },
+    {
+      "model": "mnist_cnn",
+      "variant": "forgecert_latency",
+      "precision": "w[6,8,8] a[10,10,16]",
+      "proved": 59,
+      "excluded": 1,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 10864,
+        "ram": 6634
+      },
+      "avr_int_cycles_mean": 2042981.9,
+      "estimated_cycles": 1921479.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 7644,
+        "data": 0,
+        "bss": 3496
+      }
+    },
+    {
+      "model": "mnist_cnn",
+      "variant": "uniform_int8",
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 50,
+      "excluded": 1,
+      "unproved": 9,
+      "avr_int": {
+        "flash": 10810,
+        "ram": 4886
+      },
+      "avr_int_cycles_mean": 1607318.8,
+      "estimated_cycles": 1293030.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 7596,
+        "data": 0,
+        "bss": 1748
+      }
+    },
+    {
+      "model": "fashion_cnn",
+      "variant": "forgecert",
+      "precision": "w[16,8,16] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 14280,
+        "ram": 6634
+      },
+      "avr_int_cycles_mean": 2807035.4,
+      "estimated_cycles": 2609021.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 10676,
+        "data": 0,
+        "bss": 3496
+      },
+      "avr_float": {
+        "flash": 15648,
+        "ram": 6994,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 5618895.7,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 13496,
+        "data": 0,
+        "bss": 3856
+      }
+    },
+    {
+      "model": "fashion_cnn",
+      "variant": "forgecert_latency",
+      "precision": "w[16,16,16] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 14662,
+        "ram": 6634
+      },
+      "avr_int_cycles_mean": 3674212.4,
+      "estimated_cycles": 3161636.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 11016,
+        "data": 0,
+        "bss": 3496
+      }
+    },
+    {
+      "model": "fashion_cnn",
+      "variant": "uniform_int8",
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 25,
+      "excluded": 14,
+      "unproved": 21,
+      "avr_int": {
+        "flash": 10810,
+        "ram": 4886
+      },
+      "avr_int_cycles_mean": 1630593.5,
+      "estimated_cycles": 1293030.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 7596,
+        "data": 0,
+        "bss": 1748
+      }
+    },
+    {
+      "model": "mnist_mlp",
+      "variant": "forgecert",
+      "precision": "w[4,8] a[16,16]",
+      "proved": 57,
+      "excluded": 3,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 19824,
+        "ram": 4770
+      },
+      "avr_int_cycles_mean": 2058990.3,
+      "estimated_cycles": 1927810.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 17168,
+        "data": 0,
+        "bss": 1632
+      },
+      "avr_float": {
+        "fits": false,
+        "reason": "                           ^~~~"
+      },
+      "arm_m0_float": {
+        "text": 102000,
+        "data": 0,
+        "bss": 128
+      }
+    },
+    {
+      "model": "mnist_mlp",
+      "variant": "forgecert_latency",
+      "precision": "w[8,12] a[10,16]",
+      "proved": 57,
+      "excluded": 3,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 32662,
+        "ram": 4770
+      },
+      "avr_int_cycles_mean": 1743868.2,
+      "estimated_cycles": 1676930.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 30000,
+        "data": 0,
+        "bss": 1632
+      }
+    },
+    {
+      "model": "mnist_mlp",
+      "variant": "uniform_int8",
+      "precision": "w[8,8] a[8,8]",
+      "proved": 54,
+      "excluded": 3,
+      "unproved": 3,
+      "avr_int": {
+        "flash": 32302,
+        "ram": 3954
+      },
+      "avr_int_cycles_mean": 790436.8,
+      "estimated_cycles": 762242.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 29660,
+        "data": 0,
+        "bss": 816
+      }
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "forgecert",
+      "precision": "w[16,8,8] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 9828,
+        "ram": 482
+      },
+      "avr_int_cycles_mean": 333080.4,
+      "estimated_cycles": 295858.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 6544,
+        "data": 0,
+        "bss": 224
+      },
+      "avr_float": {
+        "flash": 13318,
+        "ram": 450,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 773636.4,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 11388,
+        "data": 0,
+        "bss": 192
+      }
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "forgecert_latency",
+      "precision": "w[12,8,12] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 9550,
+        "ram": 482
+      },
+      "avr_int_cycles_mean": 233386.5,
+      "estimated_cycles": 211890.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 6536,
+        "data": 0,
+        "bss": 224
+      }
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "uniform_int8",
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 6,
+      "excluded": 14,
+      "unproved": 40,
+      "avr_int": {
+        "flash": 7292,
+        "ram": 370
+      },
+      "avr_int_cycles_mean": 210606.6,
+      "estimated_cycles": 113970.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 4296,
+        "data": 0,
+        "bss": 112
+      }
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "forgecert",
+      "precision": "w[4,4,8] a[16,16,16]",
+      "proved": 51,
+      "excluded": 3,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 4908,
+        "ram": 176
+      },
+      "avr_int_cycles_mean": 122651.0,
+      "estimated_cycles": 103575.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 1892,
+        "data": 0,
+        "bss": 122
+      },
+      "avr_float": {
+        "flash": 6316,
+        "ram": 246,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 266307.5,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 4396,
+        "data": 0,
+        "bss": 192
+      }
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "forgecert_latency",
+      "precision": "w[7,6,6] a[10,10,12]",
+      "proved": 51,
+      "excluded": 3,
+      "unproved": 0,
+      "avr_int": {
+        "flash": 5332,
+        "ram": 176
+      },
+      "avr_int_cycles_mean": 69161.3,
+      "estimated_cycles": 65527.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 2312,
+        "data": 0,
+        "bss": 122
+      }
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "uniform_int8",
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 48,
+      "excluded": 3,
+      "unproved": 3,
+      "avr_int": {
+        "flash": 5278,
+        "ram": 115
+      },
+      "avr_int_cycles_mean": 81989.9,
+      "estimated_cycles": 59159.0,
+      "avr_matches_host": true,
+      "arm_m0_int": {
+        "text": 2280,
+        "data": 0,
+        "bss": 61
+      }
+    }
+  ]
+}
