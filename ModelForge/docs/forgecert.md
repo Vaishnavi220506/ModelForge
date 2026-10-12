@@ -62,10 +62,31 @@ They are not about an idealised "fake-quantised" float model.
 
 ## How it works
 
+### Supported networks: tap graphs
+
+ForgeCert compiles ReLU networks whose layers form a DAG: dense layers,
+2-D convolutions with stride, padding and groups (depthwise when groups =
+channels), batch normalisation, average / global average / max pooling,
+residual additions (`x + f(x)`), Flatten and an output Softmax/Sigmoid. A
+lowering pass normalises the graph:
+
+| source | integer target |
+|---|---|
+| bias, ReLU, BatchNorm after a linear layer (no other reader) | folded into that layer |
+| AveragePool, GlobalAveragePool, unfoldable BatchNorm | depthwise convolution with fixed weights |
+| tensor + tensor | two-source linear layer (one weight per source and channel, so the operands may have different scales) |
+| MaxPool | exact max over integer codes (no requantisation) |
+
+`research/export_mforge.py` exports any PyTorch model built from these
+operators (traced with torch.fx), and `research/train_cnn_zoo.py` trains the
+LeNet-5, MobileNet-style depthwise-separable and ResNet-style models in
+`models/image/`.
+
 ### Integer target and proof-guided lowering (`src/qnet.*`, `src/diffai.cpp`)
 
-Every linear layer, dense or 2-D convolution, is a list of *taps*
-(input, weight) per output neuron. It becomes
+Every linear layer (dense, grouped convolution, residual addition) is a list
+of *taps* (input, weight) per output neuron, where inputs index the
+concatenation of the layer's source tensors. It becomes
 
 ```c
 acc = bias[c] + Σ (mul_t)W[w] · (mul_t)x[i]  // int16/int32/int64 or modular uint16/uint32
@@ -74,7 +95,11 @@ y[o] = clamp(round_shift(acc · M[c], S[c]))   // fixed-point requantisation per
 ```
 
 with convolutions emitted as sliding-window loops over weight tables in flash
-(`MF_ROM`, i.e. `__flash` on AVR). Lowering is interleaved with the analysis
+(`MF_ROM`, i.e. `__flash` on AVR). Max-pooling compares codes of one scale, so
+it is exact; the analysis copies a provably dominating candidate exactly and
+otherwise bounds the error by the tighter of `Q' - R'` and
+`[min E_k, max E_k]` (the maximum is 1-Lipschitz). Hidden tensors share static
+buffers by liveness, which the checker verifies. Lowering is interleaved with the analysis
 over the whole domain. Every width below is a *proof obligation discharged at
 compile time* and re-checked by the checker:
 
@@ -145,12 +170,16 @@ on AVR costs half as much as a 32-bit one.
 
 `modelforge_certcheck <dir> <model.mforge>` includes no ModelForge header. It
 
-* parses the source model, dense or convolutional, and the data arrays of
-  `model_q.c`, and checks every value against its declared C type and bit
-  width;
-* regenerates the code template (dense and convolution loops, classical or
-  modular accumulation, multiply type) from the metadata and checks that the
-  C file contains exactly that code;
+* parses the source model and rebuilds its layer graph with its own copy of
+  the lowering pass (folding, pooling lowering, residual additions), and parses
+  the data arrays of `model_q.c`, checking every value against its declared C
+  type and bit width;
+* regenerates the code template (dense, grouped convolution, residual add and
+  max-pool loops, classical or modular accumulation, multiply type, buffer
+  plan) from the metadata and checks that the C file contains exactly that
+  code;
+* checks that no shared buffer is overwritten while a tensor in it is still
+  to be read;
 * re-derives the domain-wide claims with its own implementation of the
   analysis, including the clamp model: products, partial or final sums, and
   saturation if claimed;
@@ -220,8 +249,9 @@ python ModelForge/research/mcu_bench.py build --samples 10 --out mcu_results.jso
 
 ## Limits
 
-* ReLU networks built from dense layers and 2-D convolutions (no pooling,
-  batch norm must be folded into the weights, no residual connections).
+* ReLU networks built from the operators above. Concatenation, attention and
+  other activations (inside the network) are not supported; max-pooling must
+  follow the ReLU and have no padding.
 * The reference is the float model in exact real arithmetic. Float32
   rounding inside the original framework is not modelled.
 * The analysis and the checker use double precision with outward slack, not

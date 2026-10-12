@@ -344,6 +344,7 @@ std::vector<bool> referenceRobustRegions(const DenseNetwork& network, const Box&
 namespace {
 
 struct Evaluation {
+    std::vector<std::size_t> failedRegions;
     std::vector<RegionStatus> status;
     std::vector<double> blame;  // aggregated, normalised per failing region
     std::size_t failing = 0;
@@ -423,6 +424,7 @@ Evaluation evaluateProgram(const DenseNetwork& network, const QProgram& program,
         evaluation.falsifierHits += slot.falsifierHits;
         if (slot.counterexample) evaluation.counterexamples.push_back(*slot.counterexample);
         if (!slot.failed) continue;
+        evaluation.failedRegions.push_back(r);
         ++evaluation.failing;
         const double sum = std::accumulate(slot.blame.begin(), slot.blame.end(), 0.0);
         for (std::size_t s = 0; s < sources && s < slot.blame.size(); ++s) {
@@ -554,21 +556,33 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             return (!sa.proved && !sa.excluded) > (!sb.proved && !sb.excluded);
         });
 
-        std::vector<std::size_t> bumpable;
+        std::vector<std::size_t> candidates;
+        std::vector<PrecisionConfig> trials(sources);
         std::vector<double> delta(sources, 0.0);
+        std::vector<char> lowered(sources, 1);
         for (std::size_t s = 0; s < sources; ++s) {
             const Slot slot = slotOf(s, network);
             if (slot.kind < 0) continue;
-            PrecisionConfig trial = config;
-            const int next = nextRung(ladderFor(slot), slotValue(trial, slot), +1);
+            trials[s] = config;
+            const int next = nextRung(ladderFor(slot), slotValue(trials[s], slot), +1);
             if (next == 0) continue;
-            slotValue(trial, slot) = next;
-            if (options.strategy == RefineStrategy::Blame) {
-                const auto trialProgram = lower(trial);
-                if (!trialProgram) continue;
-                delta[s] = std::max(1.0, configCost(*trialProgram, options.cost) - cost);
-            }
-            bumpable.push_back(s);
+            slotValue(trials[s], slot) = next;
+            candidates.push_back(s);
+        }
+        if (options.strategy == RefineStrategy::Blame) {
+            // Cost of each one-step raise, lowered on all cores.
+            parallelFor(candidates, [&](std::size_t s) {
+                std::string error;
+                const auto trialProgram = lowerToInteger(network, domain, trials[s], error, options.proof.analysis);
+                lowered[s] = trialProgram.has_value();
+                if (trialProgram) delta[s] = std::max(1.0, configCost(*trialProgram, options.cost) - cost);
+                return true;
+            });
+            result.lowerings += candidates.size();
+        }
+        std::vector<std::size_t> bumpable;
+        for (std::size_t s : candidates) {
+            if (lowered[s]) bumpable.push_back(s);
         }
         if (bumpable.empty()) {
             result.log.push_back(line.str() + "  -> no precision left to add");
@@ -623,6 +637,39 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             costCache[key] = value;
             return value;
         };
+        // Costs of many candidates at once, lowered on all cores.
+        const auto precompute = [&](const std::vector<PrecisionConfig>& candidates) {
+            std::vector<PrecisionConfig> todo;
+            std::map<std::string, bool> queued;
+            for (const auto& c : candidates) {
+                const auto key = c.describe();
+                if (costCache.count(key) || queued.count(key)) continue;
+                queued[key] = true;
+                todo.push_back(c);
+            }
+            std::vector<double> values(todo.size(), std::numeric_limits<double>::infinity());
+            std::vector<std::size_t> indices(todo.size());
+            std::iota(indices.begin(), indices.end(), 0);
+            parallelFor(indices, [&](std::size_t k) {
+                std::string error;
+                const auto p = lowerToInteger(network, domain, todo[k], error, options.proof.analysis);
+                if (p) values[k] = configCost(*p, options.cost);
+                return true;
+            });
+            result.lowerings += todo.size();
+            for (std::size_t k = 0; k < todo.size(); ++k) costCache[todo[k].describe()] = values[k];
+        };
+        // Compound moves pair the slots of one layer: its weights with the
+        // activations it reads or writes (e.g. fewer weight bits and more
+        // activation bits keep a 16-bit multiply).
+        const auto related = [&](std::size_t s1, std::size_t s2) {
+            const Slot a = slotOf(s1, network), b = slotOf(s2, network);
+            if (a.kind < 0 || b.kind < 0 || a.kind == b.kind) return false;
+            const Slot& w = a.kind == 1 ? a : b;
+            const Slot& x = a.kind == 1 ? b : a;
+            const auto& sources = network.layers[w.index].sources;
+            return x.index == w.index + 1 || std::find(sources.begin(), sources.end(), x.index) != sources.end();
+        };
         const auto apply = [&](PrecisionConfig& c, std::size_t source, int direction) {
             const Slot slot = slotOf(source, network);
             if (slot.kind < 0) return false;
@@ -634,31 +681,48 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             slotValue(c, slot) = next;
             return true;
         };
+        // A region that defeated one candidate probably defeats the next:
+        // it moves to the front, and a short falsifier run precedes proofs.
         const auto certifies = [&](const QProgram& p) {
-            const auto evaluation = evaluateProgram(network, p, regions, robust, options.proof, 0, order, true, options.seed);
+            const auto evaluation = evaluateProgram(network, p, regions, robust, options.proof,
+                                                    options.falsifyFirst ? 8 : 0, order, true, options.seed);
             result.analyses += evaluation.analyses;
+            result.falsifierCalls += evaluation.falsifierCalls;
+            result.falsifierHits += evaluation.falsifierHits;
+            for (std::size_t r : evaluation.failedRegions) {
+                const auto at = std::find(order.begin(), order.end(), r);
+                if (at != order.end()) std::rotate(order.begin(), at, at + 1);
+            }
             return evaluation.failing == 0;
         };
         const auto localSearch = [&](PrecisionConfig current, const std::string& tag) {
             for (;;) {
                 const double cost = costOf(current);
-                std::vector<std::pair<double, PrecisionConfig>> moves;
+                std::vector<PrecisionConfig> candidates;
                 const int directions[] = {-1, +1, -2, +2};
                 for (std::size_t s1 = 0; s1 < sources; ++s1) {
                     for (int d1 : directions) {
                         PrecisionConfig one = current;
                         if (!apply(one, s1, d1)) continue;
-                        const double c1 = costOf(one);
-                        if (c1 < cost - 1e-9) moves.push_back({cost - c1, one});
+                        candidates.push_back(one);
                         if (!options.compoundMoves) continue;
                         for (std::size_t s2 = s1 + 1; s2 < sources; ++s2) {
+                            if (!related(s1, s2)) continue;
                             for (int d2 : directions) {
                                 PrecisionConfig two = one;
-                                if (!apply(two, s2, d2)) continue;
-                                const double c2 = costOf(two);
-                                if (c2 < cost - 1e-9) moves.push_back({cost - c2, two});
+                                if (apply(two, s2, d2)) candidates.push_back(two);
                             }
                         }
+                    }
+                }
+                precompute(candidates);
+                std::vector<std::pair<double, PrecisionConfig>> moves;
+                std::map<std::string, bool> seen;
+                for (const auto& c : candidates) {
+                    const double value = costOf(c);
+                    if (value < cost - 1e-9 && !seen[c.describe()]) {
+                        seen[c.describe()] = true;
+                        moves.push_back({cost - value, c});
                     }
                 }
                 std::sort(moves.begin(), moves.end(),
@@ -679,12 +743,12 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         if (options.multiStart) {
             // Second start: the cheapest certified uniform configuration.
             std::vector<std::pair<double, PrecisionConfig>> uniform;
+            std::vector<PrecisionConfig> all;
             for (int w : wLadder) {
-                for (int a : aLadder) {
-                    const auto c = uniformConfig(L, w, a);
-                    uniform.push_back({costOf(c), c});
-                }
+                for (int a : aLadder) all.push_back(uniformConfig(L, w, a));
             }
+            precompute(all);
+            for (const auto& c : all) uniform.push_back({costOf(c), c});
             std::sort(uniform.begin(), uniform.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
             for (const auto& candidate : uniform) {
                 if (candidate.first >= costOf(best)) break;  // cannot beat what we have

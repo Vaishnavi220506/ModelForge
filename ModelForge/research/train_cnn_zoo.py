@@ -79,7 +79,7 @@ class ResNet(nn.Module):
 ARCHS = {
     "lenet": (lambda: lenet(nn.MaxPool2d), 4),
     "lenet_avg": (lambda: lenet(nn.AvgPool2d), 4),
-    "dscnn": (dscnn, 4),
+    "dscnn": (dscnn, 12),
     "resnet": (ResNet, 4),
 }
 
