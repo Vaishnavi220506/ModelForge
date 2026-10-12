@@ -77,8 +77,10 @@ lowering pass normalises the graph:
 | tensor + tensor | two-source linear layer (one weight per source and channel, so the operands may have different scales) |
 | MaxPool | exact max over integer codes (no requantisation) |
 
-`research/export_mforge.py` exports any PyTorch model built from these
-operators (traced with torch.fx), and `research/train_cnn_zoo.py` trains the
+`research/onnx_to_mforge.py` converts a standard ONNX model (PyTorch
+`torch.onnx.export`, TensorFlow via tf2onnx, Keras, ...) that uses these
+operators; `research/export_mforge.py` exports a PyTorch model directly
+(traced with torch.fx, batch norms kept for ModelForge to fold); and `research/train_cnn_zoo.py` trains the
 LeNet-5, MobileNet-style depthwise-separable and ResNet-style models in
 `models/image/`.
 
