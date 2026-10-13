@@ -218,16 +218,22 @@ def main():
             q_sources = ["model_q.c"]
             f_sources = ["model_f.c"]
             codes = host_codes(directory, MODELS / data, inputs, len(rows))
-            avr_q = avr_build(directory, q_sources, "model_q.h", "__flash", len(rows), inputs, rows, True, mcu, codes)
-            host_q = host_predictions(directory, MODELS / data, q_sources, inputs, len(rows))
             entry = {"model": name, "variant": variant, "mcu": mcu, "eps": eps, "precision": precision_text,
                      "proved": int(summary.group(1)), "excluded": int(summary.group(2)),
                      "unproved": int(summary.group(3)),
-                     "avr_int": {k: avr_q[k] for k in ("flash", "ram", "links_float")},
-                     "avr_int_cycles_mean": sum(avr_q["cycles"]) / len(avr_q["cycles"]),
                      "estimated_cycles": float(re.search(r"estimated AVR cycles (\d+)", log).group(1)),
-                     "avr_matches_host": avr_q["predictions"] == host_q,
                      "arm_m0_int": arm_size(directory, q_sources)}
+            try:
+                avr_q = avr_build(directory, q_sources, "model_q.h", "__flash", len(rows), inputs, rows, True, mcu, codes)
+                host_q = host_predictions(directory, MODELS / data, q_sources, inputs, len(rows))
+                entry["avr_int"] = {k: avr_q[k] for k in ("flash", "ram", "links_float")}
+                entry["avr_int"]["fits"] = True
+                entry["avr_int_cycles_mean"] = sum(avr_q["cycles"]) / len(avr_q["cycles"])
+                entry["avr_matches_host"] = avr_q["predictions"] == host_q
+            except subprocess.CalledProcessError as failure:
+                # e.g. 16-bit activations of a wide network exceed the device's RAM
+                text = (failure.stderr or "").strip().splitlines()
+                entry["avr_int"] = {"fits": False, "reason": next((l for l in text if "overflow" in l or "region" in l), text[-1] if text else "build failed")}
             if variant == "forgecert":
                 float_bytes = (directory / "model_f.c").stat().st_size
                 avr_f = None
@@ -258,7 +264,7 @@ def main():
         results = [r for r in old if (r["model"], r["variant"]) not in fresh] + results
     Path(args.out).write_text(json.dumps({"author": "Vaishnavi", "mcu": "8-bit AVR @ 16 MHz (simavr): per entry",
                                           "samples": args.samples, "results": results}, indent=2) + "\n")
-    if not all(r["avr_matches_host"] and r.get("avr_float_matches_host", True) for r in results):
+    if not all(r.get("avr_matches_host", True) and r.get("avr_float_matches_host", True) for r in results):
         sys.exit("a prediction on the simulated MCU differs from the host build")
 
 

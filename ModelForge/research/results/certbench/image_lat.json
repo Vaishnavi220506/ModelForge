@@ -1,0 +1,70 @@
+{
+  "author": "Vaishnavi",
+  "max_regions": 100,
+  "cases": [
+    {"model": "mnist_mlp", "eps": 0.01, "regions": 100, "robust": 96, "float32_bytes": 101800, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[4,4] a[12,12]", "flash": 16218, "ram": 1652, "weight_bytes": 12704, "cost": 17870, "ideal_bytes": 13928, "proved": 96, "unproved": 0, "counterexamples": 0, "excluded": 4, "iterations": 6, "analyses": 3569, "lowerings": 237, "seconds": 11.1535, "cycles": 1.16877e+06, "calibrated": false, "test_flips": 0, "acc_bits": [32, 32], "worst_case_acc_bits": [32, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "mnist_mlp", "eps": 0.02, "regions": 100, "robust": 84, "float32_bytes": 101800, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[8,8] a[16,16]", "flash": 28922, "ram": 1652, "weight_bytes": 25408, "cost": 30574, "ideal_bytes": 27040, "proved": 84, "unproved": 0, "counterexamples": 0, "excluded": 16, "iterations": 6, "analyses": 3827, "lowerings": 214, "seconds": 12.6681, "cycles": 1.67693e+06, "calibrated": false, "test_flips": 0, "acc_bits": [32, 32], "worst_case_acc_bits": [64, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "mnist_cnn", "eps": 0.01, "regions": 100, "robust": 99, "float32_bytes": 12904, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[8,8,8] a[16,16,16]", "flash": 6538, "ram": 3516, "weight_bytes": 3204, "cost": 10054, "ideal_bytes": 6700, "proved": 99, "unproved": 0, "counterexamples": 0, "excluded": 1, "iterations": 7, "analyses": 4152, "lowerings": 245, "seconds": 14.9282, "cycles": 2.16666e+06, "calibrated": false, "test_flips": 0, "acc_bits": [32, 32, 32], "worst_case_acc_bits": [32, 32, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "mnist_cnn", "eps": 0.02, "regions": 100, "robust": 90, "float32_bytes": 12904, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[4,8,8] a[12,16,16]", "flash": 6520, "ram": 3516, "weight_bytes": 3186, "cost": 10036, "ideal_bytes": 6290, "proved": 90, "unproved": 0, "counterexamples": 0, "excluded": 10, "iterations": 7, "analyses": 4380, "lowerings": 286, "seconds": 15.1537, "cycles": 2.00848e+06, "calibrated": false, "test_flips": 0, "acc_bits": [32, 32, 32], "worst_case_acc_bits": [32, 32, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "fashion_mlp", "eps": 0.01, "regions": 100, "robust": 88, "float32_bytes": 101800, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[7,7] a[16,16]", "flash": 28922, "ram": 1652, "weight_bytes": 25408, "cost": 30574, "ideal_bytes": 23864, "proved": 88, "unproved": 0, "counterexamples": 0, "excluded": 12, "iterations": 7, "analyses": 5461, "lowerings": 272, "seconds": 14.2227, "cycles": 1.67693e+06, "calibrated": false, "test_flips": 0, "acc_bits": [32, 32], "worst_case_acc_bits": [32, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "fashion_mlp", "eps": 0.02, "regions": 100, "robust": 74, "float32_bytes": 101800, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[16,12] a[16,16]", "flash": 54458, "ram": 1652, "weight_bytes": 50816, "cost": 56110, "ideal_bytes": 52288, "proved": 71, "unproved": 3, "counterexamples": 0, "excluded": 26, "iterations": 7, "analyses": 4975, "lowerings": 228, "seconds": 14.3175, "cycles": 2.70554e+06, "calibrated": false, "test_flips": 0, "acc_bits": [64, 32], "worst_case_acc_bits": [64, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "fashion_cnn", "eps": 0.01, "regions": 100, "robust": 80, "float32_bytes": 12904, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[16,16,16] a[16,16,16]", "flash": 9830, "ram": 3516, "weight_bytes": 6408, "cost": 13346, "ideal_bytes": 9904, "proved": 79, "unproved": 1, "counterexamples": 0, "excluded": 20, "iterations": 10, "analyses": 1379, "lowerings": 50, "seconds": 5.34485, "cycles": 3.16164e+06, "calibrated": false, "test_flips": 0, "acc_bits": [64, 64, 64], "worst_case_acc_bits": [64, 64, 64]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "fashion_cnn", "eps": 0.02, "regions": 100, "robust": 49, "float32_bytes": 12904, "test_rows": 200,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[8,8,8] a[16,16,16]", "flash": 6538, "ram": 3516, "weight_bytes": 3204, "cost": 10054, "ideal_bytes": 6700, "proved": 49, "unproved": 0, "counterexamples": 0, "excluded": 51, "iterations": 7, "analyses": 3992, "lowerings": 245, "seconds": 18.2433, "cycles": 2.16666e+06, "calibrated": false, "test_flips": 1, "acc_bits": [32, 32, 32], "worst_case_acc_bits": [32, 32, 32]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}},
+    {"model": "cifar_cnn", "eps": 0.00392157, "regions": 50, "robust": 16, "float32_bytes": 102312, "test_rows": 100,
+     "outcomes": [
+       {"name": "forgecert_latency", "ok": true, "config": "w[10,10,8] a[16,16,16]", "flash": 43370, "ram": 18452, "weight_bytes": 30560, "cost": 61822, "ideal_bytes": 45212, "proved": 15, "unproved": 1, "counterexamples": 0, "excluded": 34, "iterations": 10, "analyses": 5428, "lowerings": 347, "seconds": 524.662, "cycles": 3.69007e+07, "calibrated": false, "test_flips": 3, "acc_bits": [32, 32, 32], "worst_case_acc_bits": [32, 32, 64]}
+     ],
+     "exhaustive": {"lattice": 0, "optimum_cost": -1, "config": ""},
+     "audit": {"samples": 0, "violations": 0, "max_observed_over_proved": 0},
+     "checker": {"seconds": -1, "valid": false}}
+  ],
+  "seconds": 666.788
+}

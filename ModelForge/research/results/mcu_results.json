@@ -15,7 +15,8 @@
       "avr_int": {
         "flash": 6304,
         "ram": 3210,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 2400188.4,
       "estimated_cycles": 2276860.0,
@@ -44,20 +45,21 @@
       "variant": "forgecert_latency",
       "mcu": "atmega2560",
       "eps": 0.01,
-      "precision": "w[6,8,8] a[10,10,16]",
+      "precision": "w[4,5,8] a[12,10,16]",
       "proved": 59,
       "excluded": 1,
       "unproved": 0,
       "avr_int": {
-        "flash": 6550,
+        "flash": 6524,
         "ram": 3498,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
-      "avr_int_cycles_mean": 2043012.0,
-      "estimated_cycles": 1921479.0,
+      "avr_int_cycles_mean": 1870308.6,
+      "estimated_cycles": 1590650.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 7644,
+        "text": 7656,
         "data": 0,
         "bss": 3496
       }
@@ -74,7 +76,8 @@
       "avr_int": {
         "flash": 6506,
         "ram": 1750,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 1607313.2,
       "estimated_cycles": 1293030.0,
@@ -97,7 +100,8 @@
       "avr_int": {
         "flash": 10348,
         "ram": 3498,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 3674254.0,
       "estimated_cycles": 3161636.0,
@@ -133,7 +137,8 @@
       "avr_int": {
         "flash": 10348,
         "ram": 3498,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 3674254.0,
       "estimated_cycles": 3161636.0,
@@ -156,7 +161,8 @@
       "avr_int": {
         "flash": 6506,
         "ram": 1750,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 1630610.6,
       "estimated_cycles": 1293030.0,
@@ -179,7 +185,8 @@
       "avr_int": {
         "flash": 28240,
         "ram": 1634,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 1822652.4,
       "estimated_cycles": 1676930.0,
@@ -211,7 +218,8 @@
       "avr_int": {
         "flash": 28240,
         "ram": 1634,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 1822652.4,
       "estimated_cycles": 1676930.0,
@@ -234,7 +242,8 @@
       "avr_int": {
         "flash": 27998,
         "ram": 818,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 790600.6,
       "estimated_cycles": 762242.0,
@@ -250,22 +259,23 @@
       "variant": "forgecert",
       "mcu": "atmega1284p",
       "eps": 0.00392156862745098,
-      "precision": "w[8,0,4,0,4,4] a[16,16,16,16,16,16]",
-      "proved": 60,
+      "precision": "w[8,0,8,0,4,4] a[16,8,8,16,16,16]",
+      "proved": 20,
       "excluded": 0,
       "unproved": 0,
       "avr_int": {
-        "flash": 8608,
-        "ram": 10210,
-        "links_float": false
+        "flash": 9520,
+        "ram": 7810,
+        "links_float": false,
+        "fits": true
       },
-      "avr_int_cycles_mean": 20593989.6,
-      "estimated_cycles": 21683010.0,
+      "avr_int_cycles_mean": 16004163.8,
+      "estimated_cycles": 14773314.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 9460,
+        "text": 10316,
         "data": 0,
-        "bss": 10208
+        "bss": 7808
       },
       "avr_float": {
         "fits": false,
@@ -282,22 +292,23 @@
       "variant": "forgecert_latency",
       "mcu": "atmega1284p",
       "eps": 0.00392156862745098,
-      "precision": "w[5,0,5,0,8,8] a[10,10,10,16,16,16]",
-      "proved": 60,
+      "precision": "w[5,0,8,0,8,8] a[10,8,8,16,16,16]",
+      "proved": 20,
       "excluded": 0,
       "unproved": 0,
       "avr_int": {
-        "flash": 12760,
-        "ram": 10210,
-        "links_float": false
+        "flash": 12726,
+        "ram": 7810,
+        "links_float": false,
+        "fits": true
       },
-      "avr_int_cycles_mean": 13345511.2,
-      "estimated_cycles": 11996290.0,
+      "avr_int_cycles_mean": 13534096.6,
+      "estimated_cycles": 11226754.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 13520,
+        "text": 13488,
         "data": 0,
-        "bss": 10208
+        "bss": 7808
       }
     },
     {
@@ -306,13 +317,14 @@
       "mcu": "atmega1284p",
       "eps": 0.00392156862745098,
       "precision": "w[8,0,8,0,8,8] a[8,8,8,8,8,8]",
-      "proved": 22,
+      "proved": 8,
       "excluded": 0,
-      "unproved": 38,
+      "unproved": 12,
       "avr_int": {
         "flash": 12652,
         "ram": 5106,
-        "links_float": false
+        "links_float": false,
+        "fits": true
       },
       "avr_int_cycles_mean": 12527332.6,
       "estimated_cycles": 10427842.0,

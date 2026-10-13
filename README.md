@@ -17,25 +17,38 @@ precise. A separate checker, `modelforge_certcheck`, shares no code with the
 compiler and re-validates the certificate from the source model and the emitted
 `.c` file alone.
 
-**Results** (8 trained classifiers, 24 model/radius cases, 1,441 regions on
-which the float model is provably constant; `modelforge_certbench`):
+It compiles ReLU networks built from dense layers, grouped/depthwise
+convolutions, batch normalisation, average/max pooling and residual
+connections (imported from `.mforge`, PyTorch, or any ONNX exporter).
 
-| Method | Cases fully certified | Regions proved | Regions with a real counterexample | Size vs float32 |
-| --- | --- | --- | --- | --- |
-| Uniform int8 | 4 / 24 | 1,136 | 1 | 36.5% |
-| Uniform int4 | 2 / 24 | 964 | 149 | 24.3% |
-| Uniform int16 | 23 / 24 | 1,440 | 0 | 63.0% |
-| Accuracy-guided (common practice) | 9 / 24 | 1,345 | 4 (all missed by the test set) | 35.6% |
-| **ForgeCert** | **23 / 24** | **1,440** | **0** | **39.7%** |
+**Results** (`modelforge_certbench`: 21 trained classifiers, 41 model/radius
+cases, 2,462 regions on which the float model is provably constant; full
+tables in `ModelForge/research/results/certbench_summary.txt`):
 
-* ForgeCert matches the exhaustive optimum in 7 of 8 models (mean gap 0.3%).
-* 3,000,000 sampled executions: 0 wrong decisions, 0 overflows, 0 error-bound
-  violations.
-* The independent checker accepts all 24 certificates in under 0.1 s each.
-* The compiled C binaries match the checker's semantics bit for bit on every
-  test row.
-* The one unproved region cannot be proved even at 16 bits, and no
-  counterexample exists for it among the inputs we searched.
+| Suite | Method | Cases certified | Regions proved | Regions with a real counterexample | Size vs float32 |
+| --- | --- | --- | --- | --- | --- |
+| Tabular MLPs (8 models, 24 cases) | Uniform int8 | 5 / 24 | 1,152 / 1,441 | 1 | 39% |
+| | Accuracy-guided (common practice) | 10 / 24 | 1,350 | 5 (all missed by the test set) | 37% |
+| | Uniform int16 | 23 / 24 | 1,440 | 0 | 68% |
+| | **ForgeCert** | **23 / 24** | **1,440** | **0** | **41%** |
+| MNIST / Fashion MLP+CNN, CIFAR-10 CNN (9 cases) | Uniform int8 | 0 / 9 | 477 / 676 | 0 | 39% |
+| | Uniform int4 | 0 / 9 | 407 | 38 | 27% |
+| | **ForgeCert** | **6 / 9** | **671** | **0** | **47%** |
+| LeNet-5, MobileNet-style DS-CNN, ResNet-style (8 models, ε = 1/255) | Uniform int8 | 0 / 8 | 21 / 345 | **147** | 40% |
+| | Uniform int16 | 3 / 8 | 293 | 1 | 66% |
+| | **ForgeCert** (calibrated scales) | **6 / 8** | **343** | **0** | **42%** |
+
+* ForgeCert matches the exhaustive optimum on 7 of 8 tabular models (mean gap 0.3%).
+* With the latency objective, certified code needs 16-25% fewer AVR cycles than
+  the byte-optimal certified code.
+* 4,458,800 sampled executions inside proved regions: 0 wrong decisions, 0
+  overflows, 0 error-bound violations.
+* The independent checker accepts all 41 certificates (at most 24 s, for a
+  10-layer ResNet).
+* On a cycle-accurate 8-bit AVR (simavr), the certified code runs bit-exactly
+  and links no floating-point code; see `research/results/mcu_results.json`.
+* Uncertified regions are ones no configuration on the lattice can prove (the
+  analysis is not complete); they are reported, never certified.
 
 ```powershell
 .\build\Release\modelforge.exe .\ModelForge\review_2_core_implementation\models\real\wine_mlp32x16.mforge --certify --data .\ModelForge\review_2_core_implementation\models\real\wine_test.csv --domain .\ModelForge\review_2_core_implementation\models\real\wine_train.csv --eps 0.1 --out .\build\cert

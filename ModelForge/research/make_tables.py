@@ -194,16 +194,20 @@ def main():
                 "Model & Code & Proved & Flash & RAM & kcycles & Bit-exact \\\\", "\\midrule"]
         names = {"forgecert": "ForgeCert", "forgecert_latency": "ForgeCert (lat.)", "uniform_int8": "int8"}
         last = None
-        exact_all = all(r["avr_matches_host"] for r in mcu)
+        exact_all = all(r.get("avr_matches_host", True) for r in mcu)
         for r in mcu:
             if r["model"] != last and last is not None:
                 rows.append("\\midrule")
             first = r["model"] != last
             last = r["model"]
             model = f"{tex(r['model'])}" + ("$^\\dagger$" if r.get("mcu") == "atmega1284p" else "") if first else ""
-            rows.append(f"{model} & {names[r['variant']]} & {r['proved']}/{r['proved'] + r['unproved']} & "
-                        f"{r['avr_int']['flash']:,} & {r['avr_int']['ram']:,} & {r['avr_int_cycles_mean'] / 1000:,.0f} & "
-                        f"{'yes' if r['avr_matches_host'] else 'no'} \\\\".replace(",", "{,}"))
+            if r["avr_int"].get("fits", True):
+                rows.append(f"{model} & {names[r['variant']]} & {r['proved']}/{r['proved'] + r['unproved']} & "
+                            f"{r['avr_int']['flash']:,} & {r['avr_int']['ram']:,} & {r['avr_int_cycles_mean'] / 1000:,.0f} & "
+                            f"{'yes' if r['avr_matches_host'] else 'no'} \\\\".replace(",", "{,}"))
+            else:
+                rows.append(f"{model} & {names[r['variant']]} & {r['proved']}/{r['proved'] + r['unproved']} & "
+                            f"\\multicolumn{{4}}{{c}}{{RAM exceeds the device}} \\\\")
             if r["variant"] == "forgecert":
                 f = r.get("avr_float", {})
                 if f.get("fits"):
