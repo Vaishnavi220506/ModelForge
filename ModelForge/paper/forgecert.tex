@@ -111,11 +111,12 @@ static void mf_layer0(const uint8_t *x, uint16_t *y) {
 \section{Limitations}\label{sec:limits}
 \begin{itemize}
 \item \textbf{Operators.} ForgeCert supports ReLU networks built from dense layers, grouped convolutions, batch normalisation, average and max-pooling and residual additions. Concatenation, attention and non-ReLU activations (sigmoid or tanh inside the network, ReLU6) need further transfer functions. Max-pooling must follow the ReLU and have no padding.
-\item \textbf{Scale.} The analysis is dense in the number of noise symbols. Our largest model has 25k parameters and 784 inputs, which is typical for 8-bit microcontrollers but small for larger devices.
+\item \textbf{Scale.} Forms carry one noise symbol per input, unstable ReLU and rounding, so the cost grows with depth and receptive field. Our largest models have 25k parameters and 3{,}072 inputs, or 10 layers with residual connections. This is typical for 8-bit microcontrollers but small for larger devices; tuning a 10-layer ResNet-style model takes tens of minutes.
+\item \textbf{Precision of deep proofs.} Some regions on which the float model is provably constant are not provable for any integer program on the lattice (e.g.\ 2 of 18 on the ResNet-style model at $\varepsilon=1/255$). They are reported, not certified.
 \item \textbf{Reference semantics.} The reference is the float model in exact real arithmetic, not its float32 execution.
 \item \textbf{Rounding of the analysis.} Analysis and checker use double precision with outward slack rather than directed rounding.
 \item \textbf{Excluded regions.} Regions on which the float model is not provably constant are excluded, and larger radii exclude many regions.
-\item \textbf{Search.} The tuner is greedy. On the fine lattice it can miss a cheaper certified configuration that needs two coordinated changes.
+\item \textbf{Search.} The tuner is a local search. Compound moves pair the slots of one layer only, so a cheaper configuration that needs coordinated changes across layers can be missed; on image models the number of candidate proofs is bounded.
 \item \textbf{Latency model.} The cost model is for one microcontroller and one compiler.
 \item \textbf{Independence.} The checker is independent code, but has the same author as the compiler.
 \end{itemize}

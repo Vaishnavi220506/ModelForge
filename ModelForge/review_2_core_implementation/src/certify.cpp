@@ -358,9 +358,11 @@ struct Evaluation {
 Evaluation evaluateProgram(const DenseNetwork& network, const QProgram& program,
                            const std::vector<CertRegion>& regions, const std::vector<bool>& robust,
                            const ProofOptions& proofOptions, std::size_t falsifyBudget,
-                           const std::vector<std::size_t>& order, bool stopAtFirstFailure,
+                           const std::vector<std::size_t>& order, std::size_t stopAfterFailures,
                            std::uint32_t seed) {
+    // stopAfterFailures: 0 evaluates every region; k stops after k failures.
     Evaluation evaluation;
+    std::atomic<std::size_t> failures{0};
     const std::size_t sources = errorSourceCount(network.layers.size());
     evaluation.blame.assign(sources, 0.0);
     evaluation.status.resize(regions.size());
@@ -416,7 +418,7 @@ Evaluation evaluateProgram(const DenseNetwork& network, const QProgram& program,
                 slot.blame = status.proof.blame;
             }
         }
-        return !(slot.failed && stopAtFirstFailure);
+        return !(slot.failed && stopAfterFailures > 0 && failures.fetch_add(1) + 1 >= stopAfterFailures);
     });
     for (std::size_t r : order) {
         const auto& slot = slots[r];
@@ -571,9 +573,12 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         program = lower(config);
         if (!program) return result;
         ++result.iterations;
+        // On large inputs the blame of a sample of failing regions decides the
+        // next raise; the failures are proved first in the next iteration.
+        const std::size_t sample = large ? 8 : 0;
         const auto evaluation = evaluateProgram(network, *program, regions, target, search,
                                                 options.falsifyFirst ? options.falsifyBudget : 0, order,
-                                                false, options.seed + static_cast<std::uint32_t>(iteration * 7919));
+                                                sample, options.seed + static_cast<std::uint32_t>(iteration * 7919));
         result.analyses += evaluation.analyses;
         result.falsifierCalls += evaluation.falsifierCalls;
         result.falsifierHits += evaluation.falsifierHits;
@@ -584,7 +589,8 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         std::ostringstream line;
         line << "iteration " << iteration << ": " << config.describe() << "  cost " << std::fixed
              << std::setprecision(1) << cost << (options.cost == CostModel::Latency ? " cycles" : " B")
-             << "  failing " << evaluation.failing << "  (counterexamples "
+             << "  failing " << evaluation.failing << (sample > 0 && evaluation.failing >= sample ? "+" : "")
+             << "  (counterexamples "
              << evaluation.falsifierHits << ")";
         if (evaluation.failing == 0) {
             note(line.str() + "  -> all regions proved");
