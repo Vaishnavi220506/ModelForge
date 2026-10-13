@@ -29,6 +29,7 @@
 #include <iostream>
 #include <map>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -263,10 +264,16 @@ int main(int argc, char** argv) {
     std::string outDir = "certbench";
     std::size_t maxRegions = 100;
     std::string suite = "all";
+    std::set<std::string> onlyVariants;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--quick") quick = true;
         if (a == "--suite" && i + 1 < argc) suite = argv[++i];
+        if (a == "--variants" && i + 1 < argc) {  // run only these methods (comma-separated)
+            std::stringstream list(argv[++i]);
+            std::string name;
+            while (std::getline(list, name, ',')) onlyVariants.insert(name);
+        }
         if (a == "--out" && i + 1 < argc) outDir = argv[++i];
         if (a == "--regions" && i + 1 < argc) maxRegions = static_cast<std::size_t>(std::atoi(argv[++i]));
     }
@@ -353,14 +360,16 @@ int main(int argc, char** argv) {
             TunerOptions base;
             const auto robust = referenceRobustRegions(*network, domain, regions, base.proof);
             std::vector<Outcome> outcomes;
+            const auto want = [&](const std::string& name) { return onlyVariants.empty() || onlyVariants.count(name) > 0; };
             const auto fixed = [&](const std::string& name, const PrecisionConfig& config) {
+                if (!want(name)) return;
                 outcomes.push_back(summarise(
                     name, *network, checkConfiguration(*network, domain, regions, config, base.proof, &robust, 400, 3),
                     test));
             };
             const std::size_t L = network->layers.size();
             fixed("uniform_int8", uniformConfig(L, 8, 8));
-            {
+            if (want("uniform_int8_calibrated")) {
                 // Industry default (TFLite-style): int8 with scales calibrated on data.
                 ProofOptions calibrated = base.proof;
                 calibrated.analysis.calibration = calibration;
@@ -373,9 +382,13 @@ int main(int argc, char** argv) {
             fixed("uniform_int16", uniformConfig(L, 16, 16));
             if (!entry.lite) fixed("accuracy_guided", guided);
 
-            const auto tuned = tunePrecision(*network, domain, regions, base, &robust);
-            outcomes.push_back(summarise("forgecert", *network, tuned, test));
+            TunerResult tuned;
+            if (want("forgecert")) {
+                tuned = tunePrecision(*network, domain, regions, base, &robust);
+                outcomes.push_back(summarise("forgecert", *network, tuned, test));
+            }
             const auto variant = [&](const std::string& name, const std::function<void(TunerOptions&)>& edit) {
+                if (!want(name)) return;
                 TunerOptions options = base;
                 edit(options);
                 const auto r = tunePrecision(*network, domain, regions, options, &robust);
@@ -423,12 +436,12 @@ int main(int argc, char** argv) {
             double optimum = -1;
             std::size_t lattice = 0;
             PrecisionConfig best;
-            if (!quick && !entry.image && eps == 0.1) {
+            if (!quick && !entry.image && eps == 0.1 && want("forgecert")) {
                 const auto e = exhaustive(*network, domain, regions, robust, base.proof, optimum);
                 best = e.first;
                 lattice = e.second;
             }
-            const auto soundness = audit(*network, tuned, regions, quick || entry.lite ? 200 : 2000);
+            const auto soundness = tuned.ok ? audit(*network, tuned, regions, quick || entry.lite ? 200 : 2000) : Audit{};
 
             // Independent checker on the emitted artifact.
             double checkSeconds = -1;

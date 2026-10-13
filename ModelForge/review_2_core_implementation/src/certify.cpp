@@ -540,6 +540,29 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         return slot.kind == 0 ? aLadder : wLadder;
     };
 
+    // One refinement step. On large inputs with a fine lattice (bits,
+    // latency) a step jumps to the next storage class, so deep networks reach
+    // a certified configuration in few steps; the local search then refines
+    // downward rung by rung.
+    const bool coarse = large && options.cost != CostModel::Bytes;
+    const auto raise = [&](const Slot& slot, int value) {
+        if (!coarse) return nextRung(ladderFor(slot), value, +1);
+        // The widest rung of the smallest storage class above `value` (or of
+        // its own class, if `value` is not yet at its top).
+        const auto& ladder = ladderFor(slot);
+        const auto storage = [&](int bits) {
+            return slot.kind == 1 ? (bits <= 4 ? 0 : bits <= 8 ? 1 : 2) : (bits <= 8 ? 0 : 1);
+        };
+        int best = 0;
+        for (std::size_t k = 0; k < ladder.size(); ++k) {
+            const bool top = k + 1 == ladder.size() || storage(ladder[k + 1]) > storage(ladder[k]);
+            if (top && ladder[k] > value) {
+                best = ladder[k];
+                break;
+            }
+        }
+        return best;
+    };
     std::vector<std::size_t> order(regions.size());
     std::iota(order.begin(), order.end(), 0);
     // The search targets the regions that the most precise program on the
@@ -566,7 +589,8 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         }
     }
 
-    PrecisionConfig config = uniformConfig(L, wLadder.front(), aLadder.front());
+    // Coarse mode starts at the widest rungs of the smallest storage classes.
+    PrecisionConfig config = coarse ? uniformConfig(L, 4, 8) : uniformConfig(L, wLadder.front(), aLadder.front());
     std::optional<QProgram> program;
     bool allProved = false;
     for (std::size_t iteration = 0; iteration < options.maxIterations; ++iteration) {
@@ -612,7 +636,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
             const Slot slot = slotOf(s, network);
             if (slot.kind < 0) continue;
             trials[s] = config;
-            const int next = nextRung(ladderFor(slot), slotValue(trials[s], slot), +1);
+            const int next = raise(slot, slotValue(trials[s], slot));
             if (next == 0) continue;
             slotValue(trials[s], slot) = next;
             candidates.push_back(s);
@@ -662,7 +686,7 @@ TunerResult tunePrecision(const DenseNetwork& network, const Box& domain,
         std::ostringstream raised;
         for (std::size_t s : chosen) {
             const Slot slot = slotOf(s, network);
-            slotValue(config, slot) = nextRung(ladderFor(slot), slotValue(config, slot), +1);
+            slotValue(config, slot) = raise(slot, slotValue(config, slot));
             raised << (raised.tellp() > 0 ? ", " : "") << errorSourceName(s, L);
         }
         note(line.str() + "  -> raise " + raised.str());

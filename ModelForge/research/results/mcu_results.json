@@ -1,26 +1,29 @@
 {
   "author": "Vaishnavi",
-  "mcu": "ATmega2560 @ 16 MHz (simavr)",
-  "samples": 10,
+  "mcu": "8-bit AVR @ 16 MHz (simavr): per entry",
+  "samples": 5,
   "results": [
     {
       "model": "mnist_cnn",
       "variant": "forgecert",
-      "precision": "w[4,4,8] a[16,16,16]",
+      "mcu": "atmega2560",
+      "eps": 0.01,
+      "precision": "w[4,4,8] a[16,16,8]",
       "proved": 59,
       "excluded": 1,
       "unproved": 0,
       "avr_int": {
-        "flash": 10630,
-        "ram": 6634
+        "flash": 6304,
+        "ram": 3210,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 2503102.9,
-      "estimated_cycles": 2380540.0,
+      "avr_int_cycles_mean": 2400188.4,
+      "estimated_cycles": 2276860.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 7536,
+        "text": 7532,
         "data": 0,
-        "bss": 3496
+        "bss": 3208
       },
       "avr_float": {
         "flash": 15648,
@@ -28,7 +31,7 @@
         "address_space": "__flash",
         "fits": true
       },
-      "avr_float_cycles_mean": 5406803.5,
+      "avr_float_cycles_mean": 5400068.0,
       "avr_float_matches_host": true,
       "arm_m0_float": {
         "text": 13496,
@@ -39,15 +42,18 @@
     {
       "model": "mnist_cnn",
       "variant": "forgecert_latency",
+      "mcu": "atmega2560",
+      "eps": 0.01,
       "precision": "w[6,8,8] a[10,10,16]",
       "proved": 59,
       "excluded": 1,
       "unproved": 0,
       "avr_int": {
-        "flash": 10864,
-        "ram": 6634
+        "flash": 6550,
+        "ram": 3498,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 2042981.9,
+      "avr_int_cycles_mean": 2043012.0,
       "estimated_cycles": 1921479.0,
       "avr_matches_host": true,
       "arm_m0_int": {
@@ -59,15 +65,18 @@
     {
       "model": "mnist_cnn",
       "variant": "uniform_int8",
+      "mcu": "atmega2560",
+      "eps": 0.01,
       "precision": "w[8,8,8] a[8,8,8]",
       "proved": 50,
       "excluded": 1,
       "unproved": 9,
       "avr_int": {
-        "flash": 10810,
-        "ram": 4886
+        "flash": 6506,
+        "ram": 1750,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 1607318.8,
+      "avr_int_cycles_mean": 1607313.2,
       "estimated_cycles": 1293030.0,
       "avr_matches_host": true,
       "arm_m0_int": {
@@ -79,19 +88,22 @@
     {
       "model": "fashion_cnn",
       "variant": "forgecert",
-      "precision": "w[16,8,16] a[16,16,16]",
+      "mcu": "atmega2560",
+      "eps": 0.01,
+      "precision": "w[16,16,16] a[16,16,16]",
       "proved": 46,
       "excluded": 14,
       "unproved": 0,
       "avr_int": {
-        "flash": 14280,
-        "ram": 6634
+        "flash": 10348,
+        "ram": 3498,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 2807035.4,
-      "estimated_cycles": 2609021.0,
+      "avr_int_cycles_mean": 3674254.0,
+      "estimated_cycles": 3161636.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 10676,
+        "text": 11016,
         "data": 0,
         "bss": 3496
       },
@@ -101,7 +113,7 @@
         "address_space": "__flash",
         "fits": true
       },
-      "avr_float_cycles_mean": 5618895.7,
+      "avr_float_cycles_mean": 5620910.4,
       "avr_float_matches_host": true,
       "arm_m0_float": {
         "text": 13496,
@@ -112,15 +124,18 @@
     {
       "model": "fashion_cnn",
       "variant": "forgecert_latency",
+      "mcu": "atmega2560",
+      "eps": 0.01,
       "precision": "w[16,16,16] a[16,16,16]",
       "proved": 46,
       "excluded": 14,
       "unproved": 0,
       "avr_int": {
-        "flash": 14662,
-        "ram": 6634
+        "flash": 10348,
+        "ram": 3498,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 3674212.4,
+      "avr_int_cycles_mean": 3674254.0,
       "estimated_cycles": 3161636.0,
       "avr_matches_host": true,
       "arm_m0_int": {
@@ -132,15 +147,18 @@
     {
       "model": "fashion_cnn",
       "variant": "uniform_int8",
+      "mcu": "atmega2560",
+      "eps": 0.01,
       "precision": "w[8,8,8] a[8,8,8]",
       "proved": 25,
       "excluded": 14,
       "unproved": 21,
       "avr_int": {
-        "flash": 10810,
-        "ram": 4886
+        "flash": 6506,
+        "ram": 1750,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 1630593.5,
+      "avr_int_cycles_mean": 1630610.6,
       "estimated_cycles": 1293030.0,
       "avr_matches_host": true,
       "arm_m0_int": {
@@ -152,19 +170,22 @@
     {
       "model": "mnist_mlp",
       "variant": "forgecert",
-      "precision": "w[4,8] a[16,16]",
-      "proved": 57,
-      "excluded": 3,
+      "mcu": "atmega2560",
+      "eps": 0.01,
+      "precision": "w[8,8] a[16,16]",
+      "proved": 59,
+      "excluded": 1,
       "unproved": 0,
       "avr_int": {
-        "flash": 19824,
-        "ram": 4770
+        "flash": 28240,
+        "ram": 1634,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 2058990.3,
-      "estimated_cycles": 1927810.0,
+      "avr_int_cycles_mean": 1822652.4,
+      "estimated_cycles": 1676930.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 17168,
+        "text": 29680,
         "data": 0,
         "bss": 1632
       },
@@ -181,19 +202,22 @@
     {
       "model": "mnist_mlp",
       "variant": "forgecert_latency",
-      "precision": "w[8,12] a[10,16]",
-      "proved": 57,
-      "excluded": 3,
+      "mcu": "atmega2560",
+      "eps": 0.01,
+      "precision": "w[8,8] a[16,16]",
+      "proved": 59,
+      "excluded": 1,
       "unproved": 0,
       "avr_int": {
-        "flash": 32662,
-        "ram": 4770
+        "flash": 28240,
+        "ram": 1634,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 1743868.2,
+      "avr_int_cycles_mean": 1822652.4,
       "estimated_cycles": 1676930.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 30000,
+        "text": 29680,
         "data": 0,
         "bss": 1632
       }
@@ -201,15 +225,18 @@
     {
       "model": "mnist_mlp",
       "variant": "uniform_int8",
+      "mcu": "atmega2560",
+      "eps": 0.01,
       "precision": "w[8,8] a[8,8]",
-      "proved": 54,
-      "excluded": 3,
-      "unproved": 3,
+      "proved": 53,
+      "excluded": 1,
+      "unproved": 6,
       "avr_int": {
-        "flash": 32302,
-        "ram": 3954
+        "flash": 27998,
+        "ram": 818,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 790436.8,
+      "avr_int_cycles_mean": 790600.6,
       "estimated_cycles": 762242.0,
       "avr_matches_host": true,
       "arm_m0_int": {
@@ -219,149 +246,81 @@
       }
     },
     {
-      "model": "digits_mlp32x16",
+      "model": "mnist_lenet",
       "variant": "forgecert",
-      "precision": "w[16,8,8] a[16,16,16]",
-      "proved": 46,
-      "excluded": 14,
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,0,4,0,4,4] a[16,16,16,16,16,16]",
+      "proved": 60,
+      "excluded": 0,
       "unproved": 0,
       "avr_int": {
-        "flash": 9828,
-        "ram": 482
+        "flash": 8608,
+        "ram": 10210,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 333080.4,
-      "estimated_cycles": 295858.0,
+      "avr_int_cycles_mean": 20593989.6,
+      "estimated_cycles": 21683010.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 6544,
+        "text": 9460,
         "data": 0,
-        "bss": 224
+        "bss": 10208
       },
       "avr_float": {
-        "flash": 13318,
-        "ram": 450,
-        "address_space": "__flash",
-        "fits": true
+        "fits": false,
+        "reason": "collect2: error: ld returned 1 exit status"
       },
-      "avr_float_cycles_mean": 773636.4,
-      "avr_float_matches_host": true,
       "arm_m0_float": {
-        "text": 11388,
+        "text": 34860,
         "data": 0,
-        "bss": 192
+        "bss": 21248
       }
     },
     {
-      "model": "digits_mlp32x16",
+      "model": "mnist_lenet",
       "variant": "forgecert_latency",
-      "precision": "w[12,8,12] a[16,16,16]",
-      "proved": 46,
-      "excluded": 14,
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[5,0,5,0,8,8] a[10,10,10,16,16,16]",
+      "proved": 60,
+      "excluded": 0,
       "unproved": 0,
       "avr_int": {
-        "flash": 9550,
-        "ram": 482
+        "flash": 12760,
+        "ram": 10210,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 233386.5,
-      "estimated_cycles": 211890.0,
+      "avr_int_cycles_mean": 13345511.2,
+      "estimated_cycles": 11996290.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 6536,
+        "text": 13520,
         "data": 0,
-        "bss": 224
+        "bss": 10208
       }
     },
     {
-      "model": "digits_mlp32x16",
+      "model": "mnist_lenet",
       "variant": "uniform_int8",
-      "precision": "w[8,8,8] a[8,8,8]",
-      "proved": 6,
-      "excluded": 14,
-      "unproved": 40,
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,0,8,0,8,8] a[8,8,8,8,8,8]",
+      "proved": 22,
+      "excluded": 0,
+      "unproved": 38,
       "avr_int": {
-        "flash": 7292,
-        "ram": 370
+        "flash": 12652,
+        "ram": 5106,
+        "links_float": false
       },
-      "avr_int_cycles_mean": 210606.6,
-      "estimated_cycles": 113970.0,
+      "avr_int_cycles_mean": 12527332.6,
+      "estimated_cycles": 10427842.0,
       "avr_matches_host": true,
       "arm_m0_int": {
-        "text": 4296,
+        "text": 13428,
         "data": 0,
-        "bss": 112
-      }
-    },
-    {
-      "model": "wine_mlp32x16",
-      "variant": "forgecert",
-      "precision": "w[4,4,8] a[16,16,16]",
-      "proved": 51,
-      "excluded": 3,
-      "unproved": 0,
-      "avr_int": {
-        "flash": 4908,
-        "ram": 176
-      },
-      "avr_int_cycles_mean": 122651.0,
-      "estimated_cycles": 103575.0,
-      "avr_matches_host": true,
-      "arm_m0_int": {
-        "text": 1892,
-        "data": 0,
-        "bss": 122
-      },
-      "avr_float": {
-        "flash": 6316,
-        "ram": 246,
-        "address_space": "__flash",
-        "fits": true
-      },
-      "avr_float_cycles_mean": 266307.5,
-      "avr_float_matches_host": true,
-      "arm_m0_float": {
-        "text": 4396,
-        "data": 0,
-        "bss": 192
-      }
-    },
-    {
-      "model": "wine_mlp32x16",
-      "variant": "forgecert_latency",
-      "precision": "w[7,6,6] a[10,10,12]",
-      "proved": 51,
-      "excluded": 3,
-      "unproved": 0,
-      "avr_int": {
-        "flash": 5332,
-        "ram": 176
-      },
-      "avr_int_cycles_mean": 69161.3,
-      "estimated_cycles": 65527.0,
-      "avr_matches_host": true,
-      "arm_m0_int": {
-        "text": 2312,
-        "data": 0,
-        "bss": 122
-      }
-    },
-    {
-      "model": "wine_mlp32x16",
-      "variant": "uniform_int8",
-      "precision": "w[8,8,8] a[8,8,8]",
-      "proved": 48,
-      "excluded": 3,
-      "unproved": 3,
-      "avr_int": {
-        "flash": 5278,
-        "ram": 115
-      },
-      "avr_int_cycles_mean": 81989.9,
-      "estimated_cycles": 59159.0,
-      "avr_matches_host": true,
-      "arm_m0_int": {
-        "text": 2280,
-        "data": 0,
-        "bss": 61
+        "bss": 5104
       }
     }
   ]

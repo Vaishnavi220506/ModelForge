@@ -13,6 +13,27 @@ IMAGE = ("mnist", "fashion", "cifar")
 ZOO = ("lenet", "dscnn", "resnet")
 
 
+
+def load_cases(paths):
+    """Cases from several result files. A later file with the same model and
+    radius replaces the outcomes it contains (e.g. a rerun of one variant)."""
+    cases, index, seconds = [], {}, 0.0
+    for path in paths:
+        data = json.load(open(path))
+        seconds += data.get("seconds", 0.0)
+        for case in data["cases"]:
+            key = (case["model"], round(case["eps"], 6))
+            if key not in index:
+                index[key] = case
+                cases.append(case)
+                continue
+            old = index[key]
+            fresh = {o["name"]: o for o in case["outcomes"]}
+            old["outcomes"] = [fresh.pop(o["name"], o) for o in old["outcomes"]] + list(fresh.values())
+            if case["audit"]["samples"] > 0:
+                old["audit"] = case["audit"]
+    return cases, seconds
+
 def suite_of(case):
     if any(arch in case["model"] for arch in ZOO):
         return "zoo"
@@ -77,11 +98,7 @@ def paired(cases, a, b, key, only_certified=True):
 
 
 def main(paths):
-    cases, seconds = [], 0.0
-    for path in paths:
-        data = json.load(open(path))
-        cases += data["cases"]
-        seconds += data.get("seconds", 0.0)
+    cases, seconds = load_cases(paths)
     print(f"{len(cases)} cases, {seconds:.0f} s total")
     for suite in ("tabular", "image", "zoo"):
         table([c for c in cases if suite_of(c) == suite], suite)

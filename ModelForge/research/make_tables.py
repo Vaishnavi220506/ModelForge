@@ -30,6 +30,27 @@ OPERATORS = {"lenet": "conv, max-pool, dense", "lenet_avg": "conv, avg-pool, den
              "dscnn": "conv, depthwise, BN, GAP", "resnet": "conv, BN, residual add, GAP"}
 
 
+
+def load_cases(paths):
+    """Cases from several result files. A later file with the same model and
+    radius replaces the outcomes it contains (e.g. a rerun of one variant)."""
+    cases, index, seconds = [], {}, 0.0
+    for path in paths:
+        data = json.load(open(path))
+        seconds += data.get("seconds", 0.0)
+        for case in data["cases"]:
+            key = (case["model"], round(case["eps"], 6))
+            if key not in index:
+                index[key] = case
+                cases.append(case)
+                continue
+            old = index[key]
+            fresh = {o["name"]: o for o in case["outcomes"]}
+            old["outcomes"] = [fresh.pop(o["name"], o) for o in old["outcomes"]] + list(fresh.values())
+            if case["audit"]["samples"] > 0:
+                old["audit"] = case["audit"]
+    return cases, seconds
+
 def suite_of(case):
     if any(a in case["model"] for a in ZOO):
         return "zoo"
@@ -64,9 +85,7 @@ def main():
     parser.add_argument("--mcu", default=str(ROOT / "results" / "mcu_results.json"))
     parser.add_argument("--out", default=str(ROOT.parent / "paper" / "forgecert_tables.tex"))
     args = parser.parse_args()
-    cases = []
-    for path in args.certbench:
-        cases += json.load(open(path))["cases"]
+    cases, _ = load_cases(args.certbench)
     suites = {s: [c for c in cases if suite_of(c) == s] for s in ("tabular", "image", "zoo")}
     accuracy = {}
     for f in ("image_models.json", "cnn_zoo.json"):
