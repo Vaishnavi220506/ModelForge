@@ -174,16 +174,18 @@ def main():
     out.append("\\newcommand{\\FCTableAblation}{%\n" + "\n".join(rows) + "}")
 
     # Architecture zoo.
-    rows = ["\\begin{tabular}{@{}llrrrrrr@{}}", "\\toprule",
-            "Model & Operators & Acc. & Robust & \\multicolumn{2}{c}{Proved} & Cex & Flash \\\\",
-            "\\cmidrule(lr){5-6}", " & & & & int8 & ForgeCert & int8 & /fp32 \\\\", "\\midrule"]
+    short = {"lenet": "LeNet-5", "lenet_avg": "LeNet-5 (avg)", "dscnn": "DS-CNN", "resnet": "ResNet"}
+    rows = ["\\setlength{\\tabcolsep}{3pt}\\begin{tabular}{@{}lrrrrrrr@{}}", "\\toprule",
+            "Model & Acc. & Robust & \\multicolumn{2}{c}{int8} & \\multicolumn{2}{c}{ForgeCert} & Flash \\\\",
+            "\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}", " & & & proved & cex & bytes & calib. & /fp32 \\\\", "\\midrule"]
     for case in suites["zoo"]:
         o = {x["name"]: x for x in case["outcomes"]}
-        arch = case["model"].split("_", 1)[1]
+        data, arch = case["model"].split("_", 1)
         acc = accuracy.get(case["model"], {}).get("test_accuracy")
-        rows.append(f"{tex(case['model'])} & {OPERATORS.get(arch, '')} & {100 * acc:.1f} & {case['robust']} & "
-                    f"{o['uniform_int8']['proved']} & {o['forgecert']['proved']} & {o['uniform_int8']['counterexamples']} & "
-                    f"{100 * o['forgecert']['flash'] / case['float32_bytes']:.0f}\\% \\\\")
+        name = ("M" if data == "mnist" else "F") + " " + short.get(arch, arch)
+        rows.append(f"{name} & {100 * acc:.1f} & {case['robust']} & {o['uniform_int8']['proved']} & "
+                    f"{o['uniform_int8']['counterexamples']} & {o['forgecert']['proved']} & "
+                    f"{o['forgecert_calibrated']['proved']} & {100 * o['forgecert']['flash'] / case['float32_bytes']:.0f}\\% \\\\")
     rows += ["\\bottomrule", "\\end{tabular}"]
     out.append("\\newcommand{\\FCTableZoo}{%\n" + "\n".join(rows) + "}")
 

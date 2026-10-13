@@ -334,6 +334,330 @@
         "data": 0,
         "bss": 5104
       }
+    },
+    {
+      "model": "mnist_dscnn",
+      "variant": "forgecert",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[16,16,16,8,8,4,4] a[16,16,16,16,16,16,16]",
+      "proved": 17,
+      "excluded": 2,
+      "unproved": 1,
+      "estimated_cycles": 38764992.0,
+      "arm_m0_int": {
+        "text": 12092,
+        "data": 0,
+        "bss": 20480
+      },
+      "avr_int": {
+        "fits": false,
+        "reason": "/usr/lib/gcc/avr/7.3.0/../../../avr/bin/ld: address 0x805102 of build/mcu/mnist_dscnn_forgecert/avr_q.elf section `.bss' is not within region `data'"
+      },
+      "avr_float": {
+        "fits": false,
+        "reason": "collect2: error: ld returned 1 exit status"
+      },
+      "arm_m0_float": {
+        "text": 23892,
+        "data": 0,
+        "bss": 66048
+      }
+    },
+    {
+      "model": "mnist_dscnn",
+      "variant": "forgecert_latency",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[12,12,12,8,8,5,8] a[16,16,16,16,16,16,16]",
+      "proved": 17,
+      "excluded": 2,
+      "unproved": 1,
+      "estimated_cycles": 30582818.0,
+      "arm_m0_int": {
+        "text": 13084,
+        "data": 0,
+        "bss": 20480
+      },
+      "avr_int": {
+        "fits": false,
+        "reason": "/usr/lib/gcc/avr/7.3.0/../../../avr/bin/ld: address 0x805102 of build/mcu/mnist_dscnn_forgecert_latency/avr_q.elf section `.bss' is not within region `data'"
+      }
+    },
+    {
+      "model": "mnist_dscnn",
+      "variant": "uniform_int8",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,8,8,8,8,8,8] a[8,8,8,8,8,8,8]",
+      "proved": 0,
+      "excluded": 2,
+      "unproved": 18,
+      "estimated_cycles": 19180783.0,
+      "arm_m0_int": {
+        "text": 12224,
+        "data": 0,
+        "bss": 10240
+      },
+      "avr_int": {
+        "flash": 12450,
+        "ram": 10242,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 20011841.2,
+      "avr_matches_host": true
+    },
+    {
+      "model": "mnist_resnet",
+      "variant": "forgecert",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,16,8,16,8,8,4,8,4,4] a[16,16,16,16,16,16,16,16,16,16]",
+      "proved": 16,
+      "excluded": 2,
+      "unproved": 2,
+      "estimated_cycles": 42748718.0,
+      "arm_m0_int": {
+        "text": 12992,
+        "data": 0,
+        "bss": 12544
+      },
+      "avr_int": {
+        "flash": 14740,
+        "ram": 12546,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 53140808.4,
+      "avr_matches_host": true,
+      "avr_float": {
+        "fits": false,
+        "reason": "collect2: error: ld returned 1 exit status"
+      },
+      "arm_m0_float": {
+        "text": 25556,
+        "data": 0,
+        "bss": 37696
+      }
+    },
+    {
+      "model": "mnist_resnet",
+      "variant": "forgecert_latency",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,12,8,16,8,8,8,8,5,8] a[16,16,16,16,16,16,16,16,16,16]",
+      "proved": 16,
+      "excluded": 2,
+      "unproved": 2,
+      "estimated_cycles": 37197470.0,
+      "arm_m0_int": {
+        "text": 13372,
+        "data": 0,
+        "bss": 12544
+      },
+      "avr_int": {
+        "flash": 15018,
+        "ram": 12546,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 43670675.8,
+      "avr_matches_host": true
+    },
+    {
+      "model": "mnist_resnet",
+      "variant": "uniform_int8",
+      "mcu": "atmega1284p",
+      "eps": 0.00392156862745098,
+      "precision": "w[8,8,8,8,8,8,8,8,8,8] a[8,8,8,8,8,8,8,8,8,8]",
+      "proved": 0,
+      "excluded": 2,
+      "unproved": 18,
+      "estimated_cycles": 19728686.0,
+      "arm_m0_int": {
+        "text": 12696,
+        "data": 0,
+        "bss": 6272
+      },
+      "avr_int": {
+        "flash": 13992,
+        "ram": 6274,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 26614532.0,
+      "avr_matches_host": true
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "forgecert",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[16,8,8] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "estimated_cycles": 295858.0,
+      "arm_m0_int": {
+        "text": 6544,
+        "data": 0,
+        "bss": 224
+      },
+      "avr_int": {
+        "flash": 8378,
+        "ram": 226,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 333039.0,
+      "avr_matches_host": true,
+      "avr_float": {
+        "flash": 13318,
+        "ram": 450,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 775887.2,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 11388,
+        "data": 0,
+        "bss": 192
+      }
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "forgecert_latency",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[12,8,8] a[16,16,16]",
+      "proved": 46,
+      "excluded": 14,
+      "unproved": 0,
+      "estimated_cycles": 211890.0,
+      "arm_m0_int": {
+        "text": 6380,
+        "data": 0,
+        "bss": 224
+      },
+      "avr_int": {
+        "flash": 7944,
+        "ram": 226,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 232695.6,
+      "avr_matches_host": true
+    },
+    {
+      "model": "digits_mlp32x16",
+      "variant": "uniform_int8",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 6,
+      "excluded": 14,
+      "unproved": 40,
+      "estimated_cycles": 113970.0,
+      "arm_m0_int": {
+        "text": 4296,
+        "data": 0,
+        "bss": 112
+      },
+      "avr_int": {
+        "flash": 5868,
+        "ram": 114,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 210601.6,
+      "avr_matches_host": true
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "forgecert",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[4,4,8] a[16,16,16]",
+      "proved": 51,
+      "excluded": 3,
+      "unproved": 0,
+      "estimated_cycles": 103575.0,
+      "arm_m0_int": {
+        "text": 1892,
+        "data": 0,
+        "bss": 122
+      },
+      "avr_int": {
+        "flash": 3664,
+        "ram": 124,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 122650.2,
+      "avr_matches_host": true,
+      "avr_float": {
+        "flash": 6316,
+        "ram": 246,
+        "address_space": "__flash",
+        "fits": true
+      },
+      "avr_float_cycles_mean": 265631.2,
+      "avr_float_matches_host": true,
+      "arm_m0_float": {
+        "text": 4396,
+        "data": 0,
+        "bss": 192
+      }
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "forgecert_latency",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[7,6,5] a[10,10,10]",
+      "proved": 51,
+      "excluded": 3,
+      "unproved": 0,
+      "estimated_cycles": 64039.0,
+      "arm_m0_int": {
+        "text": 2308,
+        "data": 0,
+        "bss": 122
+      },
+      "avr_int": {
+        "flash": 4088,
+        "ram": 124,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 68825.8,
+      "avr_matches_host": true
+    },
+    {
+      "model": "wine_mlp32x16",
+      "variant": "uniform_int8",
+      "mcu": "atmega2560",
+      "eps": 0.1,
+      "precision": "w[8,8,8] a[8,8,8]",
+      "proved": 48,
+      "excluded": 3,
+      "unproved": 3,
+      "estimated_cycles": 59159.0,
+      "arm_m0_int": {
+        "text": 2280,
+        "data": 0,
+        "bss": 61
+      },
+      "avr_int": {
+        "flash": 4059,
+        "ram": 63,
+        "links_float": false,
+        "fits": true
+      },
+      "avr_int_cycles_mean": 82035.8,
+      "avr_matches_host": true
     }
   ]
 }

@@ -33,7 +33,7 @@ All are sized for 8-bit microcontrollers (at most 26k parameters).
 \begin{table}[t]
 \centering\scriptsize
 \FCTableZoo
-\caption{Architecture zoo at $\varepsilon=1/255$ (50 regions each). \emph{Acc.}: test accuracy of the float model (\%). Flash of the ForgeCert code relative to float32.}
+\caption{Architecture zoo at $\varepsilon=1/255$ (50 regions each; M = MNIST, F = Fashion-MNIST). \emph{Acc.}: test accuracy of the float model (\%). \emph{Robust}: regions on which the float model is provably constant. Proved regions for uniform int8, ForgeCert with proved scales (bytes objective) and with calibrated scales; \emph{cex}: int8 regions with a real counterexample. Flash of the ForgeCert code relative to float32.}
 \label{tab:zoo}
 \end{table}
 
@@ -46,6 +46,6 @@ All are sized for 8-bit microcontrollers (at most 26k parameters).
 \label{tab:mcu}
 \end{table}
 
-\textbf{RQ5: Does it run on a microcontroller?} (Table~\ref{tab:mcu}.) All \FCMCUConfigs{} programs compile with avr-gcc and run on the simulated device; \FCMCUExact{} of them return exactly the host build's predictions. The device code links no floating-point routine: inputs arrive as codes from the generated quantiser. The float32 baseline is up to several times slower through soft-float, and for the larger networks it does not fit at all. Latency-tuned certified code is close to uncertified int8 code in speed, while int8 code leaves many regions unproved or wrong.
+\textbf{RQ5: Does it run on a microcontroller?} (Table~\ref{tab:mcu}.) Every program that fits the device compiles with avr-gcc, runs on the simulated AVR, and returns exactly the host build's predictions; the device code links no floating-point routine (inputs arrive as codes from the generated quantiser). Where the float32 model fits at all, it is 2.2--2.3$\times$ slower than the certified integer code through soft-float; for the MNIST MLP, LeNet-5 and the residual network it does not fit. The certified ResNet-style network runs on an ATmega1284P (16/18 regions certified, 44 M cycles with the latency objective), where uniform int8 code proves none of the 18. Certification has a price on deep networks: latency-tuned certified code is within 16\% of uncertified int8 code on four of the six models (and faster on Wine), but 1.6$\times$ slower on the ResNet, and the certified depthwise-separable CNN needs 16-bit activations that exceed the 16 KB of RAM.
 
 \textbf{RQ6: Are the proofs sound, and is checking cheap?} We sampled \FCAuditSamples{} executions inside proved regions (box vertices and uniform points). There were \FCAuditViolations{} wrong decisions, overflows or bound violations. The independent checker accepted all \FCCheckerValid{} of \FCCheckerTotal{} certificates, in at most \FCCheckerMaxSeconds{} s each, against minutes of compile-time search: checking is a linear replay. With \texttt{--expect}, it also matched the output of the compiled C binaries bit for bit on every test row.
