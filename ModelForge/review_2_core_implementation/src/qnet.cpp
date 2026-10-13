@@ -366,6 +366,7 @@ std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::strin
         return &network.layers[tensor - 1];
     };
     const auto addLayer = [&](DenseLayer layer, const std::string& value) {
+        layer.irNodes.push_back(layer.name);
         layer.in = 0;
         for (std::size_t s : layer.sources) {
             layer.in += network.tensors[s].size();
@@ -432,6 +433,7 @@ std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::strin
                     return std::nullopt;
                 }
                 producer->relu = true;
+                producer->irNodes.push_back(where);
                 alias(instruction.output, x);
                 break;
             }
@@ -454,6 +456,7 @@ std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::strin
                     }
                     for (std::size_t c = 0; c < channels; ++c) producer->bias[c] = a[c] * producer->bias[c] + b[c];
                     ++network.foldedBatchNorms;
+                    producer->irNodes.push_back(where);
                     alias(instruction.output, x);
                 } else {
                     addLayer(depthwise(where, x, 1, 1, a, b), instruction.output);
@@ -607,6 +610,7 @@ std::optional<DenseNetwork> extractDenseNetwork(const IRGraph& graph, std::strin
                         if (error.empty()) error = "a constant Add must follow a linear layer ('" + where + "')";
                         return std::nullopt;
                     }
+                    producer->irNodes.push_back(where);
                     alias(instruction.output, operands[0]);
                     break;
                 }

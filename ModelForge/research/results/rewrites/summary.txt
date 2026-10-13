@@ -1,0 +1,43 @@
+controls 22 (1100 runs): 0 false positives
+faults: 69 loud, 89 subtle, 21 not observed
+ONNX Runtime confirms 158 of 158 witnesses
+
+detection rate on subtle faults vs budget (model evaluations)
+method                    8     16     32     64    128    256    512  mean first   ms/run
+random                0.297  0.364  0.425  0.483  0.530  0.589  0.629       227.1    343.7
+data                  0.454  0.537  0.629  0.672  0.701  0.733  0.735       151.2    233.3
+data_noise            0.470  0.533  0.611  0.665  0.699  0.730  0.744       151.3    249.7
+tensorfuzz            0.440  0.512  0.566  0.598  0.625  0.647  0.665       189.8    390.2
+deepxplore            0.319  0.400  0.490  0.566  0.661  0.719  0.753       166.0    185.1
+diffchaser            0.440  0.515  0.604  0.672  0.719  0.753  0.791       139.1    240.4
+guardian_apc          0.436  0.548  0.620  0.679  0.724  0.764  0.800       133.9    234.9
+guardian_rw           0.436  0.551  0.625  0.676  0.717  0.760  0.798       135.9    234.0
+guardian_nm           0.436  0.533  0.607  0.692  0.742  0.804  0.849       117.9    233.1
+guardian_apc_plus     0.436  0.537  0.609  0.694  0.748  0.800  0.852       117.5    237.2
+
+per fault family (subtle cases): detection at 64 / 512
+  relu_as_relu6 (25 cases): random=0.43/0.62, data=0.64/0.72, data_noise=0.65/0.72, tensorfuzz=0.48/0.54, deepxplore=0.58/0.79, diffchaser=0.54/0.58, guardian_apc=0.71/0.87, guardian_rw=0.73/0.89, guardian_nm=0.71/0.83, guardian_apc_plus=0.72/0.84
+  relu_threshold (41 cases): random=0.72/0.82, data=0.86/0.93, data_noise=0.84/0.93, tensorfuzz=0.85/0.93, deepxplore=0.71/0.93, diffchaser=0.89/0.95, guardian_apc=0.86/0.93, guardian_rw=0.84/0.92, guardian_nm=0.88/0.93, guardian_apc_plus=0.88/0.93
+  fp16_constants (18 cases): random=0.07/0.26, data=0.20/0.24, data_noise=0.19/0.29, tensorfuzz=0.08/0.16, deepxplore=0.11/0.23, diffchaser=0.26/0.67, guardian_apc=0.13/0.34, guardian_rw=0.13/0.33, guardian_nm=0.16/0.66, guardian_apc_plus=0.16/0.64
+  activation_dropped (1 cases): random=1.00/1.00, data=1.00/1.00, data_noise=1.00/1.00, tensorfuzz=1.00/1.00, deepxplore=1.00/1.00, diffchaser=1.00/1.00, guardian_apc=1.00/1.00, guardian_rw=1.00/1.00, guardian_nm=1.00/1.00, guardian_apc_plus=1.00/1.00
+  fp16 (4 cases): random=0.15/0.25, data=1.00/1.00, data_noise=1.00/1.00, tensorfuzz=1.00/1.00, deepxplore=1.00/1.00, diffchaser=1.00/1.00, guardian_apc=1.00/1.00, guardian_rw=1.00/1.00, guardian_nm=1.00/1.00, guardian_apc_plus=1.00/1.00
+
+guardian_apc_plus vs other methods (McNemar over case-seeds; Wilcoxon over 21 models)
+  random@64                ours-only  103 other-only    9 p=2.3e-21 | models +16/-2 mean diff +0.184 CI [+0.112,+0.256] p=0.00092
+  data@64                  ours-only   39 other-only   29 p=0.27 | models +10/-6 mean diff +0.035 CI [-0.035,+0.107] p=0.27
+  data_noise@64            ours-only   39 other-only   26 p=0.14 | models +10/-7 mean diff +0.034 CI [-0.032,+0.103] p=0.33
+  tensorfuzz@64            ours-only   54 other-only   11 p=6e-08 | models +12/-3 mean diff +0.091 CI [+0.036,+0.152] p=0.013
+  deepxplore@64            ours-only   71 other-only   14 p=2.4e-10 | models +17/-2 mean diff +0.138 CI [+0.084,+0.194] p=0.00061
+  diffchaser@64            ours-only   39 other-only   29 p=0.27 | models +7/-9 mean diff +0.016 CI [-0.054,+0.088] p=0.84
+  guardian_apc@64          ours-only   19 other-only   12 p=0.28 | models +7/-5 mean diff +0.009 CI [-0.018,+0.036] p=0.75
+  guardian_rw@64           ours-only   17 other-only    9 p=0.17 | models +7/-4 mean diff +0.011 CI [-0.014,+0.036] p=0.43
+  guardian_nm@64           ours-only    8 other-only    7 p=1 | models +2/-3 mean diff +0.003 CI [-0.013,+0.021] p=0.94
+  random@512               ours-only  106 other-only    7 p=8e-24 | models +16/-0 mean diff +0.219 CI [+0.133,+0.310] p=0.00044
+  data@512                 ours-only   57 other-only    5 p=3.1e-12 | models +14/-1 mean diff +0.142 CI [+0.076,+0.219] p=0.0012
+  data_noise@512           ours-only   54 other-only    6 p=9.7e-11 | models +13/-1 mean diff +0.135 CI [+0.069,+0.214] p=0.0012
+  tensorfuzz@512           ours-only   88 other-only    5 p=1.1e-20 | models +17/-0 mean diff +0.204 CI [+0.127,+0.296] p=0.00029
+  deepxplore@512           ours-only   49 other-only    5 p=3.9e-10 | models +14/-1 mean diff +0.125 CI [+0.069,+0.188] p=0.0012
+  diffchaser@512           ours-only   45 other-only   18 p=0.0009 | models +10/-5 mean diff +0.073 CI [+0.018,+0.129] p=0.033
+  guardian_apc@512         ours-only   32 other-only    9 p=0.00043 | models +12/-2 mean diff +0.066 CI [+0.029,+0.106] p=0.0039
+  guardian_rw@512          ours-only   32 other-only    8 p=0.00018 | models +12/-1 mean diff +0.063 CI [+0.031,+0.101] p=0.00073
+  guardian_nm@512          ours-only    5 other-only    4 p=1 | models +2/-2 mean diff +0.007 CI [-0.010,+0.031] p=1

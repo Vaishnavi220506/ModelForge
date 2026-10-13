@@ -59,6 +59,13 @@ tables in `ModelForge/research/results/certbench_summary.txt`):
 See [ForgeCert](ModelForge/docs/forgecert.md) and the
 [paper draft](ModelForge/paper/forgecert.tex).
 
+**Validating rewrites on real models.** [`modelforge_rewritebench`](ModelForge/docs/rewrite_study.md)
+replays 179 faulty rewrites that reproduce documented PyTorch, TFLite, ONNX Runtime
+and TVM bugs (plus 22 correct ones) on 21 trained models, comparing validation
+methods at equal model-evaluation budgets with an ONNX Runtime oracle. Most bugs
+are loud; on the 89 subtle ones, Guardian-APC+ detects 85% at 512 evaluations vs
+79% for DiffChaser-style search and 74% for validation data, with no false alarms.
+
 ### Earlier contributions (now stages of the pipeline)
 
 Every graph rewrite is validated by **Guardian-APC+** before it is kept. Guardian

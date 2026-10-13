@@ -1,0 +1,1428 @@
+{
+ "confirmed": 158,
+ "refuted": 0,
+ "cases": [
+  {
+   "model": "iris_mlp16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.7158857434610368,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.012633821129215192,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.003226203292124445,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010037787815920449,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.2264852088284162,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_1",
+   "control": "0",
+   "ort_divergence": 0.09395936442890548,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0073727706662680545,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.022731416106912337,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0035837732906788514,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "iris_mlp32x16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001014113426208496,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.6003817905486466,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.062262493163564823,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.003843911180357073,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0014634430408477783,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.4295738409515671,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_1",
+   "control": "0",
+   "ort_divergence": 0.2679664774095142,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.01973604462628066,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0037854074597134316,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.062101017808237846,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0027189133709349536,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "wine_mlp32x16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001994088292121887,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.8441983599000924,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.3008082181736297,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0011204655498431467,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0011979937553405762,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 0.5409077709544791,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_1",
+   "control": "0",
+   "ort_divergence": 0.7461512142240943,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.4246950827965294,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0015708347941222505,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.48192210663000273,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0013801672797121238,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "breast_cancer_mlp32x16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001161021077654084,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 3.2599559599988006,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "digits_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.5407760393306221,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "digits_mlp16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0012597958190521338,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010034480948855383,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 2.117347842963509,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_1",
+   "control": "0",
+   "ort_divergence": 0.9363673919337593,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.39075592007594895,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0018307374193609531,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.4061966470586961,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0022409543790717083,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "digits_mlp32x16",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0012241145171656821,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_mlp",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 1.0633954007814408,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "mnist_mlp",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.3214413591144452,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_mlp",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0021433240166157724,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0011387009752333109,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.003757253805650246,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0014861531548511443,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_cnn",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@dense_2",
+   "control": "0",
+   "ort_divergence": 0.6080913380152968,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_cnn",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001001783792410101,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_mlp",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@dense_0",
+   "control": "0",
+   "ort_divergence": 2.92858354648878,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_mlp",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_0",
+   "control": "0",
+   "ort_divergence": 0.37610087668067904,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_mlp",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0016657027780646494,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.0023982188818899575,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.0016891322403969633,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_cnn",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@dense_2",
+   "control": "0",
+   "ort_divergence": 0.8751969642876026,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_0",
+   "control": "0",
+   "ort_divergence": 0.02544909413573095,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@relu_1",
+   "control": "0",
+   "ort_divergence": 0.020405982946018208,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@relu_1",
+   "control": "0",
+   "ort_divergence": 0.015809534182572336,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "conv_padding",
+   "fault": "edge_padding",
+   "control": "0",
+   "ort_divergence": 0.43266752295435423,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@dense_2",
+   "control": "0",
+   "ort_divergence": 1.4622712252913748,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "cifar_cnn",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001002871516882768,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@n14",
+   "control": "0",
+   "ort_divergence": 0.7940357587293183,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n4",
+   "control": "0",
+   "ort_divergence": 0.003309296851115326,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n9",
+   "control": "0",
+   "ort_divergence": 0.027138333210253437,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n9",
+   "control": "0",
+   "ort_divergence": 0.002251093197801013,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n15",
+   "control": "0",
+   "ort_divergence": 0.10102428019978053,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n15",
+   "control": "0",
+   "ort_divergence": 0.0014327719594601608,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@n14",
+   "control": "0",
+   "ort_divergence": 1.2761141508114417,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "mnist_lenet",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010040298841691021,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@n14",
+   "control": "0",
+   "ort_divergence": 1.1735448913703967,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n4",
+   "control": "0",
+   "ort_divergence": 0.0017375485534214816,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n9",
+   "control": "0",
+   "ort_divergence": 0.0011666996159119879,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n9",
+   "control": "0",
+   "ort_divergence": 0.0010899763139383847,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n15",
+   "control": "0",
+   "ort_divergence": 0.14696206802307224,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n15",
+   "control": "0",
+   "ort_divergence": 0.0016168799262071376,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "relu_pool_commute",
+   "fault": "relu_through_avgpool@n5",
+   "control": "0",
+   "ort_divergence": 0.029486732906990717,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "relu_pool_commute",
+   "fault": "relu_through_avgpool@n10",
+   "control": "0",
+   "ort_divergence": 0.03981332882405723,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@n14",
+   "control": "0",
+   "ort_divergence": 1.5111447747890092,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "mnist_lenet_avg",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010314912051029672,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "epsilon",
+   "control": "0",
+   "ort_divergence": 0.525648592315841,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "axis",
+   "control": "0",
+   "ort_divergence": 0.7168270668185822,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "fp16",
+   "control": "0",
+   "ort_divergence": 0.0020426948453645855,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n8",
+   "control": "0",
+   "ort_divergence": 0.001038502428061382,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n16",
+   "control": "0",
+   "ort_divergence": 0.0016450374581008253,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n24",
+   "control": "0",
+   "ort_divergence": 0.0019084417295455387,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n32",
+   "control": "0",
+   "ort_divergence": 0.0017113290988586963,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n32",
+   "control": "0",
+   "ort_divergence": 0.0015703537101353828,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n40",
+   "control": "0",
+   "ort_divergence": 0.253633088873367,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n40",
+   "control": "0",
+   "ort_divergence": 0.0017368573659778705,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "conv_padding",
+   "fault": "edge_padding",
+   "control": "0",
+   "ort_divergence": 0.17880838022302753,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_dscnn",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0011232912297846243,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "epsilon",
+   "control": "0",
+   "ort_divergence": 0.3343224554146166,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "axis",
+   "control": "0",
+   "ort_divergence": 0.5412210433631419,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "fp16",
+   "control": "0",
+   "ort_divergence": 0.0013669769213332397,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n8",
+   "control": "0",
+   "ort_divergence": 0.0013153687773083587,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n16",
+   "control": "0",
+   "ort_divergence": 0.0011168804352776362,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n25",
+   "control": "0",
+   "ort_divergence": 0.0011158740014193158,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n25",
+   "control": "0",
+   "ort_divergence": 0.0034326351601582828,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n33",
+   "control": "0",
+   "ort_divergence": 0.0017654861115850926,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n33",
+   "control": "0",
+   "ort_divergence": 0.0013080694520200974,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n49",
+   "control": "0",
+   "ort_divergence": 0.7329849547638382,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n49",
+   "control": "0",
+   "ort_divergence": 0.0010080187163426357,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "dead_code_elimination",
+   "fault": "live_branch_removed@n24",
+   "control": "0",
+   "ort_divergence": 0.16153656613746536,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "add_relu_fusion",
+   "fault": "relu_on_operand@n24",
+   "control": "0",
+   "ort_divergence": 0.0729601814302847,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "dead_code_elimination",
+   "fault": "live_branch_removed@n48",
+   "control": "0",
+   "ort_divergence": 0.9187577828459285,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "add_relu_fusion",
+   "fault": "relu_on_operand@n48",
+   "control": "0",
+   "ort_divergence": 0.6284900028435834,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "conv_padding",
+   "fault": "edge_padding",
+   "control": "0",
+   "ort_divergence": 0.46551710390627493,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "mnist_resnet",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010226888929193536,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@n14",
+   "control": "0",
+   "ort_divergence": 0.1677319613134953,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n4",
+   "control": "0",
+   "ort_divergence": 0.0023806768165673385,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n9",
+   "control": "0",
+   "ort_divergence": 0.01049380054980949,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n9",
+   "control": "0",
+   "ort_divergence": 0.0010623589849578735,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n15",
+   "control": "0",
+   "ort_divergence": 0.24341707421662678,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n15",
+   "control": "0",
+   "ort_divergence": 0.0011914259783084487,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@n14",
+   "control": "0",
+   "ort_divergence": 0.24703556746384608,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0010323853147400973,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "gemm_relu_fusion",
+   "fault": "activation_dropped@n14",
+   "control": "0",
+   "ort_divergence": 0.3630843346618517,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n4",
+   "control": "0",
+   "ort_divergence": 0.010458761404215908,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n9",
+   "control": "0",
+   "ort_divergence": 0.010683908924055074,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n9",
+   "control": "0",
+   "ort_divergence": 0.0010858042633127584,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n15",
+   "control": "0",
+   "ort_divergence": 0.3882171932147294,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n15",
+   "control": "0",
+   "ort_divergence": 0.0010385651804648507,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "relu_pool_commute",
+   "fault": "relu_through_avgpool@n5",
+   "control": "0",
+   "ort_divergence": 0.18989008582257907,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "relu_pool_commute",
+   "fault": "relu_through_avgpool@n10",
+   "control": "0",
+   "ort_divergence": 0.007259411086527253,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "layout_nhwc",
+   "fault": "flatten_order@n14",
+   "control": "0",
+   "ort_divergence": 0.35265630791947145,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_lenet_avg",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001041597217604141,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "epsilon",
+   "control": "0",
+   "ort_divergence": 0.6134057122773714,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "axis",
+   "control": "0",
+   "ort_divergence": 0.8103577986678409,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "conv_bn_fold",
+   "fault": "fp16",
+   "control": "0",
+   "ort_divergence": 0.0010280539421582433,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n8",
+   "control": "0",
+   "ort_divergence": 0.0018126082964540144,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n8",
+   "control": "0",
+   "ort_divergence": 0.007982731142056434,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n16",
+   "control": "0",
+   "ort_divergence": 0.0010833485231586282,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n16",
+   "control": "0",
+   "ort_divergence": 0.004783519955863769,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n24",
+   "control": "0",
+   "ort_divergence": 0.0016557646011763204,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n24",
+   "control": "0",
+   "ort_divergence": 0.0036923729606651123,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n32",
+   "control": "0",
+   "ort_divergence": 0.0046388694841104135,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n32",
+   "control": "0",
+   "ort_divergence": 0.0029065876796878294,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n40",
+   "control": "0",
+   "ort_divergence": 0.0027496247190107164,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n40",
+   "control": "0",
+   "ort_divergence": 0.001066430070400577,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "conv_padding",
+   "fault": "edge_padding",
+   "control": "0",
+   "ort_divergence": 0.3440158479036296,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_dscnn",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.001057323061911363,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "epsilon",
+   "control": "0",
+   "ort_divergence": 0.3566281950799765,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "axis",
+   "control": "0",
+   "ort_divergence": 0.2750563963965749,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "conv_bn_fold",
+   "fault": "fp16",
+   "control": "0",
+   "ort_divergence": 0.0014388393137510609,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n8",
+   "control": "0",
+   "ort_divergence": 0.004267327259767151,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n16",
+   "control": "0",
+   "ort_divergence": 0.0023230613820951393,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n25",
+   "control": "0",
+   "ort_divergence": 0.0020695134901712125,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n33",
+   "control": "0",
+   "ort_divergence": 0.0019617768844158562,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_as_relu6@n49",
+   "control": "0",
+   "ort_divergence": 0.0406354956608543,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "activation_lowering",
+   "fault": "relu_threshold@n49",
+   "control": "0",
+   "ort_divergence": 0.001148257457446303,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "dead_code_elimination",
+   "fault": "live_branch_removed@n24",
+   "control": "0",
+   "ort_divergence": 0.19706656388971697,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "add_relu_fusion",
+   "fault": "relu_on_operand@n24",
+   "control": "0",
+   "ort_divergence": 0.22187457167267205,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "dead_code_elimination",
+   "fault": "live_branch_removed@n48",
+   "control": "0",
+   "ort_divergence": 0.7016275736634552,
+   "confirmed": true,
+   "decision_changed": 0
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "add_relu_fusion",
+   "fault": "relu_on_operand@n48",
+   "control": "0",
+   "ort_divergence": 0.22272436223754435,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "conv_padding",
+   "fault": "edge_padding",
+   "control": "0",
+   "ort_divergence": 0.2908702470529321,
+   "confirmed": true,
+   "decision_changed": 1
+  },
+  {
+   "model": "fashion_resnet",
+   "pass": "constant_folding",
+   "fault": "fp16_constants",
+   "control": "0",
+   "ort_divergence": 0.0011128589463737537,
+   "confirmed": true,
+   "decision_changed": 0
+  }
+ ]
+}

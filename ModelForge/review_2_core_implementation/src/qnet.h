@@ -77,6 +77,7 @@ struct DenseLayer {
     ConvShape conv;              // conv and pooling geometry
     std::size_t weightsPerChannel = 0;
     std::vector<std::vector<Tap>> taps;  // per output neuron
+    std::vector<std::string> irNodes;    // IR nodes lowered into this layer (incl. folded ones)
 
     bool hasWeights() const { return kind != LayerKind::MaxPool; }
     std::size_t channels() const { return output.spatial ? output.c : out; }

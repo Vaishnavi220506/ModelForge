@@ -242,9 +242,13 @@ std::optional<std::vector<float>> executeIRTrace(
                             for (std::int64_t c = 0; c < C; ++c) {
                                 for (std::int64_t ky = 0; ky < KH; ++ky) {
                                     for (std::int64_t kx = 0; kx < KW; ++kx) {
-                                        const auto iy = oy * instruction.stride + ky - instruction.pad;
-                                        const auto ix = ox * instruction.stride + kx - instruction.pad;
-                                        if (iy < 0 || iy >= H || ix < 0 || ix >= W) continue;
+                                        auto iy = oy * instruction.stride + ky - instruction.pad;
+                                        auto ix = ox * instruction.stride + kx - instruction.pad;
+                                        if (iy < 0 || iy >= H || ix < 0 || ix >= W) {
+                                            if (instruction.padMode != 1) continue;
+                                            iy = std::min<std::int64_t>(std::max<std::int64_t>(iy, 0), H - 1);
+                                            ix = std::min<std::int64_t>(std::max<std::int64_t>(ix, 0), W - 1);
+                                        }
                                         const auto ci = (m / groupOut) * C + c;
                                         sum += (*weight)[static_cast<std::size_t>(((m * C + c) * KH + ky) * KW + kx)] *
                                                (*first)[static_cast<std::size_t>((ci * H + iy) * W + ix)];

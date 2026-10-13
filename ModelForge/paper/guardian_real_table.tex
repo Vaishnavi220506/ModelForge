@@ -1,0 +1,17 @@
+% Generated from research/results/rewrites/summary.json
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Method & 16 & 64 & 512 & Mean first \\
+\midrule
+Uniform random & 36.4 & 48.3 & 62.9 & 227 \\
+Validation data & 53.7 & 67.2 & 73.5 & 151 \\
+Data + noise & 53.3 & 66.5 & 74.4 & 151 \\
+TensorFuzz-style fuzzing & 51.2 & 59.8 & 66.5 & 190 \\
+DeepXplore-style ascent & 40.0 & 56.6 & 75.3 & 166 \\
+DiffChaser-style GA & 51.5 & 67.2 & 79.1 & 139 \\
+Boundary-value probes & 54.8 & 67.9 & 80.0 & 134 \\
+\quad + rewrite-aware & 55.1 & 67.6 & 79.8 & 136 \\
+\quad + near-miss & 53.3 & 69.2 & 84.9 & 118 \\
+\textbf{Guardian-APC+} & 53.7 & 69.4 & 85.2 & 117 \\
+\bottomrule
+\end{tabular}

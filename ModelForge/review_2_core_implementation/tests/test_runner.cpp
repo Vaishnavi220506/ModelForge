@@ -1,3 +1,4 @@
+#include "rewrites.h"
 #include "adaptive.h"
 #include "analysis.h"
 #include "certify.h"
@@ -724,6 +725,58 @@ void testForgeCertGraph(const std::filesystem::path& fixtureDirectory) {
     check(runs > 0 && violations == 0, "DAG analysis (max-pool, residual add) must bound every sampled execution");
 }
 
+// Rewrites for the validation study: correct ones are equivalent, faulty ones
+// are not, and the .mforge serialisation round-trips.
+void testRewriteCatalogue(const std::filesystem::path& fixtureDirectory) {
+    const auto graph = compileFile(fixtureDirectory / "graph_zoo.mforge");
+    const auto cases = modelforge::makeRewriteCases(graph);
+    std::mt19937 rng(3);
+    std::vector<std::vector<float>> inputs(24, std::vector<float>(64));
+    for (auto& x : inputs) {
+        for (float& v : x) v = std::uniform_real_distribution<float>(0.0f, 1.0f)(rng);
+    }
+    modelforge::DiagnosticEngine diagnostics;
+    const auto maxDiff = [&](const modelforge::IRGraph& a, const modelforge::IRGraph& b) {
+        double worst = 0.0;
+        for (const auto& x : inputs) {
+            const auto ya = modelforge::executeIR(a, x, diagnostics);
+            const auto yb = modelforge::executeIR(b, x, diagnostics);
+            if (!ya || !yb || ya->size() != yb->size()) return 1e9;
+            for (std::size_t k = 0; k < ya->size(); ++k) worst = std::max(worst, std::fabs(double((*ya)[k]) - (*yb)[k]));
+        }
+        return worst;
+    };
+    bool sawControl = false, sawFault = false, bnFold = false;
+    for (const auto& c : cases) {
+        const double d = maxDiff(graph, c.candidate);
+        if (c.control) {
+            sawControl = true;
+            check(d < 1e-5, "correct rewrite " + c.pass + " must preserve outputs");
+        }
+        if (c.pass == "conv_bn_fold" && (c.fault == "epsilon" || c.fault == "axis")) {
+            sawFault = true;
+            check(d > 1e-4, "faulty BN folding (" + c.fault + ") must change outputs");
+        }
+        bnFold = bnFold || (c.pass == "conv_bn_fold" && c.control);
+    }
+    check(sawControl && sawFault && bnFold, "graph zoo should offer BN folding and its faulty variants");
+    // Serialisation round trip, including an edge-padded candidate.
+    for (const auto& c : cases) {
+        modelforge::IRGraph again;
+        modelforge::DiagnosticEngine fresh;
+        const bool ok = modelforge::compileManifestText(modelforge::irToManifest(c.candidate), again, fresh);
+        check(ok && maxDiff(c.candidate, again) < 1e-6 ||
+                  c.candidate.instructions.end() != std::find_if(c.candidate.instructions.begin(),
+                                                                 c.candidate.instructions.end(),
+                                                                 [](const modelforge::IRInstruction& in) {
+                                                                     return in.padMode != 0 ||
+                                                                            in.operation == modelforge::IROp::TestReluClamp ||
+                                                                            in.operation == modelforge::IROp::TestReluDeadZone;
+                                                                 }),
+              "irToManifest should round-trip " + c.pass + "/" + c.fault);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -741,6 +794,7 @@ int main(int argc, char* argv[]) {
     testForgeCert(fixtureDirectory);
     testForgeCertConvolution(fixtureDirectory);
     testForgeCertGraph(fixtureDirectory);
+    testRewriteCatalogue(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

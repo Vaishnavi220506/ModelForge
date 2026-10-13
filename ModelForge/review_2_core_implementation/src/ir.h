@@ -51,6 +51,9 @@ struct IRInstruction {
     int group = 1;   // Conv
     int kernel = 0;  // pooling window
     float epsilon = 1e-5f;  // BatchNormalization
+    // Conv padding mode; 1 (edge replication) only occurs in rewrite-study
+    // candidates that reproduce padding bugs, never in a lowered model.
+    int padMode = 0;
 };
 
 struct IRGraph {

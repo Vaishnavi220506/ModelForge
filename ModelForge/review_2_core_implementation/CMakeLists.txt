@@ -31,6 +31,7 @@ add_library(modelforge_core
     src/model.cpp
     src/optimizer.cpp
     src/qnet.cpp
+    src/rewrites.cpp
     src/research.cpp
     src/shrink.cpp
     src/validator.cpp
@@ -101,13 +102,17 @@ target_compile_definitions(modelforge_certbench PRIVATE
     MODELFORGE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/models"
     MODELFORGE_CERTCHECK="$<TARGET_FILE:modelforge_certcheck>")
 add_dependencies(modelforge_certbench modelforge_certcheck)
+add_executable(modelforge_rewritebench tools/rewritebench.cpp)
+target_link_libraries(modelforge_rewritebench PRIVATE modelforge_core)
+target_compile_definitions(modelforge_rewritebench PRIVATE
+    MODELFORGE_MODELS="${CMAKE_CURRENT_SOURCE_DIR}/models")
 
 # Keep multi-configuration generators (such as Visual Studio) predictable
 # when this project is built from the workspace wrapper or directly.
 set(MODELFORGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set_target_properties(modelforge modelforge_tests modelforge_guardian_eval
                       modelforge_bench modelforge_studio modelforge_certcheck
-                      modelforge_certbench PROPERTIES
+                      modelforge_certbench modelforge_rewritebench PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${MODELFORGE_OUTPUT_DIR}"
 )
 set_target_properties(modelforge_core PROPERTIES
@@ -167,6 +172,10 @@ set_tests_properties(forgecert_independent_check PROPERTIES FIXTURES_REQUIRED fo
 add_test(
     NAME forgecert_bench_quick
     COMMAND modelforge_certbench --quick --out ${CMAKE_BINARY_DIR}/certbench_quick
+)
+add_test(
+    NAME rewritebench_quick
+    COMMAND modelforge_rewritebench --quick --out ${CMAKE_BINARY_DIR}/rewritebench_quick
 )
 add_test(
     NAME modelforge_guardian_eval

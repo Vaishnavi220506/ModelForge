@@ -1,0 +1,202 @@
+model,pass,fault,control,changed_nodes,target_layers,witness
+iris_mlp16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,iris_mlp16_0
+iris_mlp16,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+iris_mlp16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,iris_mlp16_2
+iris_mlp16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,iris_mlp16_3
+iris_mlp16,constant_folding,fp16_constants,0,dense_0 classifier,0,iris_mlp16_4
+iris_mlp32x16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,iris_mlp32x16_0
+iris_mlp32x16,gemm_relu_fusion,activation_dropped@dense_1,0,dense_1 relu_1,1,iris_mlp32x16_1
+iris_mlp32x16,gemm_relu_fusion,none,1,dense_0 relu_0 dense_1 relu_1,0 1,
+iris_mlp32x16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,
+iris_mlp32x16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,iris_mlp32x16_4
+iris_mlp32x16,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,iris_mlp32x16_5
+iris_mlp32x16,activation_lowering,relu_threshold@relu_1,0,relu_1,1,iris_mlp32x16_6
+iris_mlp32x16,constant_folding,fp16_constants,0,dense_0 dense_1 classifier,0 1,iris_mlp32x16_7
+wine_mlp16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,wine_mlp16_0
+wine_mlp16,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+wine_mlp16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,wine_mlp16_2
+wine_mlp16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,wine_mlp16_3
+wine_mlp16,constant_folding,fp16_constants,0,dense_0 classifier,0,wine_mlp16_4
+wine_mlp32x16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,wine_mlp32x16_0
+wine_mlp32x16,gemm_relu_fusion,activation_dropped@dense_1,0,dense_1 relu_1,1,wine_mlp32x16_1
+wine_mlp32x16,gemm_relu_fusion,none,1,dense_0 relu_0 dense_1 relu_1,0 1,
+wine_mlp32x16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,wine_mlp32x16_3
+wine_mlp32x16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,wine_mlp32x16_4
+wine_mlp32x16,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,wine_mlp32x16_5
+wine_mlp32x16,activation_lowering,relu_threshold@relu_1,0,relu_1,1,wine_mlp32x16_6
+wine_mlp32x16,constant_folding,fp16_constants,0,dense_0 dense_1 classifier,0 1,wine_mlp32x16_7
+breast_cancer_mlp16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,breast_cancer_mlp16_0
+breast_cancer_mlp16,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+breast_cancer_mlp16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,breast_cancer_mlp16_2
+breast_cancer_mlp16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,breast_cancer_mlp16_3
+breast_cancer_mlp16,constant_folding,fp16_constants,0,dense_0 classifier,0,breast_cancer_mlp16_4
+breast_cancer_mlp32x16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,breast_cancer_mlp32x16_0
+breast_cancer_mlp32x16,gemm_relu_fusion,activation_dropped@dense_1,0,dense_1 relu_1,1,breast_cancer_mlp32x16_1
+breast_cancer_mlp32x16,gemm_relu_fusion,none,1,dense_0 relu_0 dense_1 relu_1,0 1,
+breast_cancer_mlp32x16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,breast_cancer_mlp32x16_3
+breast_cancer_mlp32x16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,breast_cancer_mlp32x16_4
+breast_cancer_mlp32x16,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,breast_cancer_mlp32x16_5
+breast_cancer_mlp32x16,activation_lowering,relu_threshold@relu_1,0,relu_1,1,breast_cancer_mlp32x16_6
+breast_cancer_mlp32x16,constant_folding,fp16_constants,0,dense_0 dense_1 classifier,0 1,breast_cancer_mlp32x16_7
+digits_mlp16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,digits_mlp16_0
+digits_mlp16,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+digits_mlp16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,digits_mlp16_2
+digits_mlp16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,digits_mlp16_3
+digits_mlp16,constant_folding,fp16_constants,0,dense_0 classifier,0,digits_mlp16_4
+digits_mlp32x16,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,digits_mlp32x16_0
+digits_mlp32x16,gemm_relu_fusion,activation_dropped@dense_1,0,dense_1 relu_1,1,digits_mlp32x16_1
+digits_mlp32x16,gemm_relu_fusion,none,1,dense_0 relu_0 dense_1 relu_1,0 1,
+digits_mlp32x16,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,digits_mlp32x16_3
+digits_mlp32x16,activation_lowering,relu_threshold@relu_0,0,relu_0,0,digits_mlp32x16_4
+digits_mlp32x16,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,digits_mlp32x16_5
+digits_mlp32x16,activation_lowering,relu_threshold@relu_1,0,relu_1,1,digits_mlp32x16_6
+digits_mlp32x16,constant_folding,fp16_constants,0,dense_0 dense_1 classifier,0 1,digits_mlp32x16_7
+mnist_mlp,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,mnist_mlp_0
+mnist_mlp,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+mnist_mlp,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,mnist_mlp_2
+mnist_mlp,activation_lowering,relu_threshold@relu_0,0,relu_0,0,mnist_mlp_3
+mnist_mlp,constant_folding,fp16_constants,0,dense_0 dense_1,0,
+mnist_cnn,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,
+mnist_cnn,activation_lowering,relu_threshold@relu_0,0,relu_0,0,mnist_cnn_1
+mnist_cnn,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,mnist_cnn_2
+mnist_cnn,activation_lowering,relu_threshold@relu_1,0,relu_1,1,mnist_cnn_3
+mnist_cnn,layout_nhwc,flatten_order@dense_2,0,flatten dense_2,1,mnist_cnn_4
+mnist_cnn,constant_folding,fp16_constants,0,conv_0 conv_1 dense_2,0 1,mnist_cnn_5
+fashion_mlp,gemm_relu_fusion,activation_dropped@dense_0,0,dense_0 relu_0,0,fashion_mlp_0
+fashion_mlp,gemm_relu_fusion,none,1,dense_0 relu_0,0,
+fashion_mlp,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,fashion_mlp_2
+fashion_mlp,activation_lowering,relu_threshold@relu_0,0,relu_0,0,fashion_mlp_3
+fashion_mlp,constant_folding,fp16_constants,0,dense_0 dense_1,0,
+fashion_cnn,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,
+fashion_cnn,activation_lowering,relu_threshold@relu_0,0,relu_0,0,fashion_cnn_1
+fashion_cnn,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,
+fashion_cnn,activation_lowering,relu_threshold@relu_1,0,relu_1,1,fashion_cnn_3
+fashion_cnn,layout_nhwc,flatten_order@dense_2,0,flatten dense_2,1,fashion_cnn_4
+fashion_cnn,constant_folding,fp16_constants,0,conv_0 conv_1 dense_2,0 1,
+cifar_cnn,activation_lowering,relu_as_relu6@relu_0,0,relu_0,0,
+cifar_cnn,activation_lowering,relu_threshold@relu_0,0,relu_0,0,cifar_cnn_1
+cifar_cnn,activation_lowering,relu_as_relu6@relu_1,0,relu_1,1,cifar_cnn_2
+cifar_cnn,activation_lowering,relu_threshold@relu_1,0,relu_1,1,cifar_cnn_3
+cifar_cnn,conv_padding,edge_padding,0,conv_0 conv_1,0 1,cifar_cnn_4
+cifar_cnn,layout_nhwc,flatten_order@dense_2,0,flatten dense_2,1,cifar_cnn_5
+cifar_cnn,constant_folding,fp16_constants,0,conv_0 conv_1 dense_2,0 1,cifar_cnn_6
+mnist_lenet,gemm_relu_fusion,activation_dropped@n14,0,n14 n15,4,mnist_lenet_0
+mnist_lenet,gemm_relu_fusion,none,1,n14 n15,4,
+mnist_lenet,activation_lowering,relu_as_relu6@n4,0,n4,0,
+mnist_lenet,activation_lowering,relu_threshold@n4,0,n4,0,mnist_lenet_3
+mnist_lenet,activation_lowering,relu_as_relu6@n9,0,n9,2,mnist_lenet_4
+mnist_lenet,activation_lowering,relu_threshold@n9,0,n9,2,mnist_lenet_5
+mnist_lenet,activation_lowering,relu_as_relu6@n15,0,n15,4,mnist_lenet_6
+mnist_lenet,activation_lowering,relu_threshold@n15,0,n15,4,mnist_lenet_7
+mnist_lenet,relu_pool_commute,none@n5,1,n4 n5,0,
+mnist_lenet,relu_pool_commute,none@n10,1,n9 n10,2,
+mnist_lenet,layout_nhwc,flatten_order@n14,0,n11 n14,4,mnist_lenet_10
+mnist_lenet,constant_folding,fp16_constants,0,n3 n8 n14 n18,0 2 4,mnist_lenet_11
+mnist_lenet_avg,gemm_relu_fusion,activation_dropped@n14,0,n14 n15,4,mnist_lenet_avg_0
+mnist_lenet_avg,gemm_relu_fusion,none,1,n14 n15,4,
+mnist_lenet_avg,activation_lowering,relu_as_relu6@n4,0,n4,0,
+mnist_lenet_avg,activation_lowering,relu_threshold@n4,0,n4,0,mnist_lenet_avg_3
+mnist_lenet_avg,activation_lowering,relu_as_relu6@n9,0,n9,2,mnist_lenet_avg_4
+mnist_lenet_avg,activation_lowering,relu_threshold@n9,0,n9,2,mnist_lenet_avg_5
+mnist_lenet_avg,activation_lowering,relu_as_relu6@n15,0,n15,4,mnist_lenet_avg_6
+mnist_lenet_avg,activation_lowering,relu_threshold@n15,0,n15,4,mnist_lenet_avg_7
+mnist_lenet_avg,relu_pool_commute,relu_through_avgpool@n5,0,n4 n5,0,mnist_lenet_avg_8
+mnist_lenet_avg,relu_pool_commute,relu_through_avgpool@n10,0,n9 n10,2,mnist_lenet_avg_9
+mnist_lenet_avg,layout_nhwc,flatten_order@n14,0,n11 n14,4,mnist_lenet_avg_10
+mnist_lenet_avg,constant_folding,fp16_constants,0,n3 n8 n14 n18,0 2 4,mnist_lenet_avg_11
+mnist_dscnn,conv_bn_fold,none,1,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,
+mnist_dscnn,conv_bn_fold,epsilon,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,mnist_dscnn_1
+mnist_dscnn,conv_bn_fold,axis,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,mnist_dscnn_2
+mnist_dscnn,conv_bn_fold,fp16,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,mnist_dscnn_3
+mnist_dscnn,activation_lowering,relu_as_relu6@n8,0,n8,0,
+mnist_dscnn,activation_lowering,relu_threshold@n8,0,n8,0,mnist_dscnn_5
+mnist_dscnn,activation_lowering,relu_as_relu6@n16,0,n16,1,
+mnist_dscnn,activation_lowering,relu_threshold@n16,0,n16,1,mnist_dscnn_7
+mnist_dscnn,activation_lowering,relu_as_relu6@n24,0,n24,2,
+mnist_dscnn,activation_lowering,relu_threshold@n24,0,n24,2,mnist_dscnn_9
+mnist_dscnn,activation_lowering,relu_as_relu6@n32,0,n32,3,mnist_dscnn_10
+mnist_dscnn,activation_lowering,relu_threshold@n32,0,n32,3,mnist_dscnn_11
+mnist_dscnn,activation_lowering,relu_as_relu6@n40,0,n40,4,mnist_dscnn_12
+mnist_dscnn,activation_lowering,relu_threshold@n40,0,n40,4,mnist_dscnn_13
+mnist_dscnn,conv_padding,edge_padding,0,n2 n10 n26,0 1 3,mnist_dscnn_14
+mnist_dscnn,constant_folding,fp16_constants,0,n2 n10 n18 n26 n34 n45,0 1 2 3 4,mnist_dscnn_15
+mnist_resnet,conv_bn_fold,none,1,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,
+mnist_resnet,conv_bn_fold,epsilon,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,mnist_resnet_1
+mnist_resnet,conv_bn_fold,axis,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,mnist_resnet_2
+mnist_resnet,conv_bn_fold,fp16,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,mnist_resnet_3
+mnist_resnet,activation_lowering,relu_as_relu6@n8,0,n8,0,
+mnist_resnet,activation_lowering,relu_threshold@n8,0,n8,0,mnist_resnet_5
+mnist_resnet,activation_lowering,relu_as_relu6@n16,0,n16,1,
+mnist_resnet,activation_lowering,relu_threshold@n16,0,n16,1,mnist_resnet_7
+mnist_resnet,activation_lowering,relu_as_relu6@n25,0,n25,3,mnist_resnet_8
+mnist_resnet,activation_lowering,relu_threshold@n25,0,n25,3,mnist_resnet_9
+mnist_resnet,activation_lowering,relu_as_relu6@n33,0,n33,4,mnist_resnet_10
+mnist_resnet,activation_lowering,relu_threshold@n33,0,n33,4,mnist_resnet_11
+mnist_resnet,activation_lowering,relu_as_relu6@n49,0,n49,7,mnist_resnet_12
+mnist_resnet,activation_lowering,relu_threshold@n49,0,n49,7,mnist_resnet_13
+mnist_resnet,dead_code_elimination,live_branch_removed@n24,0,n24,3,mnist_resnet_14
+mnist_resnet,add_relu_fusion,relu_on_operand@n24,0,n24 n25,3,mnist_resnet_15
+mnist_resnet,dead_code_elimination,live_branch_removed@n48,0,n48,7,mnist_resnet_16
+mnist_resnet,add_relu_fusion,relu_on_operand@n48,0,n48 n49,7,mnist_resnet_17
+mnist_resnet,conv_padding,edge_padding,0,n2 n10 n18 n27 n35,0 1 4,mnist_resnet_18
+mnist_resnet,constant_folding,fp16_constants,0,n2 n10 n18 n27 n35 n42 n54,0 1 4,mnist_resnet_19
+fashion_lenet,gemm_relu_fusion,activation_dropped@n14,0,n14 n15,4,fashion_lenet_0
+fashion_lenet,gemm_relu_fusion,none,1,n14 n15,4,
+fashion_lenet,activation_lowering,relu_as_relu6@n4,0,n4,0,
+fashion_lenet,activation_lowering,relu_threshold@n4,0,n4,0,fashion_lenet_3
+fashion_lenet,activation_lowering,relu_as_relu6@n9,0,n9,2,fashion_lenet_4
+fashion_lenet,activation_lowering,relu_threshold@n9,0,n9,2,fashion_lenet_5
+fashion_lenet,activation_lowering,relu_as_relu6@n15,0,n15,4,fashion_lenet_6
+fashion_lenet,activation_lowering,relu_threshold@n15,0,n15,4,fashion_lenet_7
+fashion_lenet,relu_pool_commute,none@n5,1,n4 n5,0,
+fashion_lenet,relu_pool_commute,none@n10,1,n9 n10,2,
+fashion_lenet,layout_nhwc,flatten_order@n14,0,n11 n14,4,fashion_lenet_10
+fashion_lenet,constant_folding,fp16_constants,0,n3 n8 n14 n18,0 2 4,fashion_lenet_11
+fashion_lenet_avg,gemm_relu_fusion,activation_dropped@n14,0,n14 n15,4,fashion_lenet_avg_0
+fashion_lenet_avg,gemm_relu_fusion,none,1,n14 n15,4,
+fashion_lenet_avg,activation_lowering,relu_as_relu6@n4,0,n4,0,
+fashion_lenet_avg,activation_lowering,relu_threshold@n4,0,n4,0,fashion_lenet_avg_3
+fashion_lenet_avg,activation_lowering,relu_as_relu6@n9,0,n9,2,fashion_lenet_avg_4
+fashion_lenet_avg,activation_lowering,relu_threshold@n9,0,n9,2,fashion_lenet_avg_5
+fashion_lenet_avg,activation_lowering,relu_as_relu6@n15,0,n15,4,fashion_lenet_avg_6
+fashion_lenet_avg,activation_lowering,relu_threshold@n15,0,n15,4,fashion_lenet_avg_7
+fashion_lenet_avg,relu_pool_commute,relu_through_avgpool@n5,0,n4 n5,0,fashion_lenet_avg_8
+fashion_lenet_avg,relu_pool_commute,relu_through_avgpool@n10,0,n9 n10,2,fashion_lenet_avg_9
+fashion_lenet_avg,layout_nhwc,flatten_order@n14,0,n11 n14,4,fashion_lenet_avg_10
+fashion_lenet_avg,constant_folding,fp16_constants,0,n3 n8 n14 n18,0 2 4,fashion_lenet_avg_11
+fashion_dscnn,conv_bn_fold,none,1,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,
+fashion_dscnn,conv_bn_fold,epsilon,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,fashion_dscnn_1
+fashion_dscnn,conv_bn_fold,axis,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,fashion_dscnn_2
+fashion_dscnn,conv_bn_fold,fp16,0,n2 n7 n10 n15 n18 n23 n26 n31 n34 n39,0 1 2 3 4,fashion_dscnn_3
+fashion_dscnn,activation_lowering,relu_as_relu6@n8,0,n8,0,fashion_dscnn_4
+fashion_dscnn,activation_lowering,relu_threshold@n8,0,n8,0,fashion_dscnn_5
+fashion_dscnn,activation_lowering,relu_as_relu6@n16,0,n16,1,fashion_dscnn_6
+fashion_dscnn,activation_lowering,relu_threshold@n16,0,n16,1,fashion_dscnn_7
+fashion_dscnn,activation_lowering,relu_as_relu6@n24,0,n24,2,fashion_dscnn_8
+fashion_dscnn,activation_lowering,relu_threshold@n24,0,n24,2,fashion_dscnn_9
+fashion_dscnn,activation_lowering,relu_as_relu6@n32,0,n32,3,fashion_dscnn_10
+fashion_dscnn,activation_lowering,relu_threshold@n32,0,n32,3,fashion_dscnn_11
+fashion_dscnn,activation_lowering,relu_as_relu6@n40,0,n40,4,fashion_dscnn_12
+fashion_dscnn,activation_lowering,relu_threshold@n40,0,n40,4,fashion_dscnn_13
+fashion_dscnn,conv_padding,edge_padding,0,n2 n10 n26,0 1 3,fashion_dscnn_14
+fashion_dscnn,constant_folding,fp16_constants,0,n2 n10 n18 n26 n34 n45,0 1 2 3 4,fashion_dscnn_15
+fashion_resnet,conv_bn_fold,none,1,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,
+fashion_resnet,conv_bn_fold,epsilon,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,fashion_resnet_1
+fashion_resnet,conv_bn_fold,axis,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,fashion_resnet_2
+fashion_resnet,conv_bn_fold,fp16,0,n2 n7 n10 n15 n18 n23 n27 n32 n35 n40 n42 n47,0 1 4,fashion_resnet_3
+fashion_resnet,activation_lowering,relu_as_relu6@n8,0,n8,0,
+fashion_resnet,activation_lowering,relu_threshold@n8,0,n8,0,fashion_resnet_5
+fashion_resnet,activation_lowering,relu_as_relu6@n16,0,n16,1,
+fashion_resnet,activation_lowering,relu_threshold@n16,0,n16,1,fashion_resnet_7
+fashion_resnet,activation_lowering,relu_as_relu6@n25,0,n25,3,
+fashion_resnet,activation_lowering,relu_threshold@n25,0,n25,3,fashion_resnet_9
+fashion_resnet,activation_lowering,relu_as_relu6@n33,0,n33,4,
+fashion_resnet,activation_lowering,relu_threshold@n33,0,n33,4,fashion_resnet_11
+fashion_resnet,activation_lowering,relu_as_relu6@n49,0,n49,7,fashion_resnet_12
+fashion_resnet,activation_lowering,relu_threshold@n49,0,n49,7,fashion_resnet_13
+fashion_resnet,dead_code_elimination,live_branch_removed@n24,0,n24,3,fashion_resnet_14
+fashion_resnet,add_relu_fusion,relu_on_operand@n24,0,n24 n25,3,fashion_resnet_15
+fashion_resnet,dead_code_elimination,live_branch_removed@n48,0,n48,7,fashion_resnet_16
+fashion_resnet,add_relu_fusion,relu_on_operand@n48,0,n48 n49,7,fashion_resnet_17
+fashion_resnet,conv_padding,edge_padding,0,n2 n10 n18 n27 n35,0 1 4,fashion_resnet_18
+fashion_resnet,constant_folding,fp16_constants,0,n2 n10 n18 n27 n35 n42 n54,0 1 4,fashion_resnet_19
