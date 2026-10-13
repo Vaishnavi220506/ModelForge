@@ -100,6 +100,29 @@ behaves like the original:
 [Guardian-APC](ModelForge/docs/guardian_apc.md) and the
 [paper draft](ModelForge/paper/guardian_apc.tex).
 
+## Terminal demo: ForgeCert + Guardian-APC+ (one command)
+
+Runs the whole story live in about 40 seconds:
+
+1. int4 code changes a digit classifier's decision (a real counterexample, replayed in compiled C);
+2. ForgeCert's counterexample-guided tuner certifies the model (`--trace`);
+3. the independent checker re-checks the certificate and the compiled binary bit for bit;
+4. a LeNet-5 CNN with max-pooling is certified, where uniform int8 is not;
+5. the certified code runs on a simulated 8-bit AVR (simavr), bit-exact and 2.2× faster than float32;
+6. Guardian-APC+ catches a hand-optimisation bug and a wrong ReLU rewrite;
+7. a live rewrite-study run against fuzzing baselines, plus the statistics of the full study;
+8. the headline results.
+
+```bash
+./ModelForge/demo/demo.sh            # Linux, macOS or WSL (add --pause to step through, --fast to skip 4-5)
+```
+
+```powershell
+.\ModelForge\demo\demo.ps1           # Windows (-Pause, -Fast); step 5 needs avr-gcc + simavr, so use WSL for it
+```
+
+It builds ModelForge if needed and writes everything to `build/demo/`.
+
 ## Demo for faculty (one command)
 
 `samples/` has a ready-made model and a script that compiles it without and
