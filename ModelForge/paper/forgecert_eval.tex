@@ -1,0 +1,51 @@
+% Evaluation of forgecert.tex. Numbers come from forgecert_tables.tex, which
+% research/make_tables.py generates from the benchmark results.
+\textbf{Models.} We use \FCModels{} trained classifiers in three groups (Table~\ref{tab:main}).
+\emph{Tabular}: MLPs with one hidden layer of 16 or two of 32 and 16 neurons on Iris, Wine, Breast Cancer and Digits (8 models).
+\emph{Image}: an MLP (784--32--10) and a two-layer CNN on MNIST and Fashion-MNIST, and a CNN with 25.6k parameters on CIFAR-10 (5 models).
+\emph{Architecture zoo}, trained for this paper with PyTorch and exported with our converter: LeNet-5 with max-pooling or with average pooling, a MobileNet-style depthwise-separable CNN with batch normalisation and global average pooling, and a ResNet-style network with two residual blocks (one with a $1\times1$ projection shortcut), each on MNIST and Fashion-MNIST (8 models, Table~\ref{tab:zoo}).
+All are sized for 8-bit microcontrollers (at most 26k parameters).
+
+\textbf{Specification.} Regions are $L_\infty$ balls around up to 100 test inputs (50 for CIFAR-10 and the zoo), clipped to the domain: the bounding box of the training data widened by 10\% for tabular models, and $[0,1]$ per pixel for images. Radii are $0.05, 0.1, 0.2$ on standardised tabular features, $0.01$ and $0.02$ on MNIST and Fashion-MNIST, and $1/255$ (one grey level) on CIFAR-10 and the zoo. A region counts only if the float model is \emph{provably} constant on it (Table~\ref{tab:main}: ``robust regions''); the rest are excluded for every method.
+
+\textbf{Baselines.} \emph{Uniform int8} and \emph{int16}: every layer at that width, with proved scales. \emph{Calibrated int8}: scales from calibration data with saturation, as in TFLite-style flows~\cite{jacob,tflm}. \emph{Uniform int4}: 4-bit weights, 8-bit activations. \emph{Accuracy-guided} (common practice): start at 16 bits and greedily lower the width that saves most bytes while no test prediction changes. ForgeCert's checker re-checks every program, so a baseline's ``proved'' count is what our analysis can prove about its code; ``cex'' counts regions where the falsifier found an input on which that code disagrees with the float model. All runs use one 8-core machine.
+
+\begin{table}[t]
+\centering\scriptsize
+\FCTableMain
+\caption{Certification and size. \emph{Certified}: all robust regions of a case proved. \emph{Cex}: regions with a real counterexample. Flash relative to the float32 model; cycles (estimated, AVR) relative to uniform int8.}
+\label{tab:main}
+\end{table}
+
+\textbf{RQ1: Does common integer code preserve decisions?} Not reliably. Uniform int8 code certifies \FCTabularUniformIntEightCertified{} of \FCTabularCases{} tabular cases and none of the image cases, and int4 code changes decisions on \FCTabularUniformIntFourCex{} tabular regions. Accuracy-guided lowering keeps every \emph{test} prediction, yet the falsifier finds inputs within $\varepsilon$ of a test point on which its code decides differently (\FCTabularAccuracyGuidedCex{} regions): test accuracy does not detect them. ForgeCert certifies every region that the most precise configuration can be proved on, with no counterexample by construction.
+
+\textbf{RQ2: What does a certificate cost?} On tabular models ForgeCert code takes \FCTabularForgecertFlash\% of the float32 size, against \FCTabularUniformIntSixteenFlash\% for uniform int16, which certifies the same regions, and \FCTabularUniformIntEightFlash\% for uniform int8, which does not. On the byte lattice ForgeCert reaches the exhaustive optimum in \FCOptimumExact{} of \FCOptimumCases{} models (mean gap \FCOptimumGap\%). The latency objective trades a little flash for fewer cycles: certified code that is, on average, cheaper to run than the byte-optimal certified code (Table~\ref{tab:main}, last column).
+
+\begin{table}[t]
+\centering\scriptsize
+\FCTableAblation
+\caption{Ablations on the tabular and image suites (variants not run on CIFAR-10 are omitted from the counts).}
+\label{tab:ablation}
+\end{table}
+
+\textbf{RQ3: Which ingredients matter?} (Table~\ref{tab:ablation}.) The differential affine domain is essential: with intervals, far fewer regions are proved, because the correlation between the float model and the integer error is lost at every layer. Input splitting rescues regions on low-dimensional inputs. Per-channel scales and modular accumulators mainly reduce cost. Blame-guided refinement reaches the same configurations as raising every source at once, but with fewer lowerings; raising a random source is slower and often ends at a costlier configuration.
+
+\begin{table}[t]
+\centering\scriptsize
+\FCTableZoo
+\caption{Architecture zoo at $\varepsilon=1/255$ (50 regions each). \emph{Acc.}: test accuracy of the float model (\%). Flash of the ForgeCert code relative to float32.}
+\label{tab:zoo}
+\end{table}
+
+\textbf{RQ4: Does it generalise beyond plain CNNs?} The zoo (Table~\ref{tab:zoo}) exercises max- and average pooling, depthwise convolutions, batch normalisation (folded, or lowered to a $1\times1$ depthwise convolution after a max-pool), global average pooling and residual additions. Uniform int8 code for these networks proves few regions and has real counterexamples on most of them, while ForgeCert certifies the robust regions that are provable at all. The same networks also enter through standard ONNX: a ResNet-style model exported with \texttt{torch.onnx.export} and converted by our 170-line converter certifies and passes the checker unchanged.
+
+\begin{table}[t]
+\centering\scriptsize
+\FCTableMCU
+\caption{Measured on a cycle-accurate 8-bit AVR (simavr, 16 MHz): ATmega2560 (8 KB RAM), or ATmega1284P (16 KB RAM) for models marked $\dagger$. Flash and RAM of the model; kcycles per inference (mean of 5 inputs). Bit-exact: the device's predictions equal those of the same C file compiled for the host.}
+\label{tab:mcu}
+\end{table}
+
+\textbf{RQ5: Does it run on a microcontroller?} (Table~\ref{tab:mcu}.) All \FCMCUConfigs{} programs compile with avr-gcc and run on the simulated device; \FCMCUExact{} of them return exactly the host build's predictions. The device code links no floating-point routine: inputs arrive as codes from the generated quantiser. The float32 baseline is up to several times slower through soft-float, and for the larger networks it does not fit at all. Latency-tuned certified code is close to uncertified int8 code in speed, while int8 code leaves many regions unproved or wrong.
+
+\textbf{RQ6: Are the proofs sound, and is checking cheap?} We sampled \FCAuditSamples{} executions inside proved regions (box vertices and uniform points). There were \FCAuditViolations{} wrong decisions, overflows or bound violations. The independent checker accepted all \FCCheckerValid{} of \FCCheckerTotal{} certificates, in at most \FCCheckerMaxSeconds{} s each, against minutes of compile-time search: checking is a linear replay. With \texttt{--expect}, it also matched the output of the compiled C binaries bit for bit on every test row.

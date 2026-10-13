@@ -14,14 +14,17 @@ Every linear layer is then a list of \emph{taps}: output neuron $o$ computes $b_
 \subsection{Integer semantics}
 Tensor $\ell$ holds integers $q$ that represent $t\cdot q$ for a per-\emph{group} scale $t$. The groups are per channel for feature maps read by a convolution-like layer, per feature for tabular inputs, per output channel for every hidden linear layer (so weight sharing survives), and one shared group for the logits, so that the argmax can compare integers. Weights are quantised symmetrically per output channel \emph{after} folding the input scales in ($W_w\cdot t_{i}$), which makes per-channel input scales free at run time. Input $x_i$ becomes $q_i=\mathrm{clamp}(\mathrm{round}(x_i\cdot s_i^{-1}))$, computed in float32 with round-half-away-from-zero; unsigned codes are used when the domain is non-negative. A layer then computes, for neuron $o$ in channel $c$:
 \begin{align}
-a_o &= q^b_c+\textstyle\sum_{(i,w)\in T_o} q^W_w\,q_i &&\text{(accumulate)}\label{eq:acc}\\
-y_o &= \mathrm{clamp}_{[q^-,q^+]}\bigl(\mathrm{rshift}(\mathrm{ReLU}(a_o)\cdot m_c,\ k_c)\bigr) &&\text{(requantise)}\label{eq:req}
+a_o &= q^b_c+\textstyle\sum_{(i,w)\in T_o} q^W_w\,q_i\label{eq:acc}\\
+y_o &= \mathrm{clamp}_{[q^-,q^+]}\bigl(\mathrm{rshift}(\mathrm{ReLU}(a_o)\cdot m_c,\ k_c)\bigr)\label{eq:req}
 \end{align}
 with $\mathrm{rshift}(v,k)=\lfloor (v+2^{k-1})/2^{k}\rfloor$, and the class is the first index of the largest logit. The emitted C (Fig.~\ref{fig:code}) implements exactly these equations; its tables live in flash (\texttt{MF\_ROM}, i.e.\ \texttt{\_\_flash} on AVR).
 
 \textbf{Effective weights.} The real value represented by $y_o$ before rounding and clamping is affine in the represented inputs $\hat x_i=s_i q_i$:
 \begin{equation}
-\hat v_o=\textstyle\sum \hat W_{o,k}\,\hat x_i+\hat b_o,\quad \hat W_{o,k}=\frac{t_o m_c 2^{-k_c}}{s_i}\,q^W_w,\quad \hat b_o=t_o m_c 2^{-k_c}\,q^b_c .
+\begin{gathered}
+\hat v_o=\textstyle\sum \hat W_{o,k}\,\hat x_i+\hat b_o,\\
+\hat W_{o,k}=\frac{t_o m_c 2^{-k_c}}{s_i}\,q^W_w,\quad \hat b_o=t_o m_c 2^{-k_c}\,q^b_c .
+\end{gathered}
 \label{eq:eff}
 \end{equation}
 ReLU commutes with the positive factor $m_c2^{-k_c}$, so $t_o\,y_o=\mathrm{clamp}_{[t_oq^-,t_oq^+]}(t_o\,\mathrm{round}(\mathrm{ReLU}(\hat v_o)/t_o))$. Eq.~\eqref{eq:eff} folds weight quantisation, bias quantisation and the multiplier approximation into one exactly known matrix, which is what makes an exact error analysis of the emitted code possible.
@@ -80,10 +83,11 @@ The specification is a domain $D$ and a set of regions, here $L_\infty$ balls of
 \end{enumerate}
 A final \emph{local search} takes the certified move with the largest cost reduction among one-rung moves (down, up, or to the next storage class) and \emph{compound} moves that change two slots of one layer together (its weights and an activation it reads or writes, e.g.\ fewer weight bits and more activation bits, which keeps a 16-bit multiply), until none lowers the cost. A second start from the cheapest certified uniform configuration guards against a poor first descent. Candidate costs are computed on all cores, and the region that rejected the last candidate is proved first.
 
-\textbf{Scaling to deep graphs.} Three rules keep tuning tractable for image models (more than 100 inputs), without weakening the certificate:
+\textbf{Scaling to deep graphs.} Four rules keep tuning tractable for image models (more than 100 inputs), without weakening the certificate:
 (i)~the search targets only the robust regions that the most precise configuration proves, since no configuration on the lattice does better (provability is not monotone in precision, so small models keep every region);
 (ii)~candidates are rejected after 12 analyses per region, because bisecting a 784-dimensional box one pixel at a time rarely helps, while the final proofs use the full budget (a region proved with a small budget is also proved with a large one);
-(iii)~the local search escalates to compound moves only when no single move certifies, and tries at most 120 candidates.
+(iii)~a refinement step stops after 8 failing regions and raises by their blame (the failures are proved first in the next step); on LeNet-5 with average pooling this takes the same 11 raises as using all failing regions, in half the time;
+(iv)~the local search escalates to compound moves only when no single move certifies, and tries at most 120 candidates.
 The domain-wide analysis that chooses scales and widths also \emph{consolidates} forms above 512 terms, replacing the smallest terms by one fresh symbol of the same total magnitude. This is sound and affects only the lowering. Region proofs and the checker never consolidate.
 
 \textbf{Cost models.} \emph{Bytes} counts flash and RAM, with 4-bit (packed), 8-bit and 16-bit weights and 8/16-bit activations. \emph{Bits} counts the ideal packed size on the fine lattice (2--16-bit weights, 4--16-bit activations). \emph{Latency} estimates cycles on an 8-bit AVR on the fine lattice. It uses per-MAC costs measured in the cycle-accurate simulator simavr for every combination of weight storage (packed 4-bit, int8, int16), activation width (8/16), multiply width (16/32) and accumulator width (16/32/64), ranging from 23 to 115 cycles, plus 605 cycles per neuron for requantisation. Under latency, the widths that ForgeCert \emph{proves} become decisive: for example, 6-bit weights times 10-bit activations still fit a 16-bit multiply, and a modular 16-bit accumulator replaces a 32-bit one.

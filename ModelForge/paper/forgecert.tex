@@ -3,6 +3,7 @@
 % Numbers: modelforge_certbench (research/results/certbench.json, summarize_certbench.py)
 % and research/mcu_bench.py (research/results/mcu_results.json).
 \documentclass[conference]{IEEEtran}
+\usepackage[T1]{fontenc}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{xcolor}
@@ -13,6 +14,8 @@
 \newtheorem{theorem}{Theorem}
 \newtheorem{lemma}{Lemma}
 \newtheorem{definition}{Definition}
+
+\input{forgecert_tables}
 
 \begin{document}
 
@@ -25,7 +28,7 @@ Email (fill in)}}
 \maketitle
 
 \begin{abstract}
-%%ABSTRACT%%
+Neural networks on microcontrollers run as integer code: weights and activations are quantised, rescaled with fixed-point multipliers, accumulated in narrow registers and saturated. Today such code is accepted when its test accuracy is close to the float model's, which says nothing about the inputs a device actually sees, and nothing about overflow. We present \emph{ForgeCert}, a compiler that emits integer-only C99 together with a certificate that the \emph{emitted program} never overflows on a declared input domain and returns the float model's decision for every input in each certified region. A single differential abstract interpretation, which tracks the float model and the integer program's error over shared noise symbols with transfer functions for the bit-exact semantics of the C code, is used to prove the code, to choose its representation (scales, accumulator and multiply widths, wrap-around accumulation), and to explain failed proofs to a counterexample-guided precision tuner. The compiler handles layer graphs with grouped and depthwise convolutions, batch normalisation, average and max-pooling and residual connections, and imports ONNX. An independent checker that shares no code with the compiler re-establishes every claim from the source model and the C file in seconds. On \FCModels{} classifiers, from tabular MLPs to LeNet-5, MobileNet-style and ResNet-style networks, uniform int8 code fails to preserve decisions on many robust regions and int4 or accuracy-guided code changes decisions on real inputs that the test set misses, whereas ForgeCert certifies every region provable at any precision on the lattice at \FCTabularForgecertFlash\% of the float32 size on tabular models; \FCAuditSamples{} sampled executions found \FCAuditViolations{} violations, and on a cycle-accurate 8-bit AVR the certified code runs bit-exactly, without floating point, where the float model is slow or does not fit.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -55,7 +58,8 @@ A checker that shares no code with the compiler re-establishes both claims from 
 \item \textbf{Proof-guided lowering} (\S\ref{sec:lower}): scales from proved ranges or from calibration data (with saturation modelled), \emph{modular accumulators} sized by the proved final sum, \emph{16-bit multiplies} where every product provably fits, and \emph{dead-input elimination}. Each is sound only because of a proof, and each is re-checked.
 \item \textbf{Counterexample-guided precision tuning} (\S\ref{sec:cegar}) driven by \emph{error provenance} carried in the abstract domain, with a falsifier that turns failed proofs into real counterexamples, and with cost models for bytes or for cycles on an 8-bit microcontroller (measured, not assumed).
 \item \textbf{An independent certificate checker} (\S\ref{sec:check}) that parses the emitted C, checks it against its own copy of the code template, re-proves the obligations and replays the split trees.
-\item \textbf{An evaluation} on 12 trained models (tabular MLPs, MNIST and Fashion-MNIST MLPs and CNNs) with a cycle-accurate 8-bit microcontroller (\S\ref{sec:eval}).
+\item \textbf{A compiler for layer graphs}: grouped and depthwise convolutions, batch normalisation folding, average and max-pooling, residual additions and liveness-based buffer sharing, with an ONNX importer, all re-validated by the checker (\S\ref{sec:target}).
+\item \textbf{An evaluation} on \FCModels{} trained models, from tabular MLPs to LeNet-5, MobileNet-style and ResNet-style CNNs, including measurements on a cycle-accurate 8-bit microcontroller (\S\ref{sec:eval}).
 \end{enumerate}
 ForgeCert is part of the open-source ModelForge compiler (C++17). Its front end has a lexer/parser for a model language, a semantic validator with shape inference and symbol table, an SSA-style IR, and graph passes that are themselves validated by an existing per-pass validator (Guardian-APC+), so every stage from source to C carries evidence.
 
@@ -75,38 +79,40 @@ ForgeCert is part of the open-source ModelForge compiler (C++17). Its front end 
 \textbf{Trusting compilers.} Verified compilers~\cite{compcert} prove the compiler once. Translation validation~\cite{pnueli,necula} checks each run. Proof-carrying code~\cite{pcc} ships the proof with the code, so the consumer trusts only a small checker. ForgeCert follows the last model: finding a proof (search, splitting, refinement) happens in the untrusted compiler, and checking it is a linear replay.
 
 \begin{figure}[t]
-\begin{lstlisting}[language=C]
-static void mf_layer0(const uint8_t *x, uint16_t *y) {
-  for (int c = 0; c < 4; ++c) {
-    for (int oy = 0; oy < 13; ++oy) {
-      for (int ox = 0; ox < 13; ++ox) {
-        int32_t acc = (int32_t)MF_B0[c];
-        for (int ci = 0; ci < 1; ++ci) {
-          for (int ky = 0; ky < 3; ++ky) {
-            const int iy = oy * 2 + ky - 0;
-            if (iy < 0 || iy >= 28) continue;
-            for (int kx = 0; kx < 3; ++kx) {
-              const int ix = ox * 2 + kx - 0;
-              if (ix < 0 || ix >= 28) continue;
-              acc = (int32_t)(acc + (int32_t)((int16_t)
-                    mf_nibble(MF_W0, ((c*1+ci)*3+ky)*3+kx)
-                    * (int16_t)x[(ci*28+iy)*28+ix]));
-        }}}
-        if (acc < 0) acc = 0;
-        int64_t q = mf_round_shift((int64_t)acc * MF_M0[c], MF_S0[c]);
-        if (q > 65535) q = 65535;  /* saturate */
-        if (q < 0) q = 0;
-        y[(c * 13 + oy) * 13 + ox] = (uint16_t)q;
+\begin{lstlisting}[language=C,basicstyle=\ttfamily\fontsize{6.2}{7.2}\selectfont]
+/* layer 0: conv 784 -> 676, ReLU; weights 4-bit; 32-bit
+   accumulator; 32-bit products (widths proved on the domain) */
+static void mf_layer0(const uint16_t *x, uint16_t *y) {
+ for (int c = 0; c < 4; ++c) {
+  for (int oy = 0; oy < 13; ++oy) {
+   for (int ox = 0; ox < 13; ++ox) {
+    int32_t acc = (int32_t)MF_B0[c];
+    for (int ci = 0; ci < 1; ++ci) {
+     for (int ky = 0; ky < 3; ++ky) {
+      const int iy = oy * 2 + ky - 0;
+      if (iy < 0 || iy >= 28) continue;
+      for (int kx = 0; kx < 3; ++kx) {
+       const int ix = ox * 2 + kx - 0;
+       if (ix < 0 || ix >= 28) continue;
+       acc = (int32_t)(acc + (int32_t)((int32_t)
+         mf_nibble(MF_W0, ((c * 1 + ci) * 3 + ky) * 3 + kx)
+         * (int32_t)x[(ci * 28 + iy) * 28 + ix]));
+    }}}
+    if (acc < 0) acc = 0;
+    int64_t q = mf_round_shift((int64_t)acc * MF_M0[c], MF_S0[c]);
+    if (q > 65535) q = 65535; /* saturate (modelled) */
+    if (q < 0) q = 0;
+    y[(c * 13 + oy) * 13 + ox] = (uint16_t)q;
 }}}}
 \end{lstlisting}
-\caption{First layer of the certified MNIST CNN (4-bit packed weights in flash, 16-bit products proved, 16-bit activations). No floating point is used after input quantisation.}
+\caption{First layer of the certified MNIST CNN as emitted (indentation compacted): 4-bit weights packed in flash, 16-bit activations, widths proved on the domain. No floating point is used after input quantisation.}
 \label{fig:code}
 \end{figure}
 
 \input{forgecert_sections}
 
 \section{Evaluation}\label{sec:eval}
-%%EVAL%%
+\input{forgecert_eval}
 
 \section{Limitations}\label{sec:limits}
 \begin{itemize}
@@ -122,7 +128,7 @@ static void mf_layer0(const uint8_t *x, uint16_t *y) {
 \end{itemize}
 
 \section{Conclusion}
-%%CONCLUSION%%
+ForgeCert compiles neural networks to integer-only C99 that carries its own proof: no overflow on the input domain, and the float model's decision on every certified region. One differential abstract interpretation of the \emph{emitted} code proves it, chooses its widths, and tells the tuner which layer to make more precise, and an independent checker re-establishes the claims from the source and the C file alone. The approach covers the networks that run on microcontrollers today, from MLPs to residual and depthwise-separable CNNs, and the certificates cost little: certified code is close in size and speed to uncertified int8 code, which on our benchmarks silently changes decisions. Future work is tighter relaxations for deep proofs (DeepPoly-style bounds), directed rounding in the checker, and a mechanised proof of the checker itself.
 
 \section*{Reproducibility}
 \texttt{cmake -S . -B build \&\& cmake --build build}, then \texttt{modelforge\_certbench --suite all} and \texttt{python ModelForge/research/mcu\_bench.py build}. For a single model, \texttt{modelforge m.mforge --certify --data test.csv --domain train.csv --eps 0.1 --out cert}, then \texttt{modelforge\_certcheck cert m.mforge}. The image models are retrained with \texttt{research/train\_image\_models.py}.
