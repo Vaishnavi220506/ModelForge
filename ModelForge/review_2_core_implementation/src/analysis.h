@@ -95,6 +95,18 @@ std::vector<ValidationProbe> generateDeepBoundaryProbes(const IRGraph& graph,
                                                         const std::vector<ActivationSite>& sites,
                                                         const DeepBoundaryOptions& options = {});
 
+// Value of `value[unit]` at `input` and its exact input gradient (forward-mode
+// Jacobian under the input's activation pattern). Any IR graph.
+bool valueGradient(const IRGraph& graph, const std::vector<float>& input, const std::string& value,
+                   std::size_t unit, float& current, std::vector<float>& gradient);
+
+// Newton iterations that move `point` (kept inside [lower, upper]) until
+// value[unit] reaches `target`. Returns true when |value - target| <= slack.
+bool solveForValue(const IRGraph& graph, const std::string& value, std::size_t unit, float target,
+                   std::vector<float>& point, const std::vector<float>& lower,
+                   const std::vector<float>& upper, std::size_t iterations = 12,
+                   float slack = 0.0f);
+
 // Greedy set-cover ordering: each next probe is the one that covers the most
 // not-yet-covered (unit, bin) states. Probes adding nothing keep their order.
 std::vector<ValidationProbe> prioritizeByCoverage(const IRGraph& graph,

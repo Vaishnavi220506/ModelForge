@@ -72,7 +72,8 @@ bool writeFile(const std::filesystem::path& path,
 
 bool generateCpp(const IRGraph& graph,
                  const std::string& outputDirectory,
-                 DiagnosticEngine& diagnostics) {
+                 DiagnosticEngine& diagnostics,
+                 const DeploymentEnvelope* envelope) {
     const auto inputIterator = graph.values.find(graph.inputName);
     if (inputIterator == graph.values.end()) {
         diagnostics.error("codegen", "Input tensor information is missing");
@@ -90,6 +91,13 @@ bool generateCpp(const IRGraph& graph,
     std::ostringstream header;
     header << "#pragma once\n\n#include <vector>\n\n";
     header << "std::vector<float> infer(const std::vector<float>& input);\n";
+    if (envelope != nullptr) {
+        header << "\n// Temper certificate envelope: the certificates for this model hold for\n"
+               << "// inputs inside this box. Outside it the model still runs, unproven.\n"
+               << "bool in_certified_domain(const std::vector<float>& input);\n"
+               << "extern const char* const kModelFingerprint;\n"
+               << "extern const char* const kCertificateSummary;\n";
+    }
 
     std::ostringstream source;
     source << "#include \"model.h\"\n"
@@ -206,6 +214,22 @@ static Tensor fused_gemm_relu(const Tensor& a,
     for (const auto& entry : graph.constants) {
         emitFloatVector(source, constantFor(entry.first), entry.second.data);
     }
+    if (envelope != nullptr) {
+        emitFloatVector(source, "c_temper_domain_lower", envelope->lower);
+        emitFloatVector(source, "c_temper_domain_upper", envelope->upper);
+        std::string summary;
+        for (const char character : envelope->summary) {
+            if (character == '"' || character == '\\') summary += '\\';
+            summary += character;
+        }
+        source << "const char* const kModelFingerprint = \"" << envelope->fingerprint << "\";\n"
+               << "const char* const kCertificateSummary = \"" << summary << "\";\n"
+               << "bool in_certified_domain(const std::vector<float>& input) {\n"
+               << "    if (input.size() != c_temper_domain_lower.size()) return false;\n"
+               << "    for (std::size_t i = 0; i < input.size(); ++i) {\n"
+               << "        if (!(input[i] >= c_temper_domain_lower[i] && input[i] <= c_temper_domain_upper[i])) return false;\n"
+               << "    }\n    return true;\n}\n";
+    }
     source << "\nstd::vector<float> infer(const std::vector<float>& input) {\n";
     source << "    if (input.size() != " << elementCount(inputIterator->second.shape)
            << ") {\n        throw std::runtime_error(\"Unexpected input size\");\n    }\n";
@@ -303,10 +327,15 @@ static Tensor fused_gemm_relu(const Tensor& a,
     return value;
 }
 
+)cpp" << (envelope != nullptr
+                   ? "static bool in_domain(const Tensor& x) { return in_certified_domain(x); }\n"
+                   : "static bool in_domain(const Tensor&) { return true; }\n")
+           << R"cpp(
 int main(int argc, char* argv[]) {
 )cpp"
            << "    constexpr std::size_t inputCount = " << inputCount << ";\n"
            << "    constexpr std::size_t outputCount = " << outputCount << ";\n"
+           << "    constexpr bool hasEnvelope = " << (envelope != nullptr ? "true" : "false") << ";\n"
            << R"cpp(    std::cout << std::setprecision(9);
     if (argc == 3 && std::string(argv[1]) == "--csv") {
         std::ifstream file(argv[2]);
@@ -316,6 +345,7 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "row,prediction";
         for (std::size_t i = 0; i < outputCount; ++i) std::cout << ",score_" << i;
+        if (hasEnvelope) std::cout << ",in_certified_domain";
         std::cout << '\n';
         std::string line;
         std::size_t lineNumber = 0;
@@ -338,6 +368,7 @@ int main(int argc, char* argv[]) {
                 const auto best = std::max_element(output.begin(), output.end());
                 std::cout << rowNumber << ',' << (best - output.begin());
                 for (float value : output) std::cout << ',' << value;
+                if (hasEnvelope) std::cout << ',' << (in_domain(input) ? 1 : 0);
                 std::cout << '\n';
             } catch (const std::exception& error) {
                 std::cerr << "CSV line " << lineNumber << ": " << error.what() << '\n';
@@ -378,6 +409,10 @@ int main(int argc, char* argv[]) {
         for (float value : output) std::cout << ' ' << value;
         std::cout << "\nPrediction: " << (best - output.begin()) << "\n";
         std::cout << "Confidence: " << *best << "\n";
+        if (hasEnvelope) {
+            std::cout << "Certified domain: " << (in_domain(sampleInput) ? "inside" : "OUTSIDE (unproven)")
+                      << "\n";
+        }
     } catch (const std::exception& error) {
         std::cerr << "Inference failed: " << error.what() << '\n';
         return 1;

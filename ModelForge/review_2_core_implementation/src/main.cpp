@@ -187,7 +187,7 @@ bool writeOptimizationCertificate(
                 << "{\n"
                 << "  \"model\": \"" << jsonEscape(model.name) << "\",\n"
                 << "  \"author\": \"Vaishnavi\",\n"
-                << "  \"method\": \"bounded empirical translation validation (Guardian-APC)\",\n"
+                << "  \"method\": \"falsify-or-certify translation validation (Guardian-APC+ and the Temper certifier)\",\n"
                 << "  \"activation_coverage\": {\"apc\": " << coverage.ratio()
                 << ", \"boundary_apc\": " << coverage.boundaryRatio()
                 << ", \"covered_states\": " << coverage.covered
@@ -224,6 +224,9 @@ bool writeOptimizationCertificate(
         } else {
             certificate << "null";
         }
+        certificate << ", \"verdict\": \"" << modelforge::verdictName(decision.verdict)
+                    << "\", \"certificate\": \""
+                    << modelforge::certificateKindName(decision.certificate) << "\"";
         certificate << ", \"counterexample_file\": "
                     << (decision.accepted ? "null" : "\"counterexample_" +
                         jsonEscape(decision.passName) + ".json\"") << "}"
@@ -609,7 +612,12 @@ int main(int argc, char* argv[]) {
         for (const auto& decision : guardianReport.decisions) {
             std::cout << "      Guardian " << decision.passName << ": "
                       << (decision.accepted ? "ACCEPT" : "REJECT")
-                      << " (" << decision.validation.probeCount << " probes)\n";
+                      << " (" << decision.validation.probeCount << " probes) -> "
+                      << modelforge::verdictName(decision.verdict);
+            if (decision.verdict == modelforge::Verdict::Certified) {
+                std::cout << " " << modelforge::certificateKindName(decision.certificate);
+            }
+            std::cout << "\n";
         }
         if (options->dumpIR) {
             modelforge::printIR(optimizedIR, std::cout);

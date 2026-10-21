@@ -1,5 +1,10 @@
-// modelforge_bench: equal-budget fault-injection study over a synthetic model
-// zoo. Writes results.json, cases.csv and the dashboard's data.js.
+// modelforge_bench: every number in the paper, in the terminal.
+//   1. Guardian-APC+ equal-budget fault-injection study (synthetic zoo)
+//   2. Boundary-shift probing on compressed real models
+//   3. Temper decisiveness: falsify-or-certify over faults, controls and passes
+//   4. Temper compression severity brackets
+//   5. Temper binary audit of the generated C++
+// Writes JSON/CSV snapshots to --out.
 
 #include "render.h"
 #include "research.h"
@@ -11,9 +16,6 @@
 #include <iterator>
 #include <string>
 
-#ifndef MODELFORGE_DASHBOARD_DIR
-#define MODELFORGE_DASHBOARD_DIR "dashboard"
-#endif
 #ifndef MODELFORGE_MODELS_DIR
 #define MODELFORGE_MODELS_DIR "models"
 #endif
@@ -32,8 +34,10 @@ void usage() {
               << "  --seed S         master seed (default 20260917)\n"
               << "  --quick          12 models, 2 seeds, 1000 oracle probes\n"
               << "  --out DIR        results directory (default build/research)\n"
-              << "  --dashboard DIR  where to write data.js (default: repository dashboard/)\n"
-              << "  --inspect FILE   model shown in the dashboard's inspector tab\n"
+              << "  --inspect FILE   model summarised in inspect.json\n"
+              << "  --balls N        test rows per compression audit (default all; quick 30)\n"
+              << "  --guardian-only  skip the Temper studies\n"
+              << "  --no-binary      skip compiling generated binaries\n"
               << "  --ascii          plain ASCII output\n"
               << "  --no-color       disable colours\n";
 }
@@ -43,7 +47,8 @@ void usage() {
 int main(int argc, char* argv[]) {
     modelforge::BenchmarkConfig config;
     std::filesystem::path out = "build/research";
-    std::filesystem::path dashboard = MODELFORGE_DASHBOARD_DIR;
+    std::size_t balls = 0;
+    bool temperStudies = true, binary = true;
     std::string inspect = MODELFORGE_DEFAULT_MODEL;
     bool ascii = false, noColor = false;
     for (int i = 1; i < argc; ++i) {
@@ -61,7 +66,9 @@ int main(int argc, char* argv[]) {
         else if (arg == "--oracle") config.oracleProbes = std::stoul(next());
         else if (arg == "--seed") config.seed = static_cast<std::uint32_t>(std::stoul(next()));
         else if (arg == "--out") out = next();
-        else if (arg == "--dashboard") dashboard = next();
+        else if (arg == "--balls") balls = std::stoul(next());
+        else if (arg == "--guardian-only") temperStudies = false;
+        else if (arg == "--no-binary") binary = false;
         else if (arg == "--inspect") inspect = next();
         else if (arg == "--ascii") ascii = true;
         else if (arg == "--no-color") noColor = true;
@@ -69,6 +76,7 @@ int main(int argc, char* argv[]) {
             config.models = 12;
             config.randomSeeds = 2;
             config.oracleProbes = 1000;
+            balls = 30;
         } else if (arg == "--help" || arg == "-h") {
             usage();
             return 0;
@@ -83,8 +91,8 @@ int main(int argc, char* argv[]) {
         return 2;
     }
     term::init(ascii, noColor);
-    term::banner();
-    std::cout << "  " << term::muted() << "Guardian-APC research benchmark by Vaishnavi" << term::reset()
+    term::temperBanner("research benchmark: Guardian-APC+ and Temper (compiler: ModelForge)");
+    std::cout << "  " << term::muted() << "every number in the paper" << term::reset()
               << "  " << term::dim() << config.models << " models, budget " << config.budget
               << ", " << config.randomSeeds << " random seeds" << term::reset() << "\n\n";
 
@@ -118,24 +126,42 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    const bool ok = render::writeText(out / "results.json", summary.json) &&
-                    render::writeText(out / "cases.csv", summary.casesCsv) &&
-                    (inspectJson.empty() || render::writeText(out / "inspect.json", inspectJson)) &&
-                    render::writeText(out / "real_results.json", real.json) &&
-                    render::writeDashboardData(dashboard, summary.json, inspectJson, real.json);
+    const auto bar = [](std::size_t done, std::size_t total, const std::string& label) {
+        term::progress(done, total, label);
+    };
+    bool sane = summary.ibpViolations == 0;
+    for (const auto& s : summary.strategies) sane = sane && s.falsePositives == 0;
+    bool ok = render::writeText(out / "results.json", summary.json) &&
+              render::writeText(out / "cases.csv", summary.casesCsv) &&
+              (inspectJson.empty() || render::writeText(out / "inspect.json", inspectJson)) &&
+              render::writeText(out / "real_results.json", real.json);
+    if (temperStudies) {
+        const auto temper = modelforge::runTemperStudy(config, bar);
+        render::temperStudy(temper);
+        const auto realDirectory = (std::filesystem::path(MODELFORGE_MODELS_DIR) / "real").string();
+        const auto compression = modelforge::runCompressionStudy(realDirectory, balls, bar);
+        render::compressionStudy(compression);
+        ok = ok && render::writeText(out / "temper_results.json", temper.json) &&
+             render::writeText(out / "temper_cases.csv", temper.casesCsv) &&
+             render::writeText(out / "compression_results.json", compression.json);
+        for (const auto& s : temper.strategies) sane = sane && s.violations == 0;
+        sane = sane && compression.bracketViolations == 0;
+        if (binary) {
+            const auto binaries =
+                modelforge::runBinaryStudy(realDirectory, (out / "binaries").string(), bar);
+            render::binaryStudy(binaries);
+            ok = ok && render::writeText(out / "binary_results.json", binaries.json);
+        }
+    }
     term::rule("Outputs");
-    std::cout << "  " << term::muted() << "results   " << term::reset()
-              << (out / "results.json").string() << "\n  " << term::muted() << "per-case  "
-              << term::reset() << (out / "cases.csv").string() << "\n  " << term::muted()
-              << "dashboard " << term::reset() << (dashboard / "index.html").string()
-              << term::muted() << "  (data.js refreshed)" << term::reset() << "\n\n";
+    std::cout << "  " << term::muted() << "JSON and CSV snapshots in " << term::reset()
+              << out.string() << "\n\n";
     if (!ok) {
         std::cerr << "Could not write benchmark outputs\n";
         return 1;
     }
-    // Sanity gates for CI: IBP must be sound and the negative control must stay silent.
-    bool sane = summary.ibpViolations == 0;
-    for (const auto& s : summary.strategies) sane = sane && s.falsePositives == 0;
-    if (!sane) std::cerr << "Sanity check failed: IBP violation or negative-control false positive\n";
+    // Sanity gates for CI: IBP and every certificate must be sound, the
+    // negative control must stay silent, and no bracket may invert.
+    if (!sane) std::cerr << "Sanity check failed: unsound bound, certificate or false alarm\n";
     return sane ? 0 : 1;
 }

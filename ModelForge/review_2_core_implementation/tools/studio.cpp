@@ -1,4 +1,4 @@
-// modelforge_studio: interactive terminal dashboard for ModelForge.
+// modelforge_studio: interactive terminal view of ModelForge and Temper.
 //
 //   modelforge_studio                 interactive menu (Iris demo model)
 //   modelforge_studio model.mforge    open another model
@@ -8,18 +8,24 @@
 // without Unicode, --no-color to disable colours.
 
 #include "analysis.h"
+#include "certify.h"
 #include "codegen.h"
+#include "dossier.h"
+#include "dossier_view.h"
 #include "guardian.h"
+#include "optimizer.h"
 #include "loader.h"
 #include "render.h"
 #include "research.h"
 #include "shrink.h"
+#include "temper.h"
 #include "term.h"
 #include "validator.h"
 #include "verifier.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -29,9 +35,6 @@
 #include <string>
 #include <vector>
 
-#ifndef MODELFORGE_DASHBOARD_DIR
-#define MODELFORGE_DASHBOARD_DIR "dashboard"
-#endif
 #ifndef MODELFORGE_DEFAULT_MODEL
 #define MODELFORGE_DEFAULT_MODEL "models/iris_demo.mforge"
 #endif
@@ -46,7 +49,6 @@ namespace {
 
 constexpr std::size_t kWidth = 84;
 constexpr std::size_t kBudget = 128;
-fs::path gDashboard = MODELFORGE_DASHBOARD_DIR;
 
 struct Stage {
     std::string name;
@@ -222,7 +224,7 @@ void pause(const Session& session) {
 void header(const Session& session) {
     if (session.interactive) std::cout << code("\x1b[2J\x1b[H");
     banner();
-    std::cout << "\n  " << muted() << "Guardian-APC studio   model " << reset() << bold()
+    std::cout << "\n  " << muted() << "ModelForge + Temper studio   model " << reset() << bold()
               << session.original.name << reset() << "\n";
 }
 
@@ -523,18 +525,20 @@ void screenBenchmark(Session& session, bool quick) {
             progress(done, total, label);
         });
     render::benchmark(summary, config.budget);
-    const std::string inspect =
-        modelforge::inspectModelJson(session.path, session.original, config.budget, config.seed);
-    const fs::path dashboard = gDashboard;
+    (void)session;
     const auto real = modelforge::runRealStudy(
         (fs::path(MODELFORGE_MODELS_DIR) / "real").string(), 200, config.randomSeeds,
         [](std::size_t done, std::size_t total, const std::string& label) {
             progress(done, total, label);
         });
     render::realStudy(real);
-    if (render::writeDashboardData(dashboard, summary.json, inspect, real.json)) {
-        std::cout << "\n  " << good() << glyphs().check << reset() << " Dashboard data refreshed: "
-                  << (dashboard / "index.html").string() << "\n";
+    if (quick) {
+        config.models = 6;
+        const auto temper = modelforge::runTemperStudy(
+            config, [](std::size_t done, std::size_t total, const std::string& label) {
+                progress(done, total, label);
+            });
+        render::temperStudy(temper);
     }
 }
 
@@ -698,16 +702,213 @@ void screenShrink(const Session& session) {
     }
 }
 
-void screenDashboard() {
-    rule("8  Web dashboard", kWidth);
-    const fs::path index = fs::path(MODELFORGE_DASHBOARD_DIR) / "index.html";
-    box("Open the dashboard",
-        {"File: " + bold() + index.string() + reset(),
-         muted() + "VS Code: right-click dashboard/index.html " + glyphs().arrow +
-             " Reveal in File Explorer, then double-click;" + reset(),
-         muted() + "or run the task 'ModelForge: open dashboard'. No server needed." + reset(),
-         muted() + "Run option 6 first to refresh the data with this machine's results." + reset()},
-        kWidth);
+// ------------------------------------------------------------------ Temper screens
+
+fs::path dataFor(const fs::path& model) {
+    const std::string stem = model.stem().string();
+    return model.parent_path() / (stem.substr(0, stem.rfind('_')) + "_test.csv");
+}
+
+std::size_t inputCount(const modelforge::IRGraph& graph) {
+    return modelforge::elementCount(graph.values.at(graph.inputName).shape);
+}
+
+// A subtle bug: a ReLU that drops activations in (0, p) to 0.
+modelforge::IRGraph deadZoneBug(const modelforge::IRGraph& graph, float width) {
+    modelforge::IRGraph faulty = graph;
+    for (auto& instruction : faulty.instructions) {
+        if (instruction.operation == modelforge::IROp::Relu) {
+            instruction.operation = modelforge::IROp::TestReluDeadZone;
+            instruction.testFaultParameter = width;
+            break;
+        }
+    }
+    return faulty;
+}
+
+void screenTemper(const Session& session) {
+    rule("t  Temper: falsify or certify every transformation", kWidth);
+    const modelforge::Box domain =
+        modelforge::uniformBox(inputCount(session.original), modelforge::kDefaultInputRadius);
+    struct Row {
+        std::string name;
+        modelforge::IRGraph candidate;
+        modelforge::IRGraph before;
+    };
+    std::vector<Row> rows;
+    modelforge::IRGraph current = session.original;
+    for (const auto pass : {modelforge::OptimizationPass::ConstantFolding,
+                            modelforge::OptimizationPass::DenseReluFusion,
+                            modelforge::OptimizationPass::DeadNodeRemoval}) {
+        modelforge::IRGraph next = current;
+        if (modelforge::runOptimizationPass(next, pass).events.empty()) continue;
+        rows.push_back({std::string("pass: ") + modelforge::optimizationPassName(pass), next, current});
+        current = std::move(next);
+    }
+    modelforge::IRGraph sigmoid = session.original;
+    for (auto& instruction : sigmoid.instructions) {
+        if (instruction.operation == modelforge::IROp::Relu) {
+            instruction.operation = modelforge::IROp::Sigmoid;
+            break;
+        }
+    }
+    rows.push_back({"bug: ReLU lowered as Sigmoid", sigmoid, session.original});
+    rows.push_back({"bug: ReLU dead zone (0, 1e-3)", deadZoneBug(session.original, 1.0e-3f),
+                    session.original});
+    rows.push_back({"bug: ReLU dead zone (0, 1e-4)", deadZoneBug(session.original, 1.0e-4f),
+                    session.original});
+
+    Table table;
+    table.headers = {"transformation", "verdict", "certificate", "decided by", "evals", "ms"};
+    table.rightAlign = {false, false, false, false, true, true};
+    for (const auto& row : rows) {
+        const auto d = modelforge::decideTransformation(row.before, row.candidate, domain);
+        table.rows.push_back({row.name, verdictBadge(modelforge::verdictName(d.verdict)),
+                              modelforge::certificateKindName(d.kind), d.decidedBy,
+                              std::to_string(d.evaluations), fixed(d.milliseconds, 1)});
+    }
+    table.print();
+    std::cout << "\n  " << muted()
+              << "Each pass is checked against the model before it (passes are cumulative).\n"
+              << "  static-proof: the certifier proved it with zero model evaluations.\n"
+              << "  divergence-source: the certifier located where the bug can act and solved\n"
+              << "  for an input there; Guardian alone and random testing usually miss these."
+              << reset() << "\n";
+}
+
+void screenRegionMap(const Session& session) {
+    rule("c  Certified-region map: where a subtle bug can and cannot act", kWidth);
+    const modelforge::IRGraph faulty = deadZoneBug(session.original, 0.5f);
+    const std::size_t n = inputCount(session.original);
+    // The two inputs with the largest first-layer weights span the slice.
+    std::vector<double> weight(n, 0.0);
+    for (const auto& instruction : session.original.instructions) {
+        if (instruction.operation != modelforge::IROp::Gemm ||
+            instruction.inputs[0] != session.original.inputName) {
+            continue;
+        }
+        const auto& w = session.original.constants.at(instruction.inputs[1]).data;
+        for (std::size_t i = 0; i < w.size(); ++i) {
+            weight[instruction.transB ? i % n : i / (w.size() / n)] += std::fabs(w[i]);
+        }
+        break;
+    }
+    std::vector<std::size_t> order(n);
+    for (std::size_t i = 0; i < n; ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return weight[a] > weight[b]; });
+    const std::size_t dx = order[0], dy = n > 1 ? order[1] : order[0];
+    constexpr int kCols = 60, kRows = 22;
+    const float radius = 6.0f;
+    std::size_t certified = 0, refuted = 0, open = 0;
+    std::vector<std::string> lines;
+    for (int r = 0; r < kRows; ++r) {
+        std::string line;
+        for (int c = 0; c < kCols; ++c) {
+            modelforge::Box cell = modelforge::uniformBox(n, 0.0f);
+            cell.lower[dx] = -radius + 2 * radius * c / kCols;
+            cell.upper[dx] = -radius + 2 * radius * (c + 1) / kCols;
+            cell.lower[dy] = radius - 2 * radius * (r + 1) / kRows;
+            cell.upper[dy] = radius - 2 * radius * r / kRows;
+            modelforge::CertifyOptions options;
+            options.maxBoxes = 4;
+            options.maxEvaluations = 8;
+            const auto result = modelforge::certifyEquivalence(session.original, faulty, cell, options);
+            if (result.verdict == modelforge::Verdict::Certified) {
+                ++certified;
+                line += good() + (settings().unicode ? "·" : ".") + reset();
+            } else if (result.verdict == modelforge::Verdict::Refuted) {
+                ++refuted;
+                line += bad() + (settings().unicode ? "✖" : "x") + reset();
+            } else {
+                ++open;
+                line += warn() + "?" + reset();
+            }
+        }
+        lines.push_back(line);
+    }
+    std::cout << "  " << muted() << "Bug: first ReLU drops values in (0, 0.5) to 0.  Slice: input "
+              << dx << " (across) and input " << dy << " (up) in [-" << fixed(radius, 0) << ", "
+              << fixed(radius, 0) << "], other inputs 0." << reset() << "\n\n";
+    for (const auto& line : lines) std::cout << "    " << line << "\n";
+    const std::size_t total = certified + refuted + open;
+    const bool u = settings().unicode;
+    std::cout << "\n  " << good() << (u ? "·" : ".") << " certified bit-exact "
+              << percent(double(certified) / total) << reset() << "   " << bad() << (u ? "✖" : "x")
+              << " refuted (counterexample) "
+              << percent(double(refuted) / total) << reset() << "   " << warn() << "? undecided "
+              << percent(double(open) / total) << reset() << "\n  " << muted()
+              << "Every cell is a box of inputs: the certifier proves the bug cannot change any\n"
+              << "  output there, or the guided search returns an input where it does." << reset()
+              << "\n";
+}
+
+bool sessionData(const Session& session, fs::path& model, modelforge::Dataset& test,
+                 modelforge::IRGraph& graph) {
+    model = session.path;
+    graph = session.original;
+    if (!fs::exists(dataFor(model))) {
+        model = fs::path(MODELFORGE_MODELS_DIR) / "real" / "wine_mlp16.mforge";
+        modelforge::DiagnosticEngine diagnostics;
+        if (!modelforge::compileManifestText(readFile(model.string()), graph, diagnostics)) return false;
+        std::cout << "  " << muted() << session.original.name
+                  << " has no test data; using the real Wine classifier." << reset() << "\n\n";
+    }
+    std::string error;
+    return modelforge::loadDataset(dataFor(model).string(), inputCount(graph), test, error);
+}
+
+void screenCompressionBrackets(const Session& session) {
+    rule("k  Compression: worst realistic flip, found vs proven", kWidth);
+    fs::path model;
+    modelforge::Dataset test;
+    modelforge::IRGraph graph;
+    if (!sessionData(session, model, test, graph)) {
+        std::cout << "  " << bad() << "no data available" << reset() << "\n";
+        return;
+    }
+    Table table;
+    table.headers = {"compression", "size", "accuracy", "found", "proven <=", "0 . . . margin . . . 1",
+                     "verdict"};
+    table.rightAlign = {false, true, true, true, true, false, false};
+    for (const auto& compression : modelforge::standardCompressions()) {
+        const auto a = modelforge::auditCompression(graph, compression, test, 0.5f, 30);
+        const bool foundAny = !a.search.witness.empty();
+        table.rows.push_back(
+            {a.compression, percent(a.weightSize, 0), percent(a.accuracyAfter, 1),
+             foundAny ? view::riskColour(a.foundRisk) + fixed(a.search.severity, 3) + reset()
+                      : good() + "none" + reset(),
+             view::riskColour(a.certifiedRisk) + fixed(a.certificate.bound, 3) + reset(),
+             view::bracketBar(a.search.severity, a.certificate.bound, foundAny),
+             verdictBadge(modelforge::verdictName(a.verdict))});
+    }
+    table.print();
+    std::cout << "\n  " << muted()
+              << "found: the original's confidence at the worst disagreement found near real data.\n"
+              << "  proven: no disagreement in that region when the original is more confident.\n"
+              << "  The true worst case lies between the two marks (" << reset() << bad()
+              << (settings().unicode ? "●" : "o") << reset() << muted() << " found, " << reset()
+              << good() << (settings().unicode ? "┃" : "|") << reset() << muted()
+              << " proven)." << reset() << "\n";
+}
+
+void screenDossier(const Session& session) {
+    rule("d  Deployment dossier (same as the `temper` command)", kWidth);
+    modelforge::DossierOptions options;
+    if (session.path.rfind("synthetic:", 0) == 0) {
+        std::cout << "  " << muted() << "synthetic models have no file; open a .mforge model" << reset() << "\n";
+        return;
+    }
+    options.modelPath = session.path;
+    if (fs::exists(dataFor(session.path))) options.dataPath = dataFor(session.path).string();
+    options.outputDirectory = (fs::path("build") / "studio_temper").string();
+    options.maxBalls = 30;
+    modelforge::Dossier dossier;
+    modelforge::DiagnosticEngine diagnostics;
+    if (!modelforge::buildDossier(options, dossier, diagnostics)) {
+        diagnostics.print(std::cout);
+        return;
+    }
+    view::renderDossier(dossier, options);
 }
 
 void chooseModel(Session& session) {
@@ -776,6 +977,11 @@ void menu(const Session& session) {
               << item("1", "Pipeline", "stages and timings") << "\n"
               << item("2", "IR graph", "before / after") << "\n"
               << item("7", "Generated C++", "model.cpp") << "\n"
+              << group("TEMPER  (falsify or certify)") << "\n"
+              << item("t", "Verdicts", "passes and bugs, three-valued") << "\n"
+              << item("c", "Certified-region map", "where a bug can act") << "\n"
+              << item("k", "Compression brackets", "found vs proven risk") << "\n"
+              << item("d", "Deployment dossier", "ship or not, binary audit") << "\n"
               << group("GUARDIAN-APC") << "\n"
               << item("3", "Neuron stability", "IBP intervals") << "\n"
               << item("4", "Coverage", "pass decisions, APC") << "\n"
@@ -784,7 +990,6 @@ void menu(const Session& session) {
               << item("6", "Benchmark", "quick run  (6f = full)") << "\n"
               << item("9", "Model diff checker", "compare with another model") << "\n"
               << item("s", "Shrink and check", "safe compression level") << "\n"
-              << item("8", "Web dashboard", "how to open it") << "\n"
               << group("OTHER") << "\n"
               << item("m", "Change model", "") << "\n"
               << item("q", "Quit", "") << "\n\n";
@@ -803,9 +1008,9 @@ int main(int argc, char* argv[]) {
         if (arg == "--demo") demo = true;
         else if (arg == "--ascii") ascii = true;
         else if (arg == "--no-color") noColor = true;
-        else if (arg == "--dashboard" && i + 1 < argc) gDashboard = argv[++i];
+
         else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: modelforge_studio [model.mforge] [--demo] [--ascii] [--no-color] [--dashboard DIR]\n";
+            std::cout << "Usage: modelforge_studio [model.mforge] [--demo] [--ascii] [--no-color]\n";
             return 0;
         } else modelPath = arg;
     }
@@ -835,8 +1040,15 @@ int main(int argc, char* argv[]) {
         std::cout << "\n";
         screenShrink(session);
         std::cout << "\n";
+        screenTemper(session);
+        std::cout << "\n";
+        screenRegionMap(session);
+        std::cout << "\n";
+        screenCompressionBrackets(session);
+        std::cout << "\n";
+        screenDossier(session);
+        std::cout << "\n";
         screenBenchmark(session, true);
-        screenDashboard();
         return 0;
     }
 
@@ -861,7 +1073,10 @@ int main(int argc, char* argv[]) {
         else if (choice == "6") screenBenchmark(session, true);
         else if (choice == "6f") screenBenchmark(session, false);
         else if (choice == "7") screenCode(session);
-        else if (choice == "8") screenDashboard();
+        else if (choice == "t") screenTemper(session);
+        else if (choice == "c") screenRegionMap(session);
+        else if (choice == "k") screenCompressionBrackets(session);
+        else if (choice == "d") screenDossier(session);
         else if (choice == "9") screenCompare(session);
         else if (choice == "s") screenShrink(session);
         else continue;

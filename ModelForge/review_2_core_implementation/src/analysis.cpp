@@ -688,6 +688,31 @@ std::vector<ValidationProbe> generateDeepBoundaryProbes(const IRGraph& original,
     return probes;
 }
 
+bool valueGradient(const IRGraph& graph, const std::vector<float>& input, const std::string& value,
+                   std::size_t unit, float& current, std::vector<float>& gradient) {
+    TensorMap trace;
+    if (!preactivationAt(graph, value, unit, input, current, trace)) return false;
+    return inputGradient(graph, trace, value, unit, input.size(), gradient);
+}
+
+bool solveForValue(const IRGraph& graph, const std::string& value, std::size_t unit, float target,
+                   std::vector<float>& point, const std::vector<float>& lower,
+                   const std::vector<float>& upper, std::size_t iterations, float slack) {
+    std::vector<float> gradient;
+    float current = 0.0f;
+    for (std::size_t iteration = 0; iteration <= iterations; ++iteration) {
+        if (!valueGradient(graph, point, value, unit, current, gradient)) return false;
+        if (std::fabs(current - target) <= slack) return true;
+        const float norm = squaredNorm(gradient);
+        if (norm < 1.0e-12f || iteration == iterations) return false;
+        const float step = (target - current) / norm;
+        for (std::size_t i = 0; i < point.size(); ++i) {
+            point[i] = std::clamp(point[i] + step * gradient[i], lower[i], upper[i]);
+        }
+    }
+    return false;
+}
+
 std::vector<ValidationProbe> prioritizeByCoverage(const IRGraph& original,
                                                   const std::vector<ActivationSite>& sites,
                                                   const std::vector<ValidationProbe>& probes) {

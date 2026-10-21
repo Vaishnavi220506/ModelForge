@@ -1,6 +1,7 @@
 #pragma once
 
 #include "adaptive.h"
+#include "certify.h"
 #include "optimizer.h"
 #include "verifier.h"
 
@@ -16,6 +17,12 @@ struct GuardianDecision {
     TranslationValidationReport validation;
     bool foundByNearMiss = false;
     DivergenceLocation divergence;  // where the minimised witness first diverges
+    // Temper: a pass Guardian accepts is then proven by the certifier on the
+    // input domain (bit-exact for the built-in passes), so "accepted" means
+    // CERTIFIED rather than only "no counterexample found".
+    Verdict verdict = Verdict::Undecided;
+    CertificateKind certificate = CertificateKind::None;
+    double certifiedBound = 0.0;
 };
 
 struct GuardianReport {

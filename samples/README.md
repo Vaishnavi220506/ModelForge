@@ -94,6 +94,9 @@ ModelForge instead:
 .\build\Release\modelforge.exe samples\three_layer_demo.mforge --out build\mine --no-ir --predict samples\inputs.csv
 ```
 
-The interactive website (`website/index.html`, section **Compiler**) does the
-same in the browser: pick this sample, press **Compile**, and look at the
-generated C++, the before/after comparison, the inspector and the run panel.
+For the full trust report (every rewrite certified or refuted, compression
+audit, binary audit) run Temper on the same sample:
+
+```powershell
+.\build\Release\temper.exe samples\three_layer_demo.mforge --out build\temper_sample
+```

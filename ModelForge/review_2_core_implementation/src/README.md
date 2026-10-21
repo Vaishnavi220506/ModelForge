@@ -46,6 +46,14 @@ ONNX-specific code is isolated in `loadOnnx`; it is compiled only when `MODELFOR
 
 - `analysis.h/.cpp` - interval bound propagation, deep boundary probes (Newton on the exact input gradient), activation-pattern coverage and greedy coverage ordering.
 - `adaptive.h/.cpp` - Guardian-APC+: rewrite impact diff, rewrite-aware probes, near-miss search, divergence localisation (used by Guardian and `--compare`).
-- `research.h/.cpp` - synthetic model zoo, fault catalogue, equal-budget strategies, benchmark statistics (Wilson intervals, exact McNemar) and JSON export for the dashboard.
-- `../tools/studio.cpp` - `modelforge_studio`, the interactive terminal dashboard.
+- `research.h/.cpp` - synthetic model zoo, fault catalogue, equal-budget strategies, benchmark statistics (Wilson intervals, exact McNemar) and JSON export.
+
+## Temper modules (falsify-or-certify)
+
+- `certify.h/.cpp` - the certifier: float32-sound symbolic bounds, canonical form, lockstep differential bounds with exactness tracking and symbolic Delta, divergence sources, branch and bound with guided witnesses, prediction-agreement and severity certificates.
+- `temper.h/.cpp` - three-valued decisions for any transformation, domain specialisation, compression severity audit, binary audit of generated C++.
+- `dossier.h/.cpp` - the deployment dossier behind the `temper` command.
+- `temper_study.h/.cpp` - the Temper evaluation studies run by `modelforge_bench`.
+- `../tools/temper.cpp` - `temper`, the command-line tool.
+- `../tools/studio.cpp` - `modelforge_studio`, the interactive terminal view.
 - `../tools/bench.cpp` - `modelforge_bench`, the research benchmark.

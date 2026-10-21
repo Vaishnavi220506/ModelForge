@@ -14,7 +14,7 @@
 
 namespace modelforge {
 
-// Project author, shown in the tools, reports, dashboard and paper.
+// Project author, shown in the tools, reports and paper.
 constexpr const char* kAuthor = "Vaishnavi";
 
 // ------------------------------------------------------------ model zoo
@@ -122,7 +122,7 @@ struct BenchmarkSummary {
     std::size_t ibpViolations = 0, controls = 0;
     std::size_t stableActive = 0, stableInactive = 0, unstable = 0;
     double seconds = 0.0;
-    std::string json;      // full results document (also embedded in the dashboard)
+    std::string json;      // full results document
     std::string casesCsv;  // one row per (model, fault, strategy, seed)
 };
 
@@ -131,7 +131,7 @@ BenchmarkSummary runBenchmark(const BenchmarkConfig& config,
 
 // Real-model compression study: every model in `realDirectory`
 // (<dataset>_<arch>.mforge with <dataset>_test.csv) under every standard
-// compression. Returns JSON for the dashboard plus a terminal summary.
+// compression. Returns JSON plus a terminal summary.
 struct RealStudySummary {
     std::size_t cases = 0, risky = 0, hiddenFromTestSet = 0, accuracyUnchanged = 0;
     std::map<std::string, double> detected;           // strategy -> risky cases caught (mean over seeds)
@@ -143,7 +143,7 @@ struct RealStudySummary {
 RealStudySummary runRealStudy(const std::string& realDirectory, std::size_t budget,
                               std::size_t seeds, const ProgressCallback& progress = {});
 
-// Single-model inspection used by the dashboard and the terminal studio.
+// Single-model inspection (inspect.json).
 std::string inspectModelJson(const std::string& manifestPath, const IRGraph& graph,
                              std::size_t budget, std::uint32_t seed);
 

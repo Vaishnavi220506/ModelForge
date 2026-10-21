@@ -21,8 +21,10 @@ endif()
 add_library(modelforge_core
     src/adaptive.cpp
     src/analysis.cpp
+    src/certify.cpp
     src/codegen.cpp
     src/diagnostics.cpp
+    src/dossier.cpp
     src/guardian.cpp
     src/ir.cpp
     src/loader.cpp
@@ -30,6 +32,8 @@ add_library(modelforge_core
     src/optimizer.cpp
     src/research.cpp
     src/shrink.cpp
+    src/temper.cpp
+    src/temper_study.cpp
     src/validator.cpp
     src/verifier.cpp
 )
@@ -72,16 +76,14 @@ target_link_libraries(modelforge_tests PRIVATE modelforge_core)
 add_executable(modelforge_guardian_eval tests/guardian_eval.cpp)
 target_link_libraries(modelforge_guardian_eval PRIVATE modelforge_core)
 
-# Research benchmark and the terminal studio. The dashboard lives at the
-# repository root so it can be opened straight from VS Code's explorer.
-get_filename_component(MODELFORGE_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+# Research benchmark, terminal studio and the Temper command-line tool.
 add_executable(modelforge_bench tools/bench.cpp)
 add_executable(modelforge_studio tools/studio.cpp)
-foreach(tool modelforge_bench modelforge_studio)
+add_executable(temper tools/temper.cpp)
+foreach(tool modelforge_bench modelforge_studio temper)
     target_link_libraries(${tool} PRIVATE modelforge_core)
     target_include_directories(${tool} PRIVATE tools)
     target_compile_definitions(${tool} PRIVATE
-        MODELFORGE_DASHBOARD_DIR="${MODELFORGE_REPO_ROOT}/dashboard"
         MODELFORGE_DEFAULT_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/models/iris_demo.mforge"
         MODELFORGE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/models")
 endforeach()
@@ -90,7 +92,7 @@ endforeach()
 # when this project is built from the workspace wrapper or directly.
 set(MODELFORGE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/$<CONFIG>")
 set_target_properties(modelforge modelforge_tests modelforge_guardian_eval
-                      modelforge_bench modelforge_studio PROPERTIES
+                      modelforge_bench modelforge_studio temper PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${MODELFORGE_OUTPUT_DIR}"
 )
 set_target_properties(modelforge_core PROPERTIES
@@ -110,12 +112,10 @@ add_test(
 add_test(
     NAME modelforge_bench_quick
     COMMAND modelforge_bench --quick --no-color --ascii
-            --out ${CMAKE_BINARY_DIR}/research_quick
-            --dashboard ${CMAKE_BINARY_DIR}/research_quick/dashboard
+            --out ${CMAKE_BINARY_DIR}/research_quick --no-binary
 )
 add_test(
     NAME modelforge_studio_demo
     COMMAND modelforge_studio --demo --no-color --ascii
-            --dashboard ${CMAKE_BINARY_DIR}/studio_dashboard
 )
 set_tests_properties(modelforge_studio_demo PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

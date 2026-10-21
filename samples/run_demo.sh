@@ -46,3 +46,13 @@ cat build/demo_bug/counterexample.json
 step "7. Shrink and check a real trained model"
 $MF ModelForge/review_2_core_implementation/models/real/wine_mlp16.mforge --shrink all \
     --data ModelForge/review_2_core_implementation/models/real/wine_test.csv --out build/demo_shrink | sed -n '5,20p'
+
+step "8. Temper: the full trust report (ModelForge is its compiler)"
+build/Release/temper ModelForge/review_2_core_implementation/models/real/wine_mlp16.mforge \
+    --data ModelForge/review_2_core_implementation/models/real/wine_test.csv --out build/demo_temper || true
+
+step "9. Temper: is a hand-optimised copy really equivalent?"
+build/Release/temper ModelForge/review_2_core_implementation/models/iris_demo.mforge \
+    --compare ModelForge/review_2_core_implementation/models/iris_handopt_ok.mforge || true
+build/Release/temper ModelForge/review_2_core_implementation/models/iris_demo.mforge \
+    --compare ModelForge/review_2_core_implementation/models/iris_handopt_bug.mforge || true

@@ -60,6 +60,32 @@ GuardianDecision checkCandidate(const IRGraph& before,
     }
     decision.foundByNearMiss = result.foundByNearMiss;
     decision.accepted = result.staticProbes > 0 && validation.passed && !diagnostics.hasErrors();
+    if (decision.accepted) {
+        CertifyOptions certify;
+        certify.tolerance = tolerance;
+        certify.maxBoxes = 64;
+        const auto inputs = before.values.find(before.inputName);
+        if (inputs != before.values.end()) {
+            const CertifyResult proof = certifyEquivalence(
+                before, candidate, uniformBox(elementCount(inputs->second.shape), kDefaultInputRadius),
+                certify);
+            decision.verdict = proof.verdict;
+            decision.certificate = proof.kind;
+            decision.certifiedBound = proof.bound;
+            if (proof.verdict == Verdict::Refuted) {
+                // The certifier's guided search found what Guardian missed.
+                decision.accepted = false;
+                validation.passed = false;
+                validation.outputMismatches = 1;
+                validation.firstFailure = ValidationProbe{"certifier_witness", *proof.witness};
+                DiagnosticEngine replay;
+                if (auto out = executeIR(before, *proof.witness, replay)) validation.originalOutput = *out;
+                if (auto out = executeIR(candidate, *proof.witness, replay)) validation.candidateOutput = *out;
+            }
+        }
+    } else {
+        decision.verdict = Verdict::Refuted;
+    }
     if (!decision.accepted) {
         simplifyFailure(before, candidate, decision.validation, diagnostics, tolerance);
         if (validation.firstFailure) {
@@ -83,6 +109,8 @@ GuardianReport optimizeWithGuardian(IRGraph& graph, DiagnosticEngine& diagnostic
             decision.passName = optimizationPassName(pass);
             decision.accepted = true;
             decision.validation.passed = true;
+            decision.verdict = Verdict::Certified;  // nothing changed
+            decision.certificate = CertificateKind::Exact;
         } else {
             decision = checkCandidate(graph, candidate, optimizationPassName(pass), diagnostics);
         }

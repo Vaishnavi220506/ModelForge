@@ -262,4 +262,31 @@ inline void banner() {
               << "\n";
 }
 
+// Temper wordmark: the trust layer; ModelForge is its compiler.
+inline void temperBanner(const std::string& subtitle) {
+    const std::vector<std::string> art = {
+        " _____                                ",
+        "|_   _|__ _ __ ___  _ __   ___ _ __   ",
+        "  | |/ _ \\ '_ ` _ \\| '_ \\ / _ \\ '__|  ",
+        "  | |  __/ | | | | | |_) |  __/ |     ",
+        "  |_|\\___|_| |_| |_| .__/ \\___|_|     ",
+        "                   |_|                "};
+    const int colours[][3] = {{253, 186, 116}, {251, 146, 60}, {249, 115, 22},
+                              {234, 88, 12},   {194, 65, 12},  {154, 52, 18}};
+    std::cout << "\n";
+    for (std::size_t i = 0; i < art.size(); ++i) {
+        std::cout << "  " << rgb(colours[i][0], colours[i][1], colours[i][2]) << bold() << art[i]
+                  << reset() << "\n";
+    }
+    std::cout << "  " << muted() << subtitle << reset() << "\n  " << muted() << "by " << reset()
+              << bold() << pink() << "Vaishnavi" << reset() << "\n";
+}
+
+// Coloured verdict badge.
+inline std::string verdictBadge(const std::string& verdict) {
+    if (verdict == "CERTIFIED") return bold() + good() + verdict + reset();
+    if (verdict == "REFUTED") return bold() + bad() + verdict + reset();
+    return bold() + warn() + verdict + reset();
+}
+
 }  // namespace term
