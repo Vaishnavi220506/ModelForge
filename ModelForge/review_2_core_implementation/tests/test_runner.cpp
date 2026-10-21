@@ -4,6 +4,7 @@
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
+#include "lifecycle.h"
 #include "loader.h"
 #include "optimizer.h"
 #include "research.h"
@@ -18,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <random>
 #include <unordered_map>
 #include <set>
@@ -486,6 +488,61 @@ void testTemper(const std::filesystem::path& fixtureDirectory) {
     }
 }
 
+void testLifecycle(const std::filesystem::path& fixtureDirectory) {
+    using namespace modelforge;
+    const auto models = fixtureDirectory.parent_path().parent_path() / "models";
+    const auto load = [](const std::filesystem::path& path) {
+        std::ifstream file(path);
+        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        IRGraph graph;
+        DiagnosticEngine diagnostics;
+        check(compileManifestText(text, graph, diagnostics), "lifecycle model compiles");
+        return graph;
+    };
+    const IRGraph demo = load(models / "iris_demo.mforge");
+    const IRGraph bug = load(models / "iris_handopt_bug.mforge");
+    const Box domain = uniformBox(4, kDefaultInputRadius);
+
+    // Culprit localisation through the hand fusion: one weight, and the revert is proven.
+    const auto culprit = localizeCulprits(demo, bug, domain);
+    check(culprit.applicable && culprit.culprits.size() == 1, "one culprit weight should be isolated");
+    check(culprit.afterRevert == Verdict::Certified, "reverting the culprit should be certified");
+
+    // Partitions cover the domain whatever the verdict, and certificates round-trip.
+    CertifyOptions options;
+    const auto first = certifyIncrementally(demo, bug, domain, options);
+    check(first.result.verdict == Verdict::Refuted && !first.certificate.witness.empty(),
+          "the hand-optimisation bug should be refuted with a witness");
+    double share = 0.0;
+    for (const auto& box : first.certificate.partition) share += std::exp(box.logVolume() - domain.logVolume());
+    check(std::fabs(share - 1.0) < 1e-6, "partition must cover the domain");
+    const auto path = (std::filesystem::temp_directory_path() / "modelforge_test.cert").string();
+    check(saveCertificate(path, first.certificate), "certificate saves");
+    ProofCertificate loaded;
+    std::string error;
+    check(loadCertificate(path, loaded, error) && loaded.partition.size() == first.certificate.partition.size() &&
+              loaded.witness == first.certificate.witness,
+          "certificate round-trips");
+    const auto again = certifyIncrementally(demo, bug, domain, options, &loaded);
+    check(again.carriedWitness && again.result.evaluations == 1, "stored witness should refute in one evaluation");
+    // A seed from a refuted pair must not make an equivalent pair look different.
+    const auto same = certifyIncrementally(demo, demo, domain, options, &loaded);
+    check(same.result.verdict == Verdict::Certified, "reused partition must still certify an identical model");
+
+    // Mixed precision: all-fp32 is the identity; the plan is certified and smaller.
+    std::map<std::string, int> none;
+    for (const auto& [name, tensor] : demo.constants) none[name] = 32;
+    check(graphFingerprint(compressLayers(demo, none)) == graphFingerprint(demo), "fp32 plan is the identity");
+    const IRGraph iris = load(models / "real" / "iris_mlp16.mforge");
+    Dataset test;
+    loadDataset((models / "real" / "iris_test.csv").string(), 4, test, error);
+    const auto plan = searchMixedPrecision(iris, test, 0.5f, 20);
+    check(plan.audit.verdict == Verdict::Certified && plan.weightSize < 1.0,
+          "mixed-precision plan should be certified and smaller than fp32");
+    const double found = plan.audit.search.witness.empty() ? 0.0 : plan.audit.search.severity;
+    check(found <= plan.audit.certificate.bound + 1e-9, "mixed-precision bracket must not invert");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -501,6 +558,7 @@ int main(int argc, char* argv[]) {
     testGuardianPlus(fixtureDirectory);
     testShrink(fixtureDirectory);
     testTemper(fixtureDirectory);
+    testLifecycle(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

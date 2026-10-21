@@ -1368,8 +1368,14 @@ CertifyResult certifyEquivalence(const IRGraph& original, const IRGraph& candida
     const double rootVolume = root.logVolume();
     bool allExact = true;
     // Largest boxes first: certified volume grows fastest.
-    std::vector<Leaf> queue = {{root, 0, rootVolume}};
+    std::vector<Leaf> queue;
+    if (options.seedPartition != nullptr && !options.seedPartition->empty()) {
+        for (const Box& box : *options.seedPartition) queue.push_back({box, 0, box.logVolume()});
+    } else {
+        queue.push_back({root, 0, rootVolume});
+    }
     const auto larger = [](const Leaf& a, const Leaf& b) { return a.logVolume < b.logVolume; };
+    std::make_heap(queue.begin(), queue.end(), larger);
     while (!queue.empty()) {
         std::pop_heap(queue.begin(), queue.end(), larger);
         Leaf leaf = std::move(queue.back());
@@ -1387,6 +1393,7 @@ CertifyResult certifyEquivalence(const IRGraph& original, const IRGraph& candida
             result.bound = std::max(result.bound, exact ? 0.0 : bound);
             allExact = allExact && exact;
             result.certifiedFraction += std::exp(leaf.logVolume - rootVolume);
+            result.partition.push_back(std::move(leaf.box));
             continue;
         }
         if (options.centreChecks && result.evaluations < options.maxEvaluations) {
@@ -1396,6 +1403,7 @@ CertifyResult certifyEquivalence(const IRGraph& original, const IRGraph& candida
                 result.verdict = Verdict::Refuted;
                 result.witness = centre;
                 result.refutedBy = "centre";
+                result.partition.push_back(std::move(leaf.box));  // keep the partition a cover
                 break;
             }
         }
@@ -1406,17 +1414,20 @@ CertifyResult certifyEquivalence(const IRGraph& original, const IRGraph& candida
                 result.verdict = Verdict::Refuted;
                 result.witness = std::move(witness);
                 result.refutedBy = how;
+                result.partition.push_back(std::move(leaf.box));
                 break;
             }
         }
         if (result.boxes + queue.size() + 2 > options.maxBoxes || leaf.depth >= options.maxDepth) {
             ++result.openBoxes;
+            result.partition.push_back(std::move(leaf.box));
             continue;
         }
         const std::size_t d = splitDimension(leaf.box, influence);
         const float middle = 0.5f * (leaf.box.lower[d] + leaf.box.upper[d]);
         if (!(middle > leaf.box.lower[d] && middle < leaf.box.upper[d])) {
             ++result.openBoxes;
+            result.partition.push_back(std::move(leaf.box));
             continue;
         }
         Leaf low = leaf, high = std::move(leaf);
@@ -1431,6 +1442,7 @@ CertifyResult certifyEquivalence(const IRGraph& original, const IRGraph& candida
         std::push_heap(queue.begin(), queue.end(), larger);
     }
     result.openBoxes += queue.size();
+    for (auto& leaf : queue) result.partition.push_back(std::move(leaf.box));
     if (result.verdict != Verdict::Refuted && result.openBoxes == 0) {
         result.verdict = Verdict::Certified;
         result.kind = allExact ? CertificateKind::Exact : CertificateKind::Bounded;

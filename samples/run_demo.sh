@@ -56,3 +56,7 @@ build/Release/temper ModelForge/review_2_core_implementation/models/iris_demo.mf
     --compare ModelForge/review_2_core_implementation/models/iris_handopt_ok.mforge || true
 build/Release/temper ModelForge/review_2_core_implementation/models/iris_demo.mforge \
     --compare ModelForge/review_2_core_implementation/models/iris_handopt_bug.mforge || true
+
+step "10. Temper: smallest provably low-risk model (certified mixed precision)"
+build/Release/temper ModelForge/review_2_core_implementation/models/real/wine_mlp32x16.mforge \
+    --data ModelForge/review_2_core_implementation/models/real/wine_test.csv --repair --out build/demo_repair || true

@@ -500,13 +500,21 @@ SeveritySearch falsifySeverity(const IRGraph& original, const IRGraph& candidate
 CompressionAudit auditCompression(const IRGraph& original, const Compression& compression,
                                   const Dataset& test, float radius, std::size_t maxBalls,
                                   std::size_t maxBoxesPerBall) {
+    const double weightSize = compression.kind == CompressionKind::Pruning
+                                  ? 1.0 - compression.pruneFraction
+                                  : static_cast<double>(compression.bits) / 32.0;
+    return auditCompressedModel(original, compressModel(original, compression), compression.name,
+                                weightSize, test, radius, maxBalls, maxBoxesPerBall);
+}
+
+CompressionAudit auditCompressedModel(const IRGraph& original, const IRGraph& compressed,
+                                      const std::string& name, double weightSize,
+                                      const Dataset& test, float radius, std::size_t maxBalls,
+                                      std::size_t maxBoxesPerBall) {
     const auto start = std::chrono::steady_clock::now();
     CompressionAudit audit;
-    audit.compression = compression.name;
-    audit.weightSize = compression.kind == CompressionKind::Pruning
-                           ? 1.0 - compression.pruneFraction
-                           : static_cast<double>(compression.bits) / 32.0;
-    const IRGraph compressed = compressModel(original, compression);
+    audit.compression = name;
+    audit.weightSize = weightSize;
     audit.accuracyBefore = accuracy(original, test);
     audit.accuracyAfter = accuracy(compressed, test);
     audit.testFlips = searchTestSet(original, compressed, test).disagreements;

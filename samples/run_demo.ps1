@@ -71,3 +71,6 @@ Step "8. Temper: the full trust report (ModelForge is its compiler)"
 Step "9. Temper: is a hand-optimised copy really equivalent?"
 & $TP ModelForge\review_2_core_implementation\models\iris_demo.mforge --compare ModelForge\review_2_core_implementation\models\iris_handopt_ok.mforge
 & $TP ModelForge\review_2_core_implementation\models\iris_demo.mforge --compare ModelForge\review_2_core_implementation\models\iris_handopt_bug.mforge
+
+Step "10. Temper: smallest provably low-risk model (certified mixed precision)"
+& $TP ModelForge\review_2_core_implementation\models\real\wine_mlp32x16.mforge --data ModelForge\review_2_core_implementation\models\real\wine_test.csv --repair --out build\demo_repair

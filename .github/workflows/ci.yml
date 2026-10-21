@@ -35,6 +35,7 @@ jobs:
           "build/Release/modelforge_bench${{ matrix.exe }}" --no-color --balls 60 --out build/research
           python -c "import json; d=json.load(open('build/research/results.json')); s={x['name']:x for x in d['strategies']}; assert d['corpus']['ibp_violations']==0; assert all(x['false_positives']==0 for x in d['strategies']); assert s['guardian_apc']['overall']['rate'] >= s['random']['overall']['rate']; print({k:round(v['overall']['rate'],4) for k,v in s.items()})"
           python -c "import json; t=json.load(open('build/research/temper_results.json')); s={x['name']:x for x in t['strategies']}; assert all(x['violations']==0 for x in t['strategies']); b=s['temper']['benign']; assert b['undecided']==0 and b['refuted']==0; print('temper decided', t['cases'], 'cases; unsound 0')"
+          python -c "import json; l=json.load(open('build/research/lifecycle_results.json')); assert l['violations']==0; assert all(c['exact'] for c in l['culprits']); assert all(p['verdict']=='CERTIFIED' for p in l['mixed_precision']); assert all(r['agree'] for r in l['incremental']); print('lifecycle: sound, culprits exact, repairs certified')"
           python -c "import json; c=json.load(open('build/research/compression_results.json')); assert c['bracket_violations']==0; print('compression', c['certified'], 'certified', c['refuted'], 'refuted', c['undecided'], 'undecided')"
       - name: Temper deployment dossier and equivalence checks
         shell: bash
@@ -48,6 +49,7 @@ jobs:
           code=$?
           set -e
           [[ $code -eq 3 ]]
+          "build/Release/temper${{ matrix.exe }}" $M/real/wine_mlp32x16.mforge --data $M/real/wine_test.csv --repair --balls 30 --out build/temper_repair --no-color --ascii
       - name: Compile Iris and catch a deliberate bad rewrite
         shell: bash
         run: |

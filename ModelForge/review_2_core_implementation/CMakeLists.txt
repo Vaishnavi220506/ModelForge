@@ -22,6 +22,7 @@ add_library(modelforge_core
     src/adaptive.cpp
     src/analysis.cpp
     src/certify.cpp
+    src/lifecycle.cpp
     src/codegen.cpp
     src/diagnostics.cpp
     src/dossier.cpp

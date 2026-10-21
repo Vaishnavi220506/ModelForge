@@ -44,6 +44,16 @@ tempering makes it trustworthy.
    its certified domain and model fingerprint; the binary is compiled under
    several flag sets and replayed against the certified model.
 
+6. **Acting on the verdict** (`src/lifecycle.{h,cpp}`).
+   *Certified mixed-precision repair*: per-layer int4/int8/fp16/fp32, accepted only
+   when the whole model's severity bound stays proven low (cf. HAWQ, but with a proof).
+   *Certified culprit localisation*: ddmin over changed weights with a Temper decision
+   as the oracle; the revert is re-decided. *Incremental re-certification*: certificates
+   store fingerprints, domain, partition and witness; the next version replays the
+   witness, then starts branch and bound from the partition (cf. IVAN, PLDI 2023).
+7. **Real-world bug classes**: faults modelled on the root causes in Shen et al.
+   (FSE 2021); Temper refutes 71/71 observable ones (test set 62) and proves 9 harmless.
+
 ## Where the code is
 
 | Piece | File |
@@ -54,6 +64,7 @@ tempering makes it trustworthy.
 | Evaluation studies | `src/temper_study.{h,cpp}`, `tools/bench.cpp` |
 | Falsifier (Guardian-APC+) | `src/analysis.cpp`, `src/adaptive.cpp`, `src/guardian.cpp` |
 | Studio screens t, c, k, d | `tools/studio.cpp` |
+| Repair, culprit localisation, incremental certificates, bug-class study | `src/lifecycle.{h,cpp}` |
 
 ## Results
 
@@ -80,14 +91,19 @@ See the main [README](../../README.md) and the paper
     --data ModelForge/review_2_core_implementation/models/real/wine_test.csv
 ./build/Release/temper ModelForge/review_2_core_implementation/models/iris_demo.mforge \
     --compare ModelForge/review_2_core_implementation/models/iris_handopt_bug.mforge
+./build/Release/temper ModelForge/review_2_core_implementation/models/real/wine_mlp32x16.mforge \
+    --data ModelForge/review_2_core_implementation/models/real/wine_test.csv --repair
 ./build/Release/modelforge_studio      # then t, c, k, d
 ```
 
 1. **Dossier**: passes certified bit-exact with 0 evaluations; int8 certified
    low-risk, int4 refuted although no test prediction changes; binary bit-exact
    at -O2, fast-math flagged.
-2. **Compare**: a single mistyped weight is refuted at the second input and
-   localised to `dense_2`; the correct hand-optimised copy is certified.
-3. **Studio c**: the certified-region map shows, on a 2-D slice of input space,
+2. **Compare**: a single mistyped weight is refuted at the second input,
+   localised to `dense_2`, and delta debugging names it (`w2[8]: 0.5 -> 0.505`) and
+   certifies the revert; the correct hand-optimised copy is certified.
+3. **Repair**: Wine (32,16) gets fp16/int8/int8, 35.7% of the weights, CERTIFIED
+   low risk, where the best certified uniform format is fp16 (50%).
+4. **Studio c**: the certified-region map shows, on a 2-D slice of input space,
    exactly where a subtle bug can act (refuted cells) and where it provably
    cannot (certified cells).

@@ -2,6 +2,7 @@
 
 // Terminal renderings shared by modelforge_bench and modelforge_studio.
 
+#include "lifecycle.h"
 #include "research.h"
 #include "temper_study.h"
 
@@ -254,6 +255,80 @@ inline void compressionStudy(const modelforge::CompressionStudySummary& c) {
               << reset() << " " << c.verdicts.undecided << muted() << " of " << c.cases
               << "; bracket violations " << reset()
               << (c.bracketViolations ? bad() : good()) << c.bracketViolations << reset() << "\n";
+}
+
+inline void lifecycleStudy(const modelforge::LifecycleStudySummary& l) {
+    using namespace term;
+    using modelforge::Verdict;
+    const auto verdictCell = [](Verdict v) {
+        return (v == Verdict::Certified ? good() : v == Verdict::Refuted ? bad() : warn()) +
+               std::string(modelforge::verdictName(v)) + reset();
+    };
+    rule("Temper repair: smallest provably safe mixed-precision model");
+    Table precision;
+    precision.headers = {"model", "per-layer bits", "weights kept", "best uniform", "proven margin",
+                         "accuracy", "checks"};
+    precision.rightAlign = {false, false, true, false, true, true, true};
+    for (const auto& row : l.precision) {
+        const auto& p = row.plan;
+        std::string bits;
+        for (const auto& layer : p.layers) bits += (bits.empty() ? "" : "/") + std::to_string(layer.bits);
+        precision.rows.push_back({row.model, bold() + bits + reset(), percent(p.weightSize),
+                                  p.bestUniform + " (" + percent(p.bestUniformSize) + ")",
+                                  verdictCell(p.audit.verdict) + " " + fixed(p.audit.certificate.bound, 2),
+                                  percent(p.audit.accuracyAfter), std::to_string(p.trials)});
+    }
+    precision.print();
+
+    rule("Temper localise: which edited weight breaks the model?");
+    Table culprits;
+    culprits.headers = {"model", "changed weights", "culprit found", "revert CERTIFIED", "decisions", "ms"};
+    culprits.rightAlign = {false, true, false, false, true, true};
+    for (const auto& c : l.culprits) {
+        culprits.rows.push_back({c.model, std::to_string(c.edits),
+                                 (c.exact ? good() + "exact" : bad() + "no") + reset(),
+                                 (c.fixed ? good() + "yes" : warn() + "no") + reset(),
+                                 std::to_string(c.decisions), fixed(c.milliseconds, 0)});
+    }
+    culprits.print();
+
+    rule("Temper incremental: re-certifying the next model version");
+    Table incremental;
+    incremental.headers = {"model", "version", "verdict", "boxes scratch", "boxes reused",
+                           "proven scratch", "proven reused", "ms scratch", "ms reused"};
+    incremental.rightAlign = {false, false, false, true, true, true, true, true, true};
+    for (const auto& r : l.incremental) {
+        incremental.rows.push_back({r.model, r.step, verdictCell(r.verdict), std::to_string(r.scratchBoxes),
+                                    bold() + std::to_string(r.reusedBoxes) + reset(), percent(r.scratchShare),
+                                    percent(r.reusedShare), fixed(r.scratchMs, 1),
+                                    fixed(r.reusedMs, 1)});
+    }
+    incremental.print();
+
+    rule("Temper on real-world bug classes (DL compiler bug studies)");
+    std::map<std::string, std::array<std::size_t, 6>> byClass;  // n, observable, test, random, refuted, certified
+    for (const auto& r : l.bugs) {
+        auto& c = byClass[r.bugClass];
+        ++c[0];
+        c[1] += r.expected;
+        c[2] += r.testSet;
+        c[3] += r.random;
+        c[4] += r.temper == Verdict::Refuted;
+        c[5] += r.temper == Verdict::Certified;
+    }
+    Table bugs;
+    bugs.headers = {"bug class", "models", "observable", "test set", "random 1k", "temper REFUTED",
+                    "temper CERTIFIED"};
+    bugs.rightAlign = {false, true, true, true, true, true, true};
+    for (const auto& [name, c] : byClass) {
+        bugs.rows.push_back({name, std::to_string(c[0]), std::to_string(c[1]), std::to_string(c[2]),
+                             std::to_string(c[3]), bold() + std::to_string(c[4]) + reset(),
+                             std::to_string(c[5])});
+    }
+    bugs.print();
+    std::cout << "\n  " << muted() << "observable = some input in the domain exposes it (20k-input oracle or a Temper witness); "
+              << "CERTIFIED = proven harmless on the domain. Unsound certificates: " << reset()
+              << (l.violations ? bad() : good()) << l.violations << reset() << "\n";
 }
 
 inline void binaryStudy(const modelforge::BinaryStudySummary& b) {

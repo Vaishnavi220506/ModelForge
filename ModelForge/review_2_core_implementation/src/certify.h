@@ -142,6 +142,10 @@ struct CertifyOptions {
     // that place each divergence source inside its divergence interval.
     bool guidedWitnesses = true;
     std::size_t maxEvaluations = 4096;
+    // Incremental certification: start branch and bound from a previous run's
+    // partition of the same box instead of the box itself. Every seed leaf is
+    // re-verified, so a stale seed costs time, never soundness.
+    const std::vector<Box>* seedPartition = nullptr;
 };
 
 struct CertifyResult {
@@ -158,6 +162,7 @@ struct CertifyResult {
     std::string refutedBy;                     // centre | vertex | divergence-source
     std::size_t sources = 0;                   // divergence sources found statically
     double milliseconds = 0.0;
+    std::vector<Box> partition;  // final leaves (certified, then open), reusable as a seed
 };
 
 // Epsilon-equivalence on a box: certify every leaf, or refute at a centre.

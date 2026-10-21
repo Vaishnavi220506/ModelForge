@@ -37,6 +37,7 @@ void usage() {
               << "  --inspect FILE   model summarised in inspect.json\n"
               << "  --balls N        test rows per compression audit (default all; quick 30)\n"
               << "  --guardian-only  skip the Temper studies\n"
+              << "  --lifecycle-only only the Temper lifecycle study (repair, localise, incremental, bug classes)\n"
               << "  --no-binary      skip compiling generated binaries\n"
               << "  --ascii          plain ASCII output\n"
               << "  --no-color       disable colours\n";
@@ -48,7 +49,7 @@ int main(int argc, char* argv[]) {
     modelforge::BenchmarkConfig config;
     std::filesystem::path out = "build/research";
     std::size_t balls = 0;
-    bool temperStudies = true, binary = true;
+    bool temperStudies = true, binary = true, lifecycleOnly = false;
     std::string inspect = MODELFORGE_DEFAULT_MODEL;
     bool ascii = false, noColor = false;
     for (int i = 1; i < argc; ++i) {
@@ -68,6 +69,7 @@ int main(int argc, char* argv[]) {
         else if (arg == "--out") out = next();
         else if (arg == "--balls") balls = std::stoul(next());
         else if (arg == "--guardian-only") temperStudies = false;
+        else if (arg == "--lifecycle-only") lifecycleOnly = true;
         else if (arg == "--no-binary") binary = false;
         else if (arg == "--inspect") inspect = next();
         else if (arg == "--ascii") ascii = true;
@@ -96,6 +98,17 @@ int main(int argc, char* argv[]) {
               << "  " << term::dim() << config.models << " models, budget " << config.budget
               << ", " << config.randomSeeds << " random seeds" << term::reset() << "\n\n";
 
+    const auto bar = [](std::size_t done, std::size_t total, const std::string& label) {
+        term::progress(done, total, label);
+    };
+    const auto realDirectory = (std::filesystem::path(MODELFORGE_MODELS_DIR) / "real").string();
+    if (lifecycleOnly) {
+        const auto lifecycle = modelforge::runLifecycleStudy(realDirectory, balls, bar);
+        render::lifecycleStudy(lifecycle);
+        std::filesystem::create_directories(out);
+        render::writeText(out / "lifecycle_results.json", lifecycle.json);
+        return lifecycle.violations == 0 ? 0 : 1;
+    }
     const auto summary = modelforge::runBenchmark(
         config, [](std::size_t done, std::size_t total, const std::string& label) {
             term::progress(done, total, label);
@@ -126,9 +139,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    const auto bar = [](std::size_t done, std::size_t total, const std::string& label) {
-        term::progress(done, total, label);
-    };
     bool sane = summary.ibpViolations == 0;
     for (const auto& s : summary.strategies) sane = sane && s.falsePositives == 0;
     bool ok = render::writeText(out / "results.json", summary.json) &&
@@ -138,7 +148,6 @@ int main(int argc, char* argv[]) {
     if (temperStudies) {
         const auto temper = modelforge::runTemperStudy(config, bar);
         render::temperStudy(temper);
-        const auto realDirectory = (std::filesystem::path(MODELFORGE_MODELS_DIR) / "real").string();
         const auto compression = modelforge::runCompressionStudy(realDirectory, balls, bar);
         render::compressionStudy(compression);
         ok = ok && render::writeText(out / "temper_results.json", temper.json) &&
@@ -146,6 +155,10 @@ int main(int argc, char* argv[]) {
              render::writeText(out / "compression_results.json", compression.json);
         for (const auto& s : temper.strategies) sane = sane && s.violations == 0;
         sane = sane && compression.bracketViolations == 0;
+        const auto lifecycle = modelforge::runLifecycleStudy(realDirectory, balls, bar);
+        render::lifecycleStudy(lifecycle);
+        ok = ok && render::writeText(out / "lifecycle_results.json", lifecycle.json);
+        sane = sane && lifecycle.violations == 0;
         if (binary) {
             const auto binaries =
                 modelforge::runBinaryStudy(realDirectory, (out / "binaries").string(), bar);

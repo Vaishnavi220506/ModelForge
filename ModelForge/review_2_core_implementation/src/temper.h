@@ -124,6 +124,11 @@ struct CompressionAudit {
 CompressionAudit auditCompression(const IRGraph& original, const Compression& compression,
                                   const Dataset& test, float radius = 0.5f,
                                   std::size_t maxBalls = 0, std::size_t maxBoxesPerBall = 16);
+// Same bracket for an already-compressed graph (e.g. a mixed-precision plan).
+CompressionAudit auditCompressedModel(const IRGraph& original, const IRGraph& compressed,
+                                      const std::string& name, double weightSize,
+                                      const Dataset& test, float radius = 0.5f,
+                                      std::size_t maxBalls = 0, std::size_t maxBoxesPerBall = 16);
 
 // ------------------------------------------------------------ binary audit
 
