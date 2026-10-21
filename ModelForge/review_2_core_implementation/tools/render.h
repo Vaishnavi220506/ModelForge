@@ -272,14 +272,15 @@ inline void binaryStudy(const modelforge::BinaryStudySummary& b) {
                 order.push_back(r.flags);
             }
             auto& v = perFlags[r.flags];
-            v[0] += r.built ? 1 : 0;
-            v[1] += r.built && r.maximumAbsoluteError == 0 && r.predictionMismatches == 0 ? 1 : 0;
+            const bool ran = r.built && r.error.empty() && r.rows > 0;
+            v[0] += ran ? 1 : 0;
+            v[1] += ran && r.maximumAbsoluteError == 0 && r.predictionMismatches == 0 ? 1 : 0;
             v[2] = std::max(v[2], r.maximumAbsoluteError);
             v[3] += static_cast<double>(r.predictionMismatches);
         }
     }
     Table table;
-    table.headers = {"flags (" + b.compiler + ")", "models built", "bit-exact", "max |diff|",
+    table.headers = {"flags (" + b.compiler + ")", "models run", "bit-exact", "max |diff|",
                      "prediction changes"};
     table.rightAlign = {false, true, true, true, true};
     for (const auto& flags : order) {

@@ -5,7 +5,7 @@ Author: **Vaishnavi**
 Guardian-APC extends the original Guardian per-pass validator with three ideas,
 and Guardian-APC+ adds three more (sections 4 to 6).
 Together they form the project's research contribution. The conference draft is
-in [`../paper/guardian_apc.tex`](../paper/guardian_apc.tex).
+in [`../paper/temper.tex`](../paper/temper.tex) (Section 3).
 
 ## 1. Interval bound propagation (IBP) finds the neurons worth testing
 
@@ -142,6 +142,6 @@ Snapshot: [`../research/results/results.json`](../research/results/results.json)
    recommends int8 (int4 looks fine on accuracy but is risky).
 3. Option 9 compares the Iris model with a hand-optimised copy that has one
    mistyped weight: the difference is found at the second input and traced to `dense_2`.
-4. Option 6 runs the quick benchmark live and refreshes the dashboard.
-5. Open `dashboard/index.html`: Overview (headline and budget curve), Fault
-   families (where the methods differ), Statistics (McNemar), Model inspector.
+4. Option 6 runs the quick benchmark live in the terminal.
+5. Temper screens: t (verdicts), c (certified-region map), k (compression
+   brackets), d (deployment dossier). See [temper.md](temper.md).

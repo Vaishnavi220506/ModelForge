@@ -103,6 +103,7 @@ bool generateCpp(const IRGraph& graph,
     source << "#include \"model.h\"\n"
            << "#include <algorithm>\n"
            << "#include <cmath>\n"
+           << "#include <cstdlib>\n"
            << "#include <fstream>\n"
            << "#include <iomanip>\n"
            << "#include <iostream>\n"
@@ -320,9 +321,10 @@ static Tensor fused_gemm_relu(const Tensor& a,
     if (first == std::string::npos) throw std::invalid_argument("empty number");
     const auto last = raw.find_last_not_of(" \t\r\n");
     const std::string text = raw.substr(first, last - first + 1);
-    std::size_t parsed = 0;
-    const float value = std::stof(text, &parsed);
-    if (parsed != text.size() || !std::isfinite(value))
+    // strtof, unlike stof, accepts subnormal values such as 1e-40.
+    char* end = nullptr;
+    const float value = std::strtof(text.c_str(), &end);
+    if (end != text.c_str() + text.size() || !std::isfinite(value))
         throw std::invalid_argument("not a finite number");
     return value;
 }

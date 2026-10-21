@@ -1,0 +1,235 @@
+% Forge, then Temper: conference paper draft (IEEE two-column format).
+% Compile: pdflatex temper && bibtex temper && pdflatex temper && pdflatex temper
+% (or upload this folder to Overleaf). Every number comes from `modelforge_bench`;
+% snapshots are in ../research/results/ (results.json, temper_results.json,
+% compression_results.json, binary_results.json).
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+
+\begin{document}
+
+\title{Forge, then Temper: Falsify-or-Certify Assurance for Every\\Transformation from Trained Network to Edge Binary}
+
+\author{\IEEEauthorblockN{Vaishnavi}
+\IEEEauthorblockA{Department and institution (fill in)\\
+Email (fill in)}}
+
+\maketitle
+
+\begin{abstract}
+Between a trained neural network and the binary that runs on a device lie many transformations: graph rewrites in a compiler, hand edits, quantisation and pruning, code generation and the C++ compiler's own optimisations. Each can silently change predictions, and today each is checked differently, if at all: tests that can only fail to find bugs, or verifiers that can only fail to prove their absence. We present \emph{Temper}, a trust layer that gives \emph{every} transformation a three-valued verdict: REFUTED with a replayable, localised counterexample; CERTIFIED with a proof that the outputs are bit-identical (or within $\varepsilon$) for every input in the deployment domain; or UNDECIDED with the share of the domain already proven. Temper couples a boundary-targeting falsifier (Guardian-APC+) with a new differential certifier that (i)~is sound for the \emph{float32} program, not only in real arithmetic, (ii)~tracks \emph{exactness}, proving bit-identity for structural rewrites, (iii)~propagates symbolic bounds on the difference of two networks, and (iv)~statically locates \emph{divergence sources}, the units and value ranges where a candidate can disagree, so that the falsifier can solve for inputs there. On 2{,}352 transformations of 96 networks (2{,}064 injected faults, 96 negative controls, 192 real optimisation passes), Temper decides 99.7\%, against 84.6\% for the falsifier and 84.2\% for the certifier alone, with half the falsifier's evaluations and no unsound certificate. It refutes 67 of the 68 observable faults the falsifier misses, 54 of which no input of a 4{,}000-input random oracle exposes. The same machinery brackets the risk of compressing 8 real classifiers (12 compressions certified low-risk, 25 refuted with realistic witnesses, including 7 whose test accuracy did not drop), and checks the generated C++ binary: bit-exact at -O0/-O2 on all models, while fast-math and FMA contraction move scores by up to $8.9\times10^{-7}$. Temper is open source, runs in the terminal, and is built around the ModelForge compiler.
+\end{abstract}
+
+\begin{IEEEkeywords}
+ML compilers, translation validation, differential verification, model compression, falsification, certification, edge AI
+\end{IEEEkeywords}
+
+\section{Introduction}
+A network trained in Python reaches a microcontroller or phone through a \emph{chain} of transformations. An ML compiler fuses operators, folds constants and removes dead code~\cite{tvm,glow}; engineers hand-optimise or convert models; the weights are quantised or pruned; code is generated; and a C++ compiler applies its own optimisations, sometimes with \texttt{-ffast-math}. Any link can change a prediction, and production compilers do have such bugs~\cite{nnsmith}.
+
+Two families of tools address individual links. \emph{Testers} (differential testing, fuzzing~\cite{nnsmith,diffchaser}) are cheap but can only say ``no bug found''. \emph{Verifiers} prove rewrite rules~\cite{tensorright}, single compilations~\cite{pnueli,necula,alive2} or properties of networks~\cite{reluplex,deeppoly,reludiff} but often reason in real arithmetic, need a formal model of every operator, and simply time out or say ``unknown'' when a bug exists. Neither gives a deployment engineer a single, actionable answer for the whole chain.
+
+\textbf{Temper} answers one question per transformation $T$ of a model $f$ into $f'=T(f)$, over a deployment domain $D$: \emph{can the shipped program behave differently from the model I validated?} The answer is one of
+\begin{itemize}
+\item \textbf{REFUTED}: an input $x\in D$ with $f(x)\ne f'(x)$ beyond tolerance, minimised and localised to the first differing IR value;
+\item \textbf{CERTIFIED}: a proof that $f'(x)=f(x)$ \emph{bit for bit} (or $\|f'(x)-f(x)\|_\infty\le\varepsilon$) for all $x\in D$, under float32 semantics;
+\item \textbf{UNDECIDED}: neither, with the certified share of $D$.
+\end{itemize}
+The ModelForge compiler is one component: it produces candidate transformations and code, and Temper decides which to keep.
+
+\textbf{Contributions.}
+\begin{enumerate}
+\item A \textbf{falsify-or-certify} decision procedure for neural-network transformations that runs a static proof, a boundary-targeting falsifier (Guardian-APC+), and a certificate-guided branch and bound in sequence, each step informing the next (\S\ref{sec:loop}).
+\item A \textbf{float32-sound, exactness-tracking differential certifier}: symbolic bounds padded by the dot-product rounding bound, a canonical form, lockstep propagation of $\Delta=f'-f$ with symbolic $\Delta$ bounds, and a per-value \emph{exactness bit} that proves bit-identity for structural rewrites (\S\ref{sec:certifier}).
+\item \textbf{Divergence sources}: the certifier reports the units and pre-activation intervals where a candidate's operator can disagree with the original's; the falsifier Newton-solves inputs into them. This refutes faults that random testing at 4{,}000 inputs and Guardian-APC+ both miss, typically in a handful of evaluations (\S\ref{sec:sources}).
+\item \textbf{One verdict for every link}: compression risk as a \emph{severity bracket} (found $\le$ true worst $\le$ proven), certified domain specialisation, and a \emph{binary audit} that compiles the generated C++ under several flag sets and replays it against the certified model; the generated program carries its certified domain and fingerprint (\S\ref{sec:chain}).
+\item An open, terminal-first implementation (C++17, no dependencies): a one-command deployment dossier with CI exit codes, an interactive studio, and a benchmark that regenerates every number here (\S\ref{sec:eval}).
+\end{enumerate}
+
+\section{Setting and Definitions}\label{sec:setting}
+Models are lowered to an SSA IR over Gemm, MatMul, Add, ReLU, Sigmoid, Softmax and fused Gemm+ReLU. The IR interpreter and the generated C++ use the same float32 evaluation order. A \emph{transformation} maps an IR graph $f$ to $f'$ with the same input shape. The \emph{domain} $D$ is a box: by default $[-10,10]^n$, or the per-feature envelope of the deployment data widened by a margin.
+
+\begin{definition}[Exposure]
+$x$ exposes $f'$ if $\|f'(x)-f(x)\|_\infty>\tau$ or the predicted classes differ ($\tau=10^{-5}$).
+\end{definition}
+\begin{definition}[Certificates]
+$f'$ is \emph{bit-exact} on $D$ if $f'(x)=f(x)$ in float32 for all $x\in D$, and \emph{$\varepsilon$-bounded} if $\|f'(x)-f(x)\|_\infty\le\varepsilon\le\tau$.
+\end{definition}
+A bit-exact certificate excludes every exposure. An $\varepsilon$-bounded one excludes value exposures; a prediction can then change only where the top two scores are within $2\varepsilon$.
+
+\section{The Falsifier: Guardian-APC+}\label{sec:falsifier}
+Guardian-APC+ generates inputs from the model itself: interval bound propagation (IBP) selects ReLU units whose kink is reachable; Newton steps on the exact forward-mode input gradient place inputs on each kink at any depth and at fixed offsets on both sides; inputs are ordered by activation-pattern coverage, a submodular objective with a $(1-1/e)$ greedy guarantee; a structural diff of the IR focuses inputs on the activations a rewrite touches; and sub-tolerance output differences drive a near-miss hill climb. A rejected rewrite is minimised and localised to the first IR value that differs. In an equal-budget study (96 models, 2{,}160 faults, 128 inputs) it detects 99.2\% of the faults a 4{,}000-input oracle observes, against 75.0\% for uniform random testing (exact McNemar $p<10^{-4}$), and 88.2\% within 8 inputs. On its own it can only refute; Temper adds the other half.
+
+\section{The Certifier}\label{sec:certifier}
+\subsection{Float32-sound symbolic bounds}
+For a box $B$ every value $v$ receives concrete bounds and linear bounds $L_v(x)\le v\le U_v(x)$ in the box inputs (DeepPoly-style forward relaxations~\cite{deeppoly,reluval}, intersected with IBP~\cite{ibp}). For an affine output $y=b+\sum_{k=1}^{m}w_k a_k$ we pad both bounds by the classic rounding bound for a recursively summed dot product~\cite{higham},
+\begin{equation}
+|\mathrm{fl}(y)-y|\le\gamma_{m+1}\Big(|b|+\sum_k|w_k|\max|a_k|\Big),\quad \gamma_j=\tfrac{ju}{1-ju},
+\end{equation}
+with $u=2^{-24}$, and exp-based operators by a few ulp. The bounds therefore enclose the values the float32 program computes, so ``stable inactive'' ($U\le0$) means the ReLU output is exactly $0$ in the executed program, not only in $\mathbb{R}$.
+
+\subsection{Canonical form and alignment}
+Both graphs are \emph{canonicalised}: fused Gemm+ReLU is split, constant Add/ReLU/Sigmoid/Softmax are folded with the interpreter's own float formulas, and instructions that cannot reach the output are removed. Each step preserves float32 values bit for bit. The canonical graphs are then aligned instruction by instruction: dense with dense (shapes equal; biases may be missing on one side), Add with Add, and elementwise with elementwise; operands must correspond (aligned values, or constants of equal size). A 64-bit FNV fingerprint of the canonical form identifies the certified model.
+
+\subsection{Lockstep differential propagation}
+For aligned values we bound $\Delta_v=v'-v$ per element and record an \emph{exactness bit} $e_v$.
+\emph{Dense:} $\Delta y_j=\Delta b_j+\sum_k\big(w'_{kj}\Delta x_k+(w'_{kj}-w_{kj})x_k\big)$, bounded with $x$'s bounds and padded by both rounding bounds; $e_{y_j}$ holds if $\Delta b_j=0$ and every term is exactly zero, i.e.\ $e_{x_k}$ and ($w'_{kj}=w_{kj}$ or $x_k\equiv0$ on $B$). Because both programs then add identical terms in the same order (zero terms leave a float sum unchanged), $y'_j=y_j$ bitwise.
+\emph{ReLU:} if both pre-activations are stably inactive, $\Delta=0$ exactly; if both are stably active, $\Delta=\Delta z$; otherwise $\Delta\in[\min(0,\underline{\Delta z}),\max(0,\overline{\Delta z})]$ (ReLU is monotone and 1-Lipschitz).
+\emph{Different elementwise operators} $g$ (candidate) and $f$ (original): $g(z')-f(z)=[f(z')-f(z)]+[g(z')-f(z')]$; the second term is bounded exactly over the candidate's interval and is identically zero (exact) when the interval misses the region where $g\ne f$.
+\emph{Softmax:} rows of the Jacobian sum to zero and $\sum_j|J_{ij}|=2p_i(1-p_i)$, so $|\Delta s_i|\le g_i(\max\overline{\Delta z}-\min\underline{\Delta z})$ with $g_i$ the largest $p(1-p)$ over the hull of both logit boxes.
+Every $\Delta$ is also intersected with the independent bound $[\underline{v'}-\overline{v},\overline{v'}-\underline{v}]$. As in ReluDiff~\cite{reludiff,neurodiff}, $\Delta$ additionally carries symbolic bounds in the box inputs; they pass through dense layers and through ReLU pairs that are active in both models, which retains cancellations that intervals lose. Unaligned graphs fall back to the symbolic difference $L_{f'}-U_f\le\Delta\le U_{f'}-L_f$.
+
+\begin{theorem}[Soundness]
+If the analysis of $B$ returns exactness for every output, then $f'(x)=f(x)$ in float32 for all $x\in B$; if it returns $|\Delta|\le\varepsilon$, then $\|f'(x)-f(x)\|_\infty\le\varepsilon$ for all $x\in B$.
+\end{theorem}
+\noindent\emph{Proof sketch.} By induction over the aligned instructions: each rule encloses the float32 difference given enclosures of the operands (bounds are padded for rounding), and each exactness rule implies that both programs perform the same float operations on equal operands or add exact zeros. \hfill$\square$
+
+\subsection{Divergence sources}\label{sec:sources}
+When an elementwise pair $(f,g)$ differs only on a region $R$ of pre-activations (a dead zone $(0,p)$, a clamp above $p$, a leaky slope below $0$), every unit whose candidate interval meets $R$ is a \emph{divergence source} $(v,i,R\cap[\underline{z'_i},\overline{z'_i}])$. Exactness propagation shows that \emph{only} these units can make the outputs differ. Sources are what the falsifier should aim at, and the certifier hands them over: Newton iterations on the candidate's exact input gradient move the input until $z'_i$ lies at the middle (then $0.9$, $0.1$) of the interval, inside the current box.
+
+\section{Falsify or Certify}\label{sec:loop}
+\begin{algorithm}[t]
+\caption{Temper decision for $f\to f'$ on domain $D$}
+\label{alg:temper}
+\begin{algorithmic}[1]
+\State $c\gets$ \Call{Certify}{$f,f',D$} \Comment{one box, no evaluation}
+\If{$c$ proves bit-exact or $\varepsilon\le\tau$} \Return CERTIFIED \EndIf
+\State $w\gets$ \Call{GuardianAPC+}{$f,f'$, 96 targeted + 32 near-miss}
+\If{$w\in D$ exposes $f'$} \Return REFUTED$(w)$ \EndIf
+\State $Q\gets\{D\}$ \Comment{largest box first}
+\While{$Q\ne\emptyset$ and budgets remain}
+  \State $B\gets$ pop$(Q)$; $c\gets$ \Call{Certify}{$f,f',B$}
+  \If{$c$ proves $B$} \State mark $B$ certified; \textbf{continue} \EndIf
+  \For{$x\in$ \{centre of $B$\} $\cup$ \Call{Solve}{sources$(c)$} $\cup$ \Call{Vertex}{$\nabla\Delta$}}
+    \If{$x$ exposes $f'$} \Return REFUTED$(x)$ \EndIf
+  \EndFor
+  \State split $B$ along $\arg\max_i \mathrm{width}_i\cdot\sum_j|W^{(1)}_{ij}|$; push halves
+\EndWhile
+\State \Return CERTIFIED if all boxes certified, else UNDECIDED(certified share)
+\end{algorithmic}
+\end{algorithm}
+Algorithm~\ref{alg:temper} orders the steps by cost. The static proof is a single bound computation and settles every structural rewrite; the falsifier settles almost every real bug within a few evaluations; the branch and bound spends its budget only on what is left. Inside it, each undecided box contributes three witnesses: its centre, Newton-solved inputs for its divergence sources, and the box vertex that maximises the linearised difference ($\nabla f'_k-\nabla f_k$ at the centre, for the output with the widest $\Delta$ bound). The idea of letting proof attempts guide test generation follows SYNERGY~\cite{synergy} and CEGAR~\cite{cegar}; here the abstraction is a differential one over two networks, and the guidance is a set of value ranges to solve into.
+
+\section{Every Link of the Chain}\label{sec:chain}
+\textbf{Compiler passes and model edits.} ModelForge keeps a pass only if it is not refuted; in strict mode only if it is certified. \texttt{temper a.mforge --compare b.mforge} decides whether an edited, converted or hand-optimised model is equivalent.
+
+\textbf{Compression risk as a bracket.} For a compressed $f'$ the right question is not equivalence (it never holds) but \emph{how confident can the original be at an input where the two disagree?} Let $\mathcal{R}$ be the union of $L_\infty$ balls of radius $0.5$ (in standard deviations) around the test rows, a realistic region.
+\begin{proposition}
+If $|p'_i(x)-p_i(x)|\le\varepsilon$ for all $i$ and $x\in B$, then at every $x\in B$ where $\arg\max p'\ne\arg\max p$, the original's top-two margin is at most $2\varepsilon$.
+\end{proposition}
+\noindent\emph{Proof.} With $c=\arg\max p$ and $p'_j\ge p'_c$: $p_c-p_j\le(p'_c+\varepsilon)-(p'_j-\varepsilon)\le2\varepsilon$. \hfill$\square$
+
+Per ball, branch and bound proves either prediction agreement on a box (logit margins of both models positive, using symbolic margins and $\Delta$) or a local bound $2\varepsilon$; the maximum over $\mathcal{R}$ is the \emph{proven} severity. Projected sign-gradient attacks on both models' margins and on their gap, followed by a hill climb, give the \emph{found} severity. The true worst case lies between them; a compression is CERTIFIED low-risk if the proven severity is below $0.2$ and REFUTED if the found one is at least $0.2$, the risk scale of our earlier boundary-shift study.
+
+\textbf{Domain specialisation.} ReLU units proven inactive on $D$ (float32-sound) are removed with their weights; the masked model is re-certified bit-exact by the certifier.
+
+\textbf{The binary.} The generated C++ is compiled with the system compiler under \texttt{-O0}, \texttt{-O2}, \texttt{-O3 -march=native -ffp-contract=fast} and \texttt{-O3 -ffast-math}, run on the test rows and the Guardian inputs, and compared with the interpreter score by score. The generated program embeds the certified domain and the model fingerprint and reports, per input, whether it lies inside the region where the certificates hold.
+
+\section{Evaluation}\label{sec:eval}
+All runs: one core, GCC 13.3, Linux, master seed 20260917; the whole benchmark takes about four minutes.
+
+\subsection{RQ1: How many transformations get a verdict?}
+\textbf{Corpus.} The 96 seeded classifiers of the Guardian study (1 to 4 hidden ReLU layers, widths 4 to 16) with 2{,}064 injected faults (dead zones of three fixed and one random width, upper clamps, leaky ReLU, ReLU$\to$Sigmoid, $10^{-3}$ weight and $10^{-2}$ bias perturbations, a dropped bias, Softmax$\to$Sigmoid), 96 negative controls (a rewrite of an output-unreachable node) and 192 real optimisation passes (fusion and dead-code removal). A fault is \emph{observable} if a 4{,}000-input random oracle or any verified witness exposes it.
+
+\begin{table}[t]
+\centering
+\caption{Verdicts on 2{,}352 transformations ($D=[-10,10]^n$). R/C/U: refuted, certified, undecided. Unsound: certified cases exposed by any input.}
+\label{tab:decide}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & Observable & Benign & Hidden & All & Evals & \\
+Strategy & refuted & certified & R/C/U & decided & /case & Unsound\\
+\midrule
+Guardian-APC+ & 96.7\% & 0\% & 0/0/6 & 84.6\% & 23.5 & --\\
+Certifier (B\&B) & 82.3\% & 100\% & 0/0/6 & 84.2\% & 101.8 & 0\\
+\textbf{Temper} & \textbf{99.95\%} & \textbf{100\%} & 0/0/6 & \textbf{99.7\%} & \textbf{11.3} & \textbf{0}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:decide}: Temper refutes 2{,}057 of the 2{,}058 observable faults and certifies all 288 benign transformations bit-exact, all of them by the static proof without a single model evaluation. The falsifier alone cannot certify anything; the certifier alone refutes only what its box centres happen to hit. No certificate was ever contradicted. Six faults ($10^{-3}$ weight and $10^{-2}$ bias perturbations) are exposed by nothing and remain UNDECIDED: their output change stays near $\tau$, too small to refute and too close to prove.
+
+\subsection{RQ2: Does certification help falsification?}
+Guardian-APC+ misses 68 observable faults; Temper refutes 67 of them. For 54 of these, no input of the 4{,}000-input oracle exposes the fault: the only witness is a certificate-guided one. They are almost all random-width dead zones (as narrow as $10^{-4}$), where the faulty region is a thin slab of input space: Guardian-APC+ catches 176 of 240, the unguided certifier 113, Temper all 240. The divergence source names the unit and the interval $(0,p)$; one Newton solve places the input inside it,.
+
+\subsection{RQ3: Is a compressed model safe to ship?}
+Eight scikit-learn ReLU MLPs (hidden layers (16) and (32,16)) on Iris, Wine, Breast Cancer and Digits, each compressed five ways (float16; int8 and int4 symmetric per-tensor weights; 30\% and 50\% magnitude pruning): 40 cases, every test row as a ball centre (45 to 540 per model).
+
+\begin{table}[t]
+\centering
+\caption{Severity brackets (found..proven worst-flip margin). C: certified low risk; R: refuted (found $\ge0.2$); U: undecided.}
+\label{tab:shrink}
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{lccccc}
+\toprule
+Model & fp16 & int8 & int4 & prune30 & prune50\\
+\midrule
+BC (16) & .00..01 C & .02..17 C & .79..1 R & .43..1 R & .71..1 R\\
+BC (32,16) & .00..03 C & .03..1 U & .81..1 R & .78..1 R & .99..1 R\\
+Digits (16) & .00..02 C & .16..78 U & 1..1 R & 1..1 R & 1..1 R\\
+Digits (32,16) & .00..08 C & .23..1 R & 1..1 R & 1..1 R & 1..1 R\\
+Iris (16) & .00..00 C & .01..03 C & .53..99 R & .36..71 R & .85..1 R\\
+Iris (32,16) & .00..00 C & .01..07 C & .40..1 R & .53..1 R & .91..1 R\\
+Wine (16) & .00..00 C & .00..09 C & .26..1 R & .49..1 R & .64..1 R\\
+Wine (32,16) & .00..01 C & .01..32 U & .49..1 R & .61..1 R & .93..1 R\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:shrink}: 12 compressions are certified low-risk (every float16 and four int8), 25 refuted, 3 undecided, and no found severity ever exceeds its proven bound. Seven refuted compressions kept their full test accuracy, and four changed no test prediction at all: Wine with int4 weights keeps 98.1\% accuracy yet has a realistic input where the original's margin is 0.26 and the compressed model disagrees; for Breast Cancer (16) with int4 the margin is 0.79. The certified recommendation (smallest certified-low-risk compression) agrees with a search-only rule on four models and is more conservative on the other four, where int8 cannot yet be proven safe; on Breast Cancer (16) it now recommends int8, avoiding the int4 choice our earlier search-only tool made from a 200-evaluation search.
+
+\subsection{RQ4: Does the binary do what was certified?}
+\begin{table}[t]
+\centering
+\caption{Generated C++ of 8 real models vs the certified model (test rows and Guardian inputs, 173 to 844 per model).}
+\label{tab:binary}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrr}
+\toprule
+Flags & Bit-exact & Max $|\Delta|$ & Prediction changes\\
+\midrule
+\texttt{-O0} & 8/8 & 0 & 0\\
+\texttt{-O2} & 8/8 & 0 & 0\\
+\texttt{-O3 -march=native -ffp-contract=fast} & 0/8 & $8.9\times10^{-7}$ & 0\\
+\texttt{-O3 -ffast-math} & 0/8 & $4.8\times10^{-7}$ & 0\\
+\bottomrule
+\end{tabular}
+\end{table}
+Table~\ref{tab:binary}: with standard flags the binaries reproduce the certified model exactly, so certificates about the IR transfer to the shipped code. The audit also found a real defect in our own code generator: the generated CSV parser used \texttt{std::stof}, which rejects subnormal values such as $10^{-40}$ that a Guardian input contained, so one model's binary refused its input file; we replaced it with \texttt{strtof}. FMA contraction and fast-math break bit-exactness on every model; the deviation stays below $10^{-6}$ and no prediction changes on these inputs, which the dossier reports as a warning rather than a blocker.
+
+\subsection{RQ5: Cost and usability}
+The decision study takes 46\,s for 2{,}352 transformations (about 5.6\,ms per case for Temper and for Guardian-APC+ alone: static proofs make benign cases nearly free). A full dossier for the Wine model (passes, specialisation, five compressions, four binaries) takes 3.7\,s. \texttt{temper model.mforge --data test.csv} prints the dossier in the terminal, writes \texttt{dossier.json} and returns exit code 0 (ship) or 3 (blocked), so it slots into CI; \texttt{--compare} returns 0, 3 or 4 for certified, refuted and undecided.
+
+\section{Related Work}
+\textbf{Translation validation and rewrite verification.} Translation validation checks individual compiler runs~\cite{pnueli,necula}; Alive2 does so for LLVM with SMT~\cite{alive2}; TensorRight proves tensor rewrite rules~\cite{tensorright}. Temper validates each run of an ML compiler with abstract interpretation instead of SMT, proves bit-exactness under float32, and falls back to a falsifier when proof fails.
+\textbf{Differential verification.} ReluDiff and NeuroDiff bound the difference of two networks with symbolic intervals~\cite{reludiff,neurodiff}, targeting compressed networks in real arithmetic. We add float32 rounding, exactness bits, operator-pair rules for differing activations, divergence sources, and a falsifier in the loop, and use the result for compiler passes, edits and compression alike.
+\textbf{Network verification.} DeepPoly, CROWN and symbolic intervals~\cite{deeppoly,crown,reluval} and complete methods~\cite{reluplex} certify properties of one network; quantised-network verification~\cite{qnnverify} addresses bit-precise semantics of one quantised model. We certify relations between two programs.
+\textbf{Testing.} NNSmith~\cite{nnsmith} and Csmith~\cite{csmith} generate programs; DiffChaser~\cite{diffchaser} searches for disagreements between a model and its compressed version; coverage criteria~\cite{deepxplore,deepgauge} guide input generation, with known limits~\cite{harel}. Combining proof attempts with directed testing goes back to DART and SYNERGY~\cite{gopinath,synergy}.
+
+\section{Threats to Validity}
+\textbf{Scale.} Dense ReLU networks with up to 64 inputs and 32 hidden units per layer; convolutions, attention and real ONNX models are future work. Bounds loosen with depth, which is why int8 on the deeper Digits and Breast Cancer models stays undecided.
+\textbf{Fault realism.} Injected operators stand in for buggy kernels; divergence sources need an abstract semantics for each candidate operator, which a real compiler must provide.
+\textbf{Trusted base.} The canonicaliser, the interval rules and the interpreter are trusted; the interpreter and code generator share operator definitions, which the binary audit checks but does not prove. The binary audit is testing, not proof.
+\textbf{Thresholds.} The realistic radius (0.5 standard deviations, $L_\infty$) and the risk threshold (0.2) are our choices; the found severity depends on search effort.
+\textbf{Specialisation.} The compact trained models have almost no provably dead units on their data envelope (one of 48 in Iris (32,16)); the benefit is expected for over-parameterised models, which we have not measured.
+
+\section{Conclusion}
+Forging produces the program; tempering makes it trustworthy. Temper gives every transformation between a trained network and its binary a verdict that is either a counterexample or a proof, decides 99.7\% of 2{,}352 transformations with no unsound certificate, finds faults that both random testing and a strong falsifier miss by solving into statically located divergence sources, brackets compression risk on real models, and checks the generated binary against the certified model. Everything runs from one terminal command.
+
+\section*{Reproducibility}
+\texttt{cmake -S . -B build \&\& cmake --build build --config Release}, then \texttt{modelforge\_bench} (\texttt{--quick} for a short run). It prints every table in the terminal and writes \texttt{results.json}, \texttt{temper\_results.json}, \texttt{compression\_results.json}, \texttt{binary\_results.json} and per-case CSV files.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

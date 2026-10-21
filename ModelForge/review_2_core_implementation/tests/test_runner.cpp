@@ -1,5 +1,6 @@
 #include "adaptive.h"
 #include "analysis.h"
+#include "certify.h"
 #include "codegen.h"
 #include "guardian.h"
 #include "ir.h"
@@ -7,6 +8,7 @@
 #include "optimizer.h"
 #include "research.h"
 #include "shrink.h"
+#include "temper.h"
 #include "validator.h"
 #include "verifier.h"
 
@@ -17,6 +19,7 @@
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <unordered_map>
 #include <set>
 #include <string>
 #include <vector>
@@ -126,7 +129,7 @@ void testValidPipeline(const std::filesystem::path& fixtureDirectory) {
         std::ifstream generated(outputDirectory / "model.cpp");
         const std::string source((std::istreambuf_iterator<char>(generated)),
                                  std::istreambuf_iterator<char>());
-        check(source.find("std::stof(text, &parsed)") != std::string::npos,
+        check(source.find("std::strtof(text.c_str(), &end)") != std::string::npos,
               "generated executable should accept numeric inputs");
         check(source.find("Scores:") != std::string::npos,
               "generated executable should print all output scores");
@@ -385,6 +388,104 @@ void testOutputComparison() {
           "non-finite output should be rejected");
 }
 
+
+void testTemper(const std::filesystem::path& fixtureDirectory) {
+    using namespace modelforge;
+    const auto specs = makeZooSpecs(6, 20260917);
+    std::size_t refuted = 0, faults = 0;
+    for (const auto& spec : specs) {
+        IRGraph graph;
+        DiagnosticEngine diagnostics;
+        check(compileManifestText(synthesizeManifest(spec), graph, diagnostics), "zoo model compiles");
+        const Box domain = uniformBox(spec.inputs, kDefaultInputRadius);
+        // Every built-in pass must be certified bit-exact without evaluations.
+        IRGraph current = graph;
+        for (const auto pass : {OptimizationPass::DenseReluFusion, OptimizationPass::DeadNodeRemoval}) {
+            IRGraph next = current;
+            runOptimizationPass(next, pass);
+            const auto decision = decideTransformation(current, next, domain);
+            check(decision.verdict == Verdict::Certified && decision.kind == CertificateKind::Exact &&
+                      decision.evaluations == 0,
+                  std::string("pass should be statically certified bit-exact: ") +
+                      optimizationPassName(pass));
+            current = std::move(next);
+        }
+        // Faults: never certified when an input exposes them.
+        std::mt19937 generator(spec.seed);
+        std::uniform_real_distribution<float> uniform(-10.0f, 10.0f);
+        for (const auto& fault : makeFaults(graph, analyzeActivationSites(graph), spec.seed)) {
+            const auto decision = decideTransformation(graph, fault.candidate, domain);
+            if (fault.negativeControl) {
+                check(decision.verdict == Verdict::Certified, "negative control should be certified");
+                continue;
+            }
+            ++faults;
+            refuted += decision.verdict == Verdict::Refuted;
+            if (decision.verdict == Verdict::Refuted) {
+                check(exposes(graph, fault.candidate, *decision.witness, 1.0e-5f),
+                      "every refutation witness must replay");
+            }
+            if (decision.verdict == Verdict::Certified) {
+                for (int trial = 0; trial < 500; ++trial) {
+                    std::vector<float> x(spec.inputs);
+                    for (float& v : x) v = uniform(generator);
+                    float difference = 0.0f;
+                    exposes(graph, fault.candidate, x, 1.0e-5f, &difference);
+                    check(difference <= 1.0e-5f, "certified fault must not be exposed");
+                }
+            }
+        }
+    }
+    check(refuted * 100 >= faults * 95, "Temper should refute at least 95% of zoo faults");
+
+    // Bounds enclose float32 execution on random points.
+    {
+        IRGraph graph;
+        DiagnosticEngine diagnostics;
+        compileManifestText(synthesizeManifest(specs[3]), graph, diagnostics);
+        const Box box = uniformBox(specs[3].inputs, 2.0f);
+        const auto bounds = computeBounds(graph, box);
+        std::mt19937 generator(7);
+        std::uniform_real_distribution<float> uniform(-2.0f, 2.0f);
+        for (int trial = 0; trial < 200; ++trial) {
+            std::vector<float> x(specs[3].inputs);
+            for (float& v : x) v = uniform(generator);
+            std::unordered_map<std::string, std::vector<float>> trace;
+            executeIRTrace(graph, x, diagnostics, &trace);
+            for (const auto& [name, values] : trace) {
+                const ValueBounds* b = bounds.find(name);
+                if (b == nullptr) continue;
+                for (std::size_t i = 0; i < values.size(); ++i) {
+                    check(values[i] >= b->lower[i] && values[i] <= b->upper[i],
+                          "symbolic bounds must enclose executed values");
+                }
+            }
+        }
+    }
+
+    // Compression bracket: found severity never above the proven bound.
+    const auto real = fixtureDirectory.parent_path().parent_path() / "models" / "real";
+    std::ifstream file(real / "iris_mlp16.mforge");
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    IRGraph iris;
+    DiagnosticEngine diagnostics;
+    check(compileManifestText(text, iris, diagnostics), "real Iris model compiles");
+    Dataset test;
+    std::string error;
+    loadDataset((real / "iris_test.csv").string(), 4, test, error);
+    for (const auto& compression : standardCompressions()) {
+        const auto audit = auditCompression(iris, compression, test, 0.5f, 20);
+        const double found = audit.search.witness.empty() ? 0.0 : audit.search.severity;
+        check(found <= audit.certificate.bound + 1e-9, "severity bracket must not invert");
+        if (compression.name == "fp16") {
+            check(audit.verdict == Verdict::Certified, "fp16 Iris should be certified low risk");
+        }
+        if (compression.name == "prune50") {
+            check(audit.verdict == Verdict::Refuted, "prune50 Iris should be refuted");
+        }
+    }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -399,6 +500,7 @@ int main(int argc, char* argv[]) {
     testGuardianApc();
     testGuardianPlus(fixtureDirectory);
     testShrink(fixtureDirectory);
+    testTemper(fixtureDirectory);
 
     if (failures == 0) {
         std::cout << "All ModelForge tests passed.\n";

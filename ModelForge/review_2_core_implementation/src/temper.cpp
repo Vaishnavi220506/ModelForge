@@ -596,8 +596,9 @@ BinaryAuditReport auditGeneratedBinary(const IRGraph& graph, const std::string& 
             report.results.push_back(result);
             continue;
         }
+        const auto runLog = directory / ("run_" + std::to_string(index) + ".log");
         const std::string execute = quotePath(binary) + " --csv " + quotePath(inputPath) + " > " +
-                                    quotePath(output) + " 2> " + quotePath(log);
+                                    quotePath(output) + " 2> " + quotePath(runLog);
 #if defined(_WIN32)
         // cmd.exe strips the outer quotes of a command that starts with one.
         const std::string shell = "\"" + execute + "\"";
@@ -605,7 +606,7 @@ BinaryAuditReport auditGeneratedBinary(const IRGraph& graph, const std::string& 
         const std::string& shell = execute;
 #endif
         if (std::system(shell.c_str()) != 0) {
-            result.error = "binary failed (see " + log.string() + ")";
+            result.error = "binary failed (see " + runLog.string() + ")";
             report.results.push_back(result);
             continue;
         }

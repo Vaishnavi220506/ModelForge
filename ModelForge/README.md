@@ -4,6 +4,12 @@
 
 ModelForge is an individual Compiler Design Laboratory project that translates a supported subset of ONNX feed-forward neural-network models into readable standalone C++ inference code.
 
+ModelForge is now the compiler component of **Temper**, a falsify-or-certify
+trust layer that decides every transformation between a trained model and the
+shipped binary (REFUTED / CERTIFIED / UNDECIDED). See
+[docs/temper.md](docs/temper.md) and the paper draft
+[paper/temper.tex](paper/temper.tex).
+
 ## Review folders
 
 - `review_1_proposal_design/` - project proposal, architecture, scope, methodology, and initial prototype.

@@ -1,29 +1,32 @@
-# Paper draft: Guardian-APC
+# Paper draft: Forge, then Temper
 
 Author: **Vaishnavi**
 
-`guardian_apc.tex` is an IEEE two-column conference draft describing the
-Guardian-APC+ validator and its evaluation. `references.bib` holds the citations.
+`temper.tex` is an IEEE two-column conference draft: *Forge, then Temper:
+Falsify-or-Certify Assurance for Every Transformation from Trained Network to
+Edge Binary*. It supersedes the earlier Guardian-APC+ draft (in git history);
+Guardian-APC+ is now Section 3, the falsifier half of Temper.
+`references.bib` holds the citations.
 
 Build it on Overleaf (upload this folder) or locally:
 
 ```text
-pdflatex guardian_apc
-bibtex guardian_apc
-pdflatex guardian_apc
-pdflatex guardian_apc
+pdflatex temper
+bibtex temper
+pdflatex temper
+pdflatex temper
 ```
 
-Every number in the paper comes from `modelforge_bench`. The snapshot used for
-the draft is in `../research/results/results.json` (master seed 20260917,
-96 models, budget 128). The seed-robustness and B = 32 rows come from:
+Every number comes from `modelforge_bench` (master seed 20260917). Snapshots:
 
-```text
-modelforge_bench --seed 1
-modelforge_bench --seed 2
-modelforge_bench --seed 3
-modelforge_bench --budget 32
-```
+| Table | File in `../research/results/` |
+|---|---|
+| Guardian-APC+ numbers (Section 3) | `results.json` |
+| Table I, decisiveness | `temper_results.json` |
+| Table II, compression brackets | `compression_results.json` |
+| Table III, binary audit | `binary_results.json` |
 
-The author is set to Vaishnavi; add the department, institution and email before submitting, and re-run the benchmark on the
-machine you report in the paper.
+Before submitting: add department, institution and email, re-run the benchmark
+on the machine you report, and pick a venue. Good fits: the tool or research
+track of ASE / ICSE / FSE / ISSTA (testing + verification of ML systems),
+EMSOFT / LCTES (embedded deployment), or the MLSys workshops.

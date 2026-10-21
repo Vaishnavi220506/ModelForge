@@ -87,7 +87,11 @@ bool loadReal(const fs::path& path, const std::string& directory, IRGraph& graph
 TemperStudySummary runTemperStudy(const BenchmarkConfig& config, const ProgressCallback& progress) {
     const auto start = std::chrono::steady_clock::now();
     TemperStudySummary summary;
-    summary.strategies = {{"guardian_apc_plus"}, {"certifier"}, {"temper"}};
+    for (const char* name : {"guardian_apc_plus", "certifier", "temper"}) {
+        StudyStrategy strategy;
+        strategy.name = name;
+        summary.strategies.push_back(std::move(strategy));
+    }
     std::ostringstream csv;
     csv << "model,case,family,kind,observable,strategy,verdict,certificate,evaluations,ms\n";
     const auto specs = makeZooSpecs(config.models, config.seed);
@@ -361,7 +365,8 @@ BinaryStudySummary runBinaryStudy(const std::string& realDirectory, const std::s
             json << (i ? ", " : "") << "{\"flags\": " << quoted(r.flags)
                  << ", \"built\": " << (r.built ? "true" : "false") << ", \"rows\": " << r.rows
                  << ", \"prediction_mismatches\": " << r.predictionMismatches
-                 << ", \"max_abs_error\": " << number(r.maximumAbsoluteError) << "}";
+                 << ", \"max_abs_error\": " << number(r.maximumAbsoluteError)
+                 << ", \"error\": " << quoted(r.error) << "}";
         }
         json << "]}";
         summary.rows.push_back({path.stem().string(), std::move(report)});

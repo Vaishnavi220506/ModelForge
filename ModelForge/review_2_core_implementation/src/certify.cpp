@@ -1459,7 +1459,7 @@ double marginLowerBound(const ValueBounds& logits, std::size_t c, std::size_t j,
     return bound;
 }
 
-int agreeOnBox(const IRGraph& original, const IRGraph& candidate, const Differ& differ,
+int agreeOnBox(const IRGraph& original, const IRGraph& /*candidate*/, const Differ& differ,
                const std::string& logits, bool sigmoidOutput, const Box& box) {
     DiagnosticEngine diagnostics;
     const auto centreOutput = executeIR(original, box.centre(), diagnostics);
@@ -1473,8 +1473,6 @@ int agreeOnBox(const IRGraph& original, const IRGraph& candidate, const Differ& 
     if (za == nullptr || zb == nullptr || !delta.complete || delta.lower.size() != za->lower.size()) {
         return -1;
     }
-    (void)candidate;
-    (void)original;
     if (sigmoidOutput) {
         const bool positive = c == 1;
         const double a = positive ? za->lower[0] : -za->upper[0];
@@ -1484,9 +1482,9 @@ int agreeOnBox(const IRGraph& original, const IRGraph& candidate, const Differ& 
     }
     for (std::size_t j = 0; j < za->lower.size(); ++j) {
         if (j == c) continue;
-        const double original = marginLowerBound(*za, c, j, box);
-        if (!(original > 0.0)) return -1;
-        const double viaDelta = original + (delta.lower[c] - delta.upper[j]);
+        const double margin = marginLowerBound(*za, c, j, box);
+        if (!(margin > 0.0)) return -1;
+        const double viaDelta = margin + (delta.lower[c] - delta.upper[j]);
         const double direct = marginLowerBound(*zb, c, j, box);
         if (!(std::max(viaDelta, direct) > 0.0)) return -1;
     }
