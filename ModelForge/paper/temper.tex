@@ -10,6 +10,9 @@
 \usepackage{url}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,fit,arrows.meta,backgrounds}
 
 \newtheorem{proposition}{Proposition}
 \newtheorem{definition}{Definition}
@@ -17,7 +20,7 @@
 
 \begin{document}
 
-\title{Forge, then Temper: Falsify-or-Certify Assurance for Every\\Transformation from Trained Network to Edge Binary}
+\title{Temper: Falsify-or-Certify Assurance for Every Transformation from Trained Network to Edge Binary}
 
 \author{\IEEEauthorblockN{Vaishnavi}
 \IEEEauthorblockA{Department and institution (fill in)\\
@@ -26,7 +29,7 @@ Email (fill in)}}
 \maketitle
 
 \begin{abstract}
-Between a trained neural network and the binary that runs on a device lie many transformations: graph rewrites in a compiler, hand edits, quantisation and pruning, code generation and the C++ compiler's own optimisations. Each can silently change predictions, and today each is checked differently, if at all: tests that can only fail to find bugs, or verifiers that can only fail to prove their absence. We present \emph{Temper}, a trust layer that gives \emph{every} transformation a three-valued verdict: REFUTED with a replayable, localised counterexample; CERTIFIED with a proof that the outputs are bit-identical (or within $\varepsilon$) for every input in the deployment domain; or UNDECIDED with the share of the domain already proven. Temper couples a boundary-targeting falsifier (Guardian-APC+) with a new differential certifier that (i)~is sound for the \emph{float32} program, not only in real arithmetic, (ii)~tracks \emph{exactness}, proving bit-identity for structural rewrites, (iii)~propagates symbolic bounds on the difference of two networks, and (iv)~statically locates \emph{divergence sources}, the units and value ranges where a candidate can disagree, so that the falsifier can solve for inputs there. On 2{,}352 transformations of 96 networks (2{,}064 injected faults, 96 negative controls, 192 real optimisation passes), Temper decides 99.7\%, against 84.6\% for the falsifier and 84.2\% for the certifier alone, with half the falsifier's evaluations and no unsound certificate. It refutes 67 of the 68 observable faults the falsifier misses, 54 of which no input of a 4{,}000-input random oracle exposes. The same machinery brackets the risk of compressing 8 real classifiers (12 compressions certified low-risk, 25 refuted with realistic witnesses, including 7 whose test accuracy did not drop), and checks the generated C++ binary: bit-exact at -O0/-O2 on all models, while fast-math and FMA contraction move scores by up to $8.9\times10^{-7}$. Beyond the verdict, Temper acts on it: it \emph{repairs} compressions by a certified per-layer precision search (up to 29\% smaller than the best certified uniform format), \emph{localises} a breaking edit to the exact weight by delta debugging over certified decisions (8 of 8 models), and \emph{re-certifies} the next model version from the previous proof (half the boxes; one evaluation when an old counterexample still applies). On 80 faults modelled on the root-cause classes of real deep-learning compiler bugs, it refutes all 71 observable ones, against 62 for test-set checking, and proves the other 9 harmless on the deployment domain. Temper is open source, runs in the terminal, and is built around the ModelForge compiler.
+Between a trained neural network and the program that runs on a device lie many transformations: compiler rewrites, hand edits, quantisation and pruning, and code generation. Each can silently change predictions, yet testing can only fail to find such bugs and verifiers can only fail to prove their absence. We present \emph{Temper}, which gives every transformation a three-valued verdict: REFUTED with a replayable, localised counterexample; CERTIFIED with a proof that the outputs are bit-identical (or within $\varepsilon$) for every input of the deployment domain under float32 semantics; or UNDECIDED with the share of the domain already proven. Temper couples a boundary-targeting falsifier with a differential certifier that is sound for float32, tracks \emph{exactness} to prove bit-identity, and statically locates \emph{divergence sources} into which the falsifier solves for inputs. On 2{,}352 transformations of 96 networks, Temper decides 99.7\% (84.6\% and 84.2\% for the falsifier and the certifier alone) with half the falsifier's evaluations and no unsound certificate; 54 of the faults it refutes are exposed by no input of a 4{,}000-input random oracle. On 80 faults modelled on real deep-learning compiler bug classes in 8 trained classifiers, it refutes all 71 observable ones (62 for test-set checking) and proves the other 9 harmless. Beyond the verdict, Temper brackets compression risk, repairs compressions by a certified per-layer precision search (up to 29\% smaller than the best certified uniform format), localises a breaking edit to the exact weight, and re-certifies new model versions from previous proofs.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -45,6 +48,39 @@ Two families of tools address individual links. \emph{Testers} (differential tes
 \item \textbf{UNDECIDED}: neither, with the certified share of $D$.
 \end{itemize}
 The ModelForge compiler is one component: it produces candidate transformations and code, and Temper decides which to keep.
+
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  src/.style={draw,rounded corners=2pt,fill=blue!6,minimum width=2cm,minimum height=0.9cm,align=center},
+  stage/.style={draw,rounded corners=2pt,fill=white,minimum width=2.5cm,minimum height=1cm,align=center},
+  verdict/.style={draw,rounded corners=2pt,minimum width=2.5cm,minimum height=1cm,align=center,font=\small\bfseries}]
+\node[src] (r) at (0,0) {Compiler\\rewrites};
+\node[src] (e) at (2.6,0) {Edits /\\conversions};
+\node[src] (q) at (5.2,0) {Quantise /\\prune};
+\node[src] (g) at (7.8,0) {Generated\\binary};
+\node[stage] (s1) at (0.9,-2.0) {Static proof\\[-1pt]{\scriptsize (0 evaluations)}};
+\node[stage] (s2) at (3.9,-2.0) {Guardian-APC+\\[-1pt]{\scriptsize falsifier}};
+\node[stage] (s3) at (6.9,-2.0) {Certificate-guided\\[-1pt]{\scriptsize branch and bound}};
+\draw[->] (s1) -- (s2); \draw[->] (s2) -- (s3);
+\draw[->,dashed] (s3.south) to[bend left=25] node[below,font=\scriptsize]{divergence sources} (s2.south);
+\begin{scope}[on background layer]
+\node[draw,thick,rounded corners=4pt,fill=cyan!8,fit=(s1)(s2)(s3),inner xsep=6pt,inner ysep=19pt,label={[font=\bfseries,anchor=north west]north west:Temper}] (T) {};
+\end{scope}
+\foreach \n in {r,e,q,g} \draw[->] (\n.south) -- (\n.south |- T.north);
+\node[verdict,fill=red!12] (v1) at (0.9,-4.4) {REFUTED\\[-1pt]{\scriptsize\normalfont localised witness}};
+\node[verdict,fill=green!12] (v2) at (3.9,-4.4) {CERTIFIED\\[-1pt]{\scriptsize\normalfont float32-sound proof}};
+\node[verdict,fill=gray!12] (v3) at (6.9,-4.4) {UNDECIDED\\[-1pt]{\scriptsize\normalfont certified share}};
+\foreach \n in {v1,v2,v3} \draw[->] (\n.north |- T.south) -- (\n.north);
+\node[draw,rounded corners=2pt,fill=blue!6,minimum width=8.5cm,align=center] (act) at (3.9,-5.7) {Act on the verdict: certified repair \;$\cdot$\; culprit localisation \;$\cdot$\; incremental re-certification};
+\foreach \n in {v1,v2,v3} \draw[->] (\n.south) -- (\n.south |- act.north);
+\end{tikzpicture}}
+\caption{Overview. Every transformation of a model receives one of three verdicts; the certifier tells the falsifier where a bug can live, and each verdict feeds a follow-up action.}
+\label{fig:overview}
+\end{figure}
+
+Fig.~\ref{fig:overview} summarises the approach.
 
 \textbf{Contributions.}
 \begin{enumerate}
@@ -170,7 +206,7 @@ Certifier (B\&B) & 82.3\% & 100\% & 0/0/6 & 84.2\% & 101.8 & 0\\
 Table~\ref{tab:decide}: Temper refutes 2{,}057 of the 2{,}058 observable faults and certifies all 288 benign transformations bit-exact, all of them by the static proof without a single model evaluation. The falsifier alone cannot certify anything; the certifier alone refutes only what its box centres happen to hit. No certificate was ever contradicted. Six faults ($10^{-3}$ weight and $10^{-2}$ bias perturbations) are exposed by nothing and remain UNDECIDED: their output change stays near $\tau$, too small to refute and too close to prove.
 
 \subsection{RQ2: Does certification help falsification?}
-Guardian-APC+ misses 68 observable faults; Temper refutes 67 of them. For 54 of these, no input of the 4{,}000-input oracle exposes the fault: the only witness is a certificate-guided one. They are almost all random-width dead zones (as narrow as $10^{-4}$), where the faulty region is a thin slab of input space: Guardian-APC+ catches 176 of 240, the unguided certifier 113, Temper all 240. The divergence source names the unit and the interval $(0,p)$; one Newton solve places the input inside it,.
+Guardian-APC+ misses 68 observable faults; Temper refutes 67 of them. For 54 of these, no input of the 4{,}000-input oracle exposes the fault: the only witness is a certificate-guided one. They are almost all random-width dead zones (as narrow as $10^{-4}$), where the faulty region is a thin slab of input space: Guardian-APC+ catches 176 of 240, the unguided certifier 113, Temper all 240. The divergence source names the unit and the interval $(0,p)$; one Newton solve places the input inside it.
 
 \subsection{RQ3: Is a compressed model safe to ship?}
 Eight scikit-learn ReLU MLPs (hidden layers (16) and (32,16)) on Iris, Wine, Breast Cancer and Digits, each compressed five ways (float16; int8 and int4 symmetric per-tensor weights; 30\% and 50\% magnitude pruning): 40 cases, every test row as a ball centre (45 to 540 per model).
@@ -204,7 +240,7 @@ Table~\ref{tab:shrink}: 12 compressions are certified low-risk (every float16 an
 \caption{Generated C++ of 8 real models vs the certified model (test rows and Guardian inputs, 173 to 844 per model).}
 \label{tab:binary}
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{lrrr}
+\resizebox{\columnwidth}{!}{\begin{tabular}{lrrr}
 \toprule
 Flags & Bit-exact & Max $|\Delta|$ & Prediction changes\\
 \midrule
@@ -213,7 +249,7 @@ Flags & Bit-exact & Max $|\Delta|$ & Prediction changes\\
 \texttt{-O3 -march=native -ffp-contract=fast} & 0/8 & $8.9\times10^{-7}$ & 0\\
 \texttt{-O3 -ffast-math} & 0/8 & $4.8\times10^{-7}$ & 0\\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 Table~\ref{tab:binary}: with standard flags the binaries reproduce the certified model exactly, so certificates about the IR transfer to the shipped code. The audit also found a real defect in our own code generator: the generated CSV parser used \texttt{std::stof}, which rejects subnormal values such as $10^{-40}$ that a Guardian input contained, so one model's binary refused its input file; we replaced it with \texttt{strtof}. FMA contraction and fast-math break bit-exactness on every model; the deviation stays below $10^{-6}$ and no prediction changes on these inputs, which the dossier reports as a warning rather than a blocker.
 
@@ -223,7 +259,7 @@ The decision study takes 46\,s for 2{,}352 transformations (about 5.6\,ms per ca
 \subsection{RQ6: Does Temper catch realistic compiler bugs?}
 Studies of deep-learning compiler and converter bugs~\cite{dlcbugs} report recurring root causes: wrong layouts, broken fusion, shape and broadcast errors, wrong loop bounds, activation lowering, and quantisation rounding and overflow. We model one fault per class (Table~\ref{tab:bugs}) and inject it into each of the 8 real classifiers, with the correct int8 model as reference for the quantisation classes. The domain is the test-data envelope widened by 0.5; a fault is \emph{observable} if a 20{,}000-input random oracle or a Temper witness exposes it.
 \begin{table}[t]\centering\caption{Bug classes on 8 real models (number of models).}\label{tab:bugs}
-\begin{tabular}{lrrrrr}\toprule
+\resizebox{\columnwidth}{!}{\begin{tabular}{lrrrrr}\toprule
 class & obs. & test set & random 1k & REFUTED & CERT.\\\midrule
 channel swap (layout) & 8 & 8 & 8 & 8 & 0\\
 fusion drops bias & 8 & 8 & 8 & 8 & 0\\
@@ -236,7 +272,7 @@ requant truncation & 8 & 8 & 8 & 8 & 0\\
 requant no saturation & 8 & 8 & 8 & 8 & 0\\
 requant tie rounding & 0 & 0 & 0 & 0 & 8\\
 control: optimiser & 0 & 0 & 0 & 0 & 8\\\bottomrule
-\end{tabular}\end{table}
+\end{tabular}}\end{table}
 Temper refutes all 71 observable faults (7.2 evaluations on average), against 62 for checking the test set and 66 for 1{,}000 random inputs. The two subtle classes, a ReLU6 clamp that only bites at large activations and an epsilon comparison that only bites in a thin slab, are the ones test sets miss. Temper also proves 9 faults \emph{harmless on the domain}, bit for bit: rounding ties away from zero never changes a weight of these models, and in one model no ReLU input can reach 6. A tester can only say ``not found''. No certificate is contradicted by the oracle.
 
 \subsection{RQ7: Repair, localisation and incremental proofs}
